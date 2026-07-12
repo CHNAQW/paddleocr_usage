@@ -905,59 +905,91 @@ An unusually large single page may still remain above the upload threshold.
 Markdown quality depends on the selected model, document layout, image quality, language, and server output.  
 Markdown 质量取决于所选模型、文档版式、图像质量、语言和服务端输出。
 
-# License
+# License   许可证
 
-[![Creative Commons License](https://i.creativecommons.org/l/by-nc/4.0/88x31.png)](https://creativecommons.org/licenses/by-nc/4.0/)
-
-Unless otherwise stated in a specific file, the original software, source code, Python scripts, batch scripts, build scripts, compiled executable files, documentation, and other original materials in this repository are licensed under the [Creative Commons Attribution–NonCommercial 4.0 International License](https://creativecommons.org/licenses/by-nc/4.0/) (**CC BY-NC 4.0**).
-
-Under CC BY-NC 4.0, users may copy, redistribute, modify, and build upon the licensed materials for noncommercial purposes, provided that appropriate attribution is retained and any modifications are clearly indicated.
-
-In addition to the permissions granted under CC BY-NC 4.0, the Licensor grants permission for the following uses, even where such uses might otherwise be regarded as commercial:
-
-1. use, modification, demonstration, and presentation of the software and other licensed materials by graduate students in academic conferences, forums, workshops, seminars, thesis defenses, and similar academic activities; and
-
-2. use of the software and other licensed materials in academic research or academic publications for which an author receives royalties, honoraria, publication remuneration, or other comparable compensation.
-
-These additional permissions include the reasonable reproduction of source-code excerpts, interface screenshots, workflow descriptions, and results generated with the software where necessary for the permitted academic activity.
-
-The above additional permissions do **not** authorize the sale, rental, paid licensing, commercial hosting, provision of the software as a paid service, incorporation of the software into a commercial product or service, or use of the software on behalf of a for-profit entity. Such uses require prior written permission from the Licensor.
-
-The attribution requirement under CC BY-NC 4.0 remains applicable to all permitted uses. Users who copy, modify, redistribute, demonstrate, present, or describe the licensed materials must retain the copyright, license, and attribution notices contained in this repository and must clearly indicate whether modifications have been made.
-
-This license applies only to original materials for which the repository owner holds the relevant rights. Third-party libraries, runtimes, APIs, models, icons, fonts, and other third-party components remain subject to their respective licenses and terms.
-
-This license does not grant any rights in PDF files, images, datasets, articles, books, or other materials supplied by users or third parties. OCR output generated from such materials remains subject to the rights and restrictions applicable to the original materials. Users are responsible for ensuring that they have the authority to upload, process, reproduce, modify, publish, or distribute their input documents and OCR outputs.
-
-The licensed materials are provided “as is”, without warranties of any kind. To the maximum extent permitted by applicable law, the Licensor shall not be liable for any loss, data loss, service interruption, API charge, or other liability arising from the use of the licensed materials.
-
-For commercial licensing or permissions beyond those stated above, please contact the Licensor.
-
----
-
+[![Creative Commons License](https://i.creativecommons.org/l/by-nc/4.0/88x31.png)](https://creativecommons.org/licenses/by-nc/4.0/)  
 [![知识共享许可协议](https://i.creativecommons.org/l/by-nc/4.0/88x31.png)](https://creativecommons.org/licenses/by-nc/4.0/)
 
+Unless otherwise stated in a specific file, the original software, source code, Python scripts, batch scripts, build scripts, compiled executable files, documentation, and other original materials in this repository are licensed under the [Creative Commons Attribution–NonCommercial 4.0 International License](https://creativecommons.org/licenses/by-nc/4.0/) (**CC BY-NC 4.0**).  
 除特定文件另有说明外，本仓库中的原创软件、源代码、Python 脚本、批处理脚本、构建脚本、编译后的可执行文件、说明文档及其他原创材料，均采用[知识共享署名—非商业性使用 4.0 国际许可协议](https://creativecommons.org/licenses/by-nc/4.0/)（**CC BY-NC 4.0**）授权使用。
 
+Under CC BY-NC 4.0, users may copy, redistribute, modify, and build upon the licensed materials for noncommercial purposes, provided that appropriate attribution is retained and any modifications are clearly indicated.  
 根据 CC BY-NC 4.0，使用者可以出于非商业目的复制、传播、修改和演绎上述许可材料，但须保留适当署名，并明确说明是否进行了修改。
 
+## Additional Academic Permissions   学术用途附加许可
+
+In addition to the permissions granted under CC BY-NC 4.0, the Licensor grants permission for the following uses, even where such uses might otherwise be regarded as commercial:  
 除 CC BY-NC 4.0 已经授予的权限外，即使下列使用可能被视为具有商业性质，许可人仍特别允许：
 
-1. 研究生在学术会议、学术论坛、工作坊、研讨会、学位论文答辩及其他类似学术活动中使用、修改、演示和展示本软件及其他许可材料；以及
+1. Use, modification, demonstration, and presentation of the software and other licensed materials by graduate students in academic conferences, forums, workshops, seminars, thesis defenses, and similar academic activities.  
+   研究生可以在学术会议、学术论坛、工作坊、研讨会、学位论文答辩及其他类似学术活动中使用、修改、演示和展示本软件及其他许可材料。
 
-2. 在学术研究或学术出版成果中使用本软件及其他许可材料，即使成果作者因此获得版税、稿酬、出版报酬或其他类似报酬。
+2. Use of the software and other licensed materials in academic research or academic publications for which an author receives royalties, honoraria, publication remuneration, or other comparable compensation.  
+   使用者可以在学术研究或学术出版成果中使用本软件及其他许可材料，即使成果作者因此获得版税、稿酬、出版报酬或其他类似报酬。
 
+These additional permissions include the reasonable reproduction of source-code excerpts, interface screenshots, workflow descriptions, and results generated with the software where necessary for the permitted academic activity.  
 在上述获准的学术活动确有合理需要时，附加许可还包括引用适量源代码、展示程序界面截图、说明程序工作流程，以及展示使用本软件生成结果的权利。
 
-上述附加许可**不包括**出售、出租、有偿授权、商业托管、将本软件作为收费服务提供、将本软件整合进商业产品或商业服务，或者代表营利性主体使用本软件。实施上述行为，应事先取得许可人的书面许可。
+The above additional permissions do **not** authorize the sale, rental, paid licensing, commercial hosting, provision of the software as a paid service, incorporation of the software into a commercial product or service, or use of the software on behalf of a for-profit entity.  
+上述附加许可**不包括**出售、出租、有偿授权、商业托管、将本软件作为收费服务提供、将本软件整合进商业产品或商业服务，或者代表营利性主体使用本软件。
 
-CC BY-NC 4.0 规定的署名义务仍适用于所有获准使用情形。复制、修改、再分发、演示、展示或介绍许可材料时，使用者应保留本仓库中已有的著作权、许可证和署名声明，并明确说明是否进行了修改。
+Such uses require prior written permission from the Licensor.  
+实施上述行为，应事先取得许可人的书面许可。
 
-本许可证仅适用于仓库权利人享有相应权利的原创材料。第三方程序库、运行环境、API、模型、图标、字体及其他第三方组件，分别适用其各自的许可证和服务条款。
+## Attribution and Modification Notices  署名与修改声明
 
-本许可证不对用户或第三方提供的 PDF、图片、数据集、论文、图书及其他材料授予任何权利。基于上述材料生成的 OCR 结果，仍受原始材料所涉及的权利和限制约束。用户应自行确认其有权上传、处理、复制、修改、发表或传播输入文档及相应 OCR 输出。
+The attribution requirement under CC BY-NC 4.0 remains applicable to all permitted uses.  
+CC BY-NC 4.0 规定的署名义务仍适用于所有获准使用情形。
 
-本许可材料均按“现状”提供，不作任何形式的保证。在适用法律允许的最大范围内，许可人不对因使用许可材料而产生的任何损失、数据丢失、服务中断、API 费用或其他责任承担赔偿责任。
+Users who copy, modify, redistribute, demonstrate, present, or describe the licensed materials must retain the copyright, license, and attribution notices contained in this repository.  
+复制、修改、再分发、演示、展示或介绍许可材料时，使用者应保留本仓库中已有的著作权、许可证和署名声明。
 
+Users must clearly indicate whether modifications have been made.  
+使用者还应明确说明是否对许可材料进行了修改。
+
+## Software Distribution Notice  软件分发说明
+
+This project is **source-available software** and is not distributed under an open-source license approved by the Open Source Initiative (**OSI**).  
+本项目属于**代码公开软件**，并非依据开放源代码促进会（**OSI**）认可的开源许可证进行分发。
+
+Distribution of a compiled executable does not alter, replace, or supersede the licenses applicable to Python, third-party libraries, runtimes, APIs, models, fonts, icons, or other bundled third-party components.  
+分发编译后的可执行文件，不会改变、取代或覆盖 Python、第三方程序库、运行环境、API、模型、字体、图标及其他随附第三方组件各自适用的许可证。
+
+Unless otherwise agreed in writing, this license does not require users who modify the software to publish, disclose, or provide the corresponding modified source code.  
+除非另有书面约定，本许可证不要求修改本软件的使用者公开、披露或提供相应的修改后源代码。
+
+However, users who redistribute a modified version must retain the applicable copyright, license, and attribution notices and must clearly indicate that modifications have been made.  
+但是，使用者再分发修改后的版本时，仍须保留适用的著作权、许可证及署名声明，并明确说明该版本已经过修改。
+
+## Third-Party Components   第三方组件
+
+This license applies only to original materials for which the repository owner holds the relevant rights.  
+本许可证仅适用于仓库权利人享有相应权利的原创材料。
+
+Third-party libraries, runtimes, APIs, models, icons, fonts, and other third-party components remain subject to their respective licenses and terms.  
+第三方程序库、运行环境、API、模型、图标、字体及其他第三方组件，分别适用其各自的许可证和服务条款。
+
+Where this license conflicts with a third-party license or service term, the third-party license or service term governs the relevant component.  
+本许可证与第三方许可证或服务条款存在冲突时，就相应第三方组件而言，以第三方许可证或服务条款为准。
+
+## Input Documents and OCR Outputs   输入文档与 OCR 输出
+
+This license does not grant any rights in PDF files, images, datasets, articles, books, or other materials supplied by users or third parties.  
+本许可证不对用户或第三方提供的 PDF、图片、数据集、论文、图书及其他材料授予任何权利。
+
+OCR output generated from such materials remains subject to the rights and restrictions applicable to the original materials.  
+基于上述材料生成的 OCR 结果，仍受原始材料所涉及的权利和限制约束。
+
+Users are responsible for ensuring that they have the authority to upload, process, reproduce, modify, publish, or distribute their input documents and OCR outputs.  
+用户应自行确认其有权上传、处理、复制、修改、发表或传播输入文档及相应 OCR 输出。
+
+## Disclaimer   免责声明
+
+The licensed materials are provided “as is”, without warranties of any kind.  
+本许可材料均按“现状”提供，不作任何形式的保证。
+
+To the maximum extent permitted by applicable law, the Licensor shall not be liable for any loss, data loss, service interruption, API charge, or other liability arising from the use of the licensed materials.  
+在适用法律允许的最大范围内，许可人不对因使用许可材料而产生的任何损失、数据丢失、服务中断、API 费用或其他责任承担赔偿责任。
+
+For commercial licensing or permissions beyond those stated above, please contact the Licensor.  
 如需商业许可或超出本文件范围的其他授权，请与许可人联系。
-::: 
