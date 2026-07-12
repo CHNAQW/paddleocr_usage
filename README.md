@@ -1,4 +1,12 @@
-﻿# PaddleOCR PDF to Markdown GUI  
+This is an executable (and the original `.py` script for Linux and macOS users!) that uses PaddleOCR to convert scanned, non-searchable **Chinese** PDFs into searchable `.md` and `.json` files (`.md` is much easier for AI to read and understand than PDF!).
+
+For more information, please read the README.
+
+这是一个可执行程序（还附带了供 Linux 和 macOS 用户使用的原始 `.py` 脚本！），通过 PaddleOCR 将扫描版、不可检索的**中文** PDF 转换为可检索的 `.md` 和 `.json` 文件（对 AI 来说，`.md` 可比 PDF 好读、好理解多了！）。
+
+更多信息请参阅 README。
+
+# PaddleOCR PDF to Markdown GUI  
 # PaddleOCR PDF 转 Markdown 图形化工具
 
 **Version: 26.7.12.02**  
