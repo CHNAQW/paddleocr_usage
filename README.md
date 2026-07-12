@@ -777,8 +777,8 @@ EXE位置.txt
 ### The Model List Still Shows an Older Version  
 ### 模型列表仍然显示旧版本
 
-Confirm that the application title shows `26.7.12.01`.  
-确认程序标题中显示 `26.7.12.01`。
+Confirm that the application title shows `26.7.12.02`.  
+确认程序标题中显示 `26.7.12.02`。
 
 Click **Show Script Location**.  
 点击“显示脚本位置”。
