@@ -20,8 +20,7 @@ The attribution requirement under CC BY-NC 4.0 remains fully applicable to all s
 
 针对上述情形，使用者仍须履行署名义务。
 
-# PaddleOCR PDF to Markdown GUI  
-# PaddleOCR PDF 转 Markdown 图形化工具
+# PaddleOCR PDF to Markdown GUI  PaddleOCR PDF 转 Markdown 图形化工具
 
 **Primary platform: Windows 10/11**  
 **主要适用平台：Windows 10/11**
