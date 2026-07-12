@@ -26,8 +26,7 @@ It supports page-level progress reporting, manual status checks, automatic retry
 
 ---
 
-## 1. Features  
-## 1. 功能概述
+## 1. Features  功能概述
 
 - Batch-process all PDF files in a selected folder.  
   批量处理所选文件夹中的全部 PDF。
@@ -82,8 +81,7 @@ It supports page-level progress reporting, manual status checks, automatic retry
 
 ---
 
-## 2. Package Contents  
-## 2. 文件组成
+## 2. Package Contents  文件组成
 
 The package normally contains the following files.  
 安装包通常包含以下文件。
@@ -100,11 +98,9 @@ ZIP 发布包通常也包含上述文件。
 
 ---
 
-## 3. Requirements  
-## 3. 运行要求
+## 3. Requirements  运行要求
 
-### Running from Source  
-### 通过源码运行
+### Running from Source   通过源码运行
 
 Windows 10 or Windows 11 is recommended.  
 建议使用 Windows 10 或 Windows 11。
@@ -129,8 +125,7 @@ requests
 pypdf
 ```
 
-### Building the EXE  
-### 打包 EXE
+### Building the EXE   打包 EXE
 
 The packaging script additionally installs PyInstaller.  
 打包脚本还会额外安装 PyInstaller。
@@ -141,11 +136,9 @@ pyinstaller
 
 ---
 
-## 4. Quick Start  
-## 4. 快速开始
+## 4. Quick Start   快速开始
 
-### Option A: Run with the BAT Launcher  
-### 方式一：通过 BAT 启动
+### Option A: Run with the BAT Launcher  方式一：通过 BAT 启动
 
 Place the following two files in the same folder.  
 请将以下两个文件放在同一文件夹中。
@@ -174,8 +167,7 @@ It installs or updates `requests` and `pypdf`.
 Finally, it starts the graphical interface.  
 最后会启动图形化界面。
 
-### Option B: Run the Python File Directly  
-### 方式二：直接运行 Python 文件
+### Option B: Run the Python File Directly   方式二：直接运行 Python 文件
 
 Install the dependencies first.  
 请先安装依赖。
@@ -192,8 +184,7 @@ python paddleocr_pdf_to_md_gui.py
 ```
 
 
-### Option C: Run on Linux  
-### 方式三：在 Linux 上运行
+### Option C: Run on Linux  方式三：在 Linux 上运行
 
 The `.bat` launcher and packaged `.exe` are Windows-only.  
 `.bat` 启动器和打包后的 `.exe` 仅适用于 Windows。
@@ -263,8 +254,7 @@ sudo pacman -S tk
 After installing Tkinter, restart the application.  
 安装 Tkinter 后，请重新启动程序。
 
-### Option D: Run on macOS  
-### 方式四：在 macOS 上运行
+### Option D: Run on macOS   方式四：在 macOS 上运行
 
 The `.bat` launcher and packaged Windows `.exe` cannot run on macOS.  
 `.bat` 启动器和 Windows `.exe` 无法在 macOS 上运行。
@@ -327,8 +317,7 @@ Linux 与 macOS 用户应保留 `.py` 文件，并通过上述虚拟环境运行
 
 ---
 
-## 5. Access Token Setup  
-## 5. Access Token 设置
+## 5. Access Token Setup   Access Token 设置
 
 Open the application.  
 打开程序。
@@ -357,8 +346,7 @@ Do not share it, upload it publicly, or include it in a public repository.
 
 ---
 
-## 6. Basic Conversion Workflow  
-## 6. 基本转换流程
+## 6. Basic Conversion Workflow   基本转换流程
 
 Select the PDF input folder.  
 选择 PDF 输入文件夹。
@@ -395,8 +383,7 @@ It then polls the server until the task is complete.
 
 ---
 
-## 7. Available Models  
-## 7. 可选模型
+## 7. Available Models  可选模型
 
 The application currently provides the following models.  
 程序当前提供以下模型。
@@ -416,11 +403,9 @@ Actual availability depends on the PaddleOCR account and server-side API configu
 
 ---
 
-## 8. Output Files  
-## 8. 输出文件
+## 8. Output Files  输出文件
 
-### Normal PDFs of 50 MB or Less  
-### 50MB 及以下的普通 PDF
+### Normal PDFs of 50 MB or Less   50MB 及以下的普通 PDF
 
 For a source file named `example.pdf`, the application normally creates the following files.  
 对于名为 `example.pdf` 的源文件，程序通常会生成以下文件。
@@ -437,8 +422,7 @@ If an error occurs, the application may also create the following diagnostic fil
 example.error.txt
 ```
 
-### PDFs Larger Than 50 MB  
-### 超过 50MB 的 PDF
+### PDFs Larger Than 50 MB   超过 50MB 的 PDF
 
 Large PDFs are automatically split by page into parts of approximately 45 MB.  
 程序会按页将大 PDF 自动拆分为约 45MB 的分段。
@@ -476,8 +460,7 @@ Temporary split PDFs and intermediate results are removed after a successful mer
 Job cache files may remain for troubleshooting and task recovery.  
 为便于排错和任务恢复，job 缓存文件可能继续保留。
 
-### Log File  
-### 日志文件
+### Log File   日志文件
 
 The output directory contains the following log file.  
 输出目录中会生成以下日志文件。
@@ -489,8 +472,7 @@ paddleocr_batch_log.txt
 The log records successful files, skipped files, failed files, model selection, input/output paths, and processing times.  
 日志会记录成功、跳过、失败、模型选择、输入输出路径和处理时间。
 
-### Job Cache  
-### Job 缓存
+### Job Cache   Job 缓存
 
 Submitted task IDs are stored in the following directory.  
 已提交任务的 ID 保存在以下目录。
@@ -507,8 +489,7 @@ This may avoid submitting the same document again.
 
 ---
 
-## 9. Automatic Large-PDF Splitting  
-## 9. 超过 50MB 的 PDF 自动拆分
+## 9. Automatic Large-PDF Splitting  超过 50MB 的 PDF 自动拆分
 
 The PaddleOCR local upload path has a 50 MB file-size limit.  
 PaddleOCR 本地上传路径存在 50MB 的文件大小限制。
@@ -545,8 +526,7 @@ Encrypted or damaged PDFs may also fail to split.
 
 ---
 
-## 10. Progress and Manual Query  
-## 10. 进度与手动查询
+## 10. Progress and Manual Query   进度与手动查询
 
 The application provides a file-progress indicator.  
 程序提供文件总进度条。
@@ -577,8 +557,7 @@ It does not submit a duplicate job.
 
 ---
 
-## 11. Queue-Full Retry Behavior  
-## 11. 队列已满时的自动重试
+## 11. Queue-Full Retry Behavior   队列已满时的自动重试
 
 PaddleOCR may return the following message.  
 PaddleOCR 可能返回以下提示。
@@ -610,8 +589,7 @@ Rate-limit responses are also retried after a delay.
 
 ---
 
-## 12. Stopping a Conversion  
-## 12. 停止转换
+## 12. Stopping a Conversion  停止转换
 
 The **Stop Conversion** button uses a red background and white text.  
 “停止转换”按钮采用红底白字。
@@ -636,8 +614,7 @@ Stopping the application does not necessarily stop server-side processing.
 
 ---
 
-## 13. Repair JSON to Markdown  
-## 13. 将 JSON 修复为 Markdown
+## 13. Repair JSON to Markdown  将 JSON 修复为 Markdown
 
 Use **Repair JSON to MD** when OCR completed but no usable Markdown was produced.  
 当 OCR 已完成但没有生成可用 Markdown 时，可以使用“修复JSON为MD”。
@@ -682,8 +659,7 @@ filename.repair_error.txt
 
 ---
 
-## 14. Building the Standalone EXE  
-## 14. 打包独立 EXE
+## 14. Building the Standalone EXE  打包独立 EXE
 
 Keep the following files in the same folder.  
 请将以下文件放在同一文件夹中。
@@ -737,11 +713,9 @@ Internet access and a valid PaddleOCR API token are still required.
 
 ---
 
-## 15. Troubleshooting  
-## 15. 常见问题
+## 15. Troubleshooting  常见问题
 
-### The EXE Cannot Be Found  
-### 找不到生成的 EXE
+### The EXE Cannot Be Found   找不到生成的 EXE
 
 Run the packaging BAT file again.  
 重新运行打包 BAT 文件。
@@ -764,8 +738,7 @@ You can also open the following text file.
 EXE位置.txt
 ```
 
-### The Model List Still Shows an Older Version  
-### 模型列表仍然显示旧版本
+### The Model List Still Shows an Older Version  模型列表仍然显示旧版本
 
 Confirm that the application title shows `26.7.12.02`.  
 确认程序标题中显示 `26.7.12.02`。
@@ -779,8 +752,7 @@ Check which `.py` or `.exe` is actually running.
 An older BAT file may be launching a different copy.  
 旧 BAT 可能正在启动其他目录中的旧副本。
 
-### The API Key Check Fails  
-### API Key 检测失败
+### The API Key Check Fails   API Key 检测失败
 
 Confirm that the token was copied completely.  
 检查 Token 是否完整复制。
@@ -794,8 +766,7 @@ Confirm that the PaddleOCR API service is available to the account.
 Update the token and test again.  
 更新 Token 后重新检测。
 
-### A Job Appears Stuck  
-### 任务看起来卡住
+### A Job Appears Stuck   任务看起来卡住
 
 Click **Manual Query Current Result**.  
 点击“手动查询当前结果”。
@@ -809,8 +780,7 @@ Check the runtime log.
 Restarting the application may reuse the stored `jobId`.  
 重启程序后，程序可能复用已保存的 `jobId`。
 
-### OCR Finishes but No Markdown Appears  
-### OCR 完成但没有生成 Markdown
+### OCR Finishes but No Markdown Appears   OCR 完成但没有生成 Markdown
 
 Use **Repair JSON to MD**.  
 使用“修复JSON为MD”。
@@ -818,8 +788,7 @@ Use **Repair JSON to MD**.
 Select the generated `.raw.json`, downloaded `.json`, or `.jsonl` file.  
 选择生成的 `.raw.json`、下载的 `.json` 或 `.jsonl` 文件。
 
-### A Large PDF Cannot Be Split  
-### 大 PDF 无法拆分
+### A Large PDF Cannot Be Split   大 PDF 无法拆分
 
 The PDF may be encrypted.  
 PDF 可能已经加密。
@@ -840,8 +809,7 @@ Run the following command to update it.
 python -m pip install --upgrade pypdf
 ```
 
-### The BAT Window Reports a Dependency-Installation Error  
-### BAT 显示依赖安装失败
+### The BAT Window Reports a Dependency-Installation Error   BAT 显示依赖安装失败
 
 Check the internet connection.  
 检查网络连接。
@@ -857,8 +825,7 @@ Check whether security software blocked Python or pip.
 
 ---
 
-## 16. Privacy and Security  
-## 16. 隐私与安全
+## 16. Privacy and Security  隐私与安全
 
 PDF files are uploaded to the PaddleOCR online API for processing.  
 PDF 文件会被上传至 PaddleOCR 在线 API 处理。
@@ -884,8 +851,7 @@ Remove the saved token before sharing the computer, application folder, screensh
 
 ---
 
-## 17. Known Limitations  
-## 17. 已知限制
+## 17. Known Limitations   已知限制
 
 The application requires internet access.  
 本程序必须联网使用。
