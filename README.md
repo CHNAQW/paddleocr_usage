@@ -1,10 +1,10 @@
 This is an executable (and the original `.py` script for Linux and macOS users!) that uses PaddleOCR to convert scanned, non-searchable **Chinese** PDFs into searchable `.md` and `.json` files (`.md` is much easier for AI to read and understand than PDF!).
 
-For more information, please read the README.
+For more information, please read the README. Terms And Condition please read below.
 
 这是一个可执行程序（还附带了供 Linux 和 macOS 用户使用的原始 `.py` 脚本！），通过 PaddleOCR 将扫描版、不可检索的**中文** PDF 转换为可检索的 `.md` 和 `.json` 文件（对 AI 来说，`.md` 可比 PDF 好读、好理解多了！）。
 
-更多信息请参阅 README。
+更多信息请参阅 README，使用条件请见下方条款。
 
 # PaddleOCR PDF to Markdown GUI  
 # PaddleOCR PDF 转 Markdown 图形化工具
@@ -904,6 +904,130 @@ An unusually large single page may still remain above the upload threshold.
 
 Markdown quality depends on the selected model, document layout, image quality, language, and server output.  
 Markdown 质量取决于所选模型、文档版式、图像质量、语言和服务端输出。
+
+# License
+
+## 1. Software
+
+Unless otherwise stated in a specific file or release, the original source code, Python scripts, batch scripts, build scripts, and compiled executable files authored for this repository (collectively, the **“Software”**) are made available under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/), subject to the additional permissions stated below.
+
+## 2. Additional Academic Permissions
+
+In addition to the permissions granted under the PolyForm Noncommercial License 1.0.0, the Licensor grants permission for the following uses, even where such uses might otherwise be regarded as commercial:
+
+1. use, modification, demonstration, and presentation of the Software by graduate students in academic conferences, forums, workshops, seminars, thesis defenses, and similar academic activities; and
+
+2. use of the Software for academic research and academic publications for which an author receives royalties, honoraria, publication remuneration, or other comparable compensation.
+
+These additional permissions include the right to reproduce reasonable excerpts of the source code, screenshots of the interface, descriptions of the workflow, and research results generated with the Software where reasonably necessary for an academic presentation or publication.
+
+These additional permissions do **not** authorize the sale, rental, paid licensing, commercial hosting, provision of the Software as a paid service, incorporation of the Software into a commercial product or service, or use of the Software on behalf of a for-profit entity. Such uses require prior written permission from the Licensor.
+
+## 3. Attribution and Notices
+
+All permitted uses remain subject to attribution.
+
+Users who copy, modify, redistribute, present, or describe the Software must:
+
+1. retain the copyright, license, and attribution notices contained in the repository; and
+
+2. clearly indicate whether modifications have been made.
+
+## 4. Documentation and Other Non-Software Materials
+
+[![Creative Commons License](https://i.creativecommons.org/l/by-nc/4.0/88x31.png)](https://creativecommons.org/licenses/by-nc/4.0/)
+
+Unless otherwise stated, the original documentation, explanatory text, diagrams, screenshots, and other non-software materials authored for this repository are licensed under the [Creative Commons Attribution–NonCommercial 4.0 International License](https://creativecommons.org/licenses/by-nc/4.0/) (**CC BY-NC 4.0**).
+
+The additional academic permissions stated in Section 2 also apply to these materials.
+
+The attribution requirements stated in Section 3 remain fully applicable.
+
+## 5. Input Documents and OCR Outputs
+
+This license does not grant any rights in PDF files, images, datasets, articles, books, or other materials supplied by users or third parties.
+
+OCR output generated from a user-supplied document remains subject to the copyright, database rights, privacy rights, contractual restrictions, and other rights applicable to the original document.
+
+Users are solely responsible for ensuring that they have the legal authority to upload, process, reproduce, modify, publish, or distribute any input document and resulting OCR output.
+
+## 6. Third-Party Components and Services
+
+Third-party libraries, runtimes, icons, fonts, APIs, and other components included in, bundled with, or used by the Software remain subject to their respective licenses and terms.
+
+This license does not grant any rights in the PaddleOCR service, PaddleOCR models, third-party APIs, Python, Tcl/Tk, PyInstaller, `requests`, `pypdf`, or any other third-party component.
+
+Where a third-party license conflicts with this document, the third-party license governs that component.
+
+## 7. Disclaimer
+
+THE SOFTWARE AND OTHER MATERIALS ARE PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, ACCURACY, AVAILABILITY, SECURITY, OR NON-INFRINGEMENT.
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE LICENSOR SHALL NOT BE LIABLE FOR ANY CLAIM, LOSS, DATA LOSS, SERVICE INTERRUPTION, API CHARGE, OR OTHER LIABILITY ARISING FROM OR RELATED TO THE SOFTWARE, THE MATERIALS, OR THEIR USE.
+
+For commercial licensing or permissions beyond those stated above, contact the Licensor.
+
+---
+
+## 1. 软件
+
+除特定文件或发行版本另有说明外，本仓库作者原创的源代码、Python 脚本、批处理脚本、构建脚本及编译后的可执行文件（以下统称“**本软件**”），依据 [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/) 提供，并同时适用下述附加许可。
+
+## 2. 学术用途附加许可
+
+除 PolyForm Noncommercial License 1.0.0 已经授予的权限外，即使下列使用可能被视为具有商业性质，许可人仍特别允许：
+
+1. 研究生在学术会议、学术论坛、工作坊、研讨会、学位论文答辩及其他类似学术活动中使用、修改、演示和展示本软件；以及
+
+2. 使用本软件开展学术研究或形成学术出版成果，即使成果作者因此获得版税、稿酬、出版报酬或其他类似报酬。
+
+在学术报告或学术出版确有合理需要时，上述附加许可还包括引用适量源代码、展示程序界面截图、说明程序工作流程，以及使用本软件生成研究结果的权利。
+
+上述附加许可**不包括**出售、出租、有偿授权、商业托管、将本软件作为收费服务提供、将本软件整合进商业产品或商业服务，或者代表营利性主体使用本软件。实施上述行为，应事先取得许可人的书面许可。
+
+## 3. 署名与许可声明
+
+所有获准使用的情形均须履行署名义务。
+
+复制、修改、再分发、展示或介绍本软件时，使用者应当：
+
+1. 保留仓库中已有的著作权、许可证和署名声明；以及
+
+2. 明确说明是否对本软件进行了修改。
+
+## 4. 文档及其他非软件材料
+
+[![知识共享许可协议](https://i.creativecommons.org/l/by-nc/4.0/88x31.png)](https://creativecommons.org/licenses/by-nc/4.0/)
+
+除另有说明外，本仓库作者原创的说明文档、解释性文字、图示、截图及其他非软件材料，采用[知识共享署名—非商业性使用 4.0 国际许可协议](https://creativecommons.org/licenses/by-nc/4.0/)（**CC BY-NC 4.0**）授权使用。
+
+本文件第二节规定的学术用途附加许可，同样适用于上述材料。
+
+本文件第三节规定的署名要求仍然完全适用。
+
+## 5. 输入文档与 OCR 输出
+
+本许可证不对用户或第三方提供的 PDF、图片、数据集、论文、图书及其他材料授予任何权利。
+
+基于用户提供文档生成的 OCR 结果，仍受原始文档所涉及的著作权、数据库权利、隐私权、合同限制及其他权利约束。
+
+用户应自行确认其有权上传、处理、复制、修改、发表或传播输入文档及相应 OCR 输出，并自行承担由此产生的责任。
+
+## 6. 第三方组件与服务
+
+本软件包含、打包或调用的第三方程序库、运行环境、图标、字体、API 及其他组件，分别适用其各自的许可证和服务条款。
+
+本许可证不对 PaddleOCR 服务、PaddleOCR 模型、第三方 API、Python、Tcl/Tk、PyInstaller、`requests`、`pypdf` 或其他第三方组件授予权利。
+
+本文件与第三方许可证存在冲突时，就相应第三方组件而言，以第三方许可证为准。
+
+## 7. 免责声明
+
+本软件及其他材料均按“现状”提供，不作任何明示或默示保证，包括但不限于对适销性、特定用途适用性、准确性、可用性、安全性及不侵权的保证。
+
+在适用法律允许的最大范围内，许可人不对因本软件、相关材料或其使用而产生的任何请求、损失、数据丢失、服务中断、API 费用或其他责任承担赔偿责任。
+
+如需商业许可或超出本文件范围的其他授权，请与许可人联系。
 
 EXE packaging is designed primarily for Windows.  
 EXE 打包流程主要面向 Windows。
