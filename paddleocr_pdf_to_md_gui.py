@@ -14,6 +14,11 @@ PaddleOCR PDF -> Markdown 批处理图形化工具
 9. Access Token / API Key 保存到用户目录配置文件，不需要每次输入。
 10. 默认模型保留 PaddleOCR-VL-1.6。
 11. 图形界面随窗口大小自适应。
+12. 文件总进度实时显示文件总数、当前序号和整体百分比；大文件额外显示分段进度。
+13. 内置统一应用图标，覆盖 EXE 文件、程序窗口、任务栏及 Alt+Tab 图标。
+14. 通过 Win32 窗口类图标与 WM_SETICON 强制设置标题栏图标。
+15. 在程序内容区左上角显示应用图标，避免系统标题栏隐藏图标时完全不可见。
+16. 移除字体、图标及脚本位置相关运行日志和脚本位置按钮。
 """
 
 from __future__ import annotations
@@ -48,8 +53,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "PaddleOCR PDF批量转Markdown"
-APP_VERSION = "26.7.12.02"
-SCRIPT_PATH = Path(sys.executable).resolve() if getattr(sys, "frozen", False) else Path(__file__).resolve()
+APP_VERSION = "26.7.18.03"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -73,6 +77,232 @@ MODEL_CHOICES = [
     "PP-StructureV3",
 ]
 
+
+APP_ICON_PNG_NAME = "app_icon.png"
+APP_ICON_ICO_NAME = "app_icon.ico"
+WINDOWS_APP_USER_MODEL_ID = "PaddleOCR.PDFToMarkdown.GUI"
+
+
+def resource_path(relative_name: str) -> Path:
+    """Return a bundled-resource path in source and PyInstaller EXE modes."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(getattr(sys, "_MEIPASS")) / relative_name
+    return Path(__file__).resolve().parent / relative_name
+
+
+def _collect_windows_process_handles(root: tk.Tk) -> list[int]:
+    """Collect Tk wrapper HWNDs and all top-level HWNDs owned by this process."""
+    if not sys.platform.startswith("win"):
+        return []
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        GA_ROOT = 2
+        GA_ROOTOWNER = 3
+
+        handles: set[int] = set()
+
+        root.update_idletasks()
+        client_hwnd = int(root.winfo_id())
+        if client_hwnd:
+            handles.add(client_hwnd)
+
+            get_parent = user32.GetParent
+            get_parent.argtypes = [wintypes.HWND]
+            get_parent.restype = wintypes.HWND
+            parent = get_parent(client_hwnd)
+            if parent:
+                handles.add(int(parent))
+
+            get_ancestor = user32.GetAncestor
+            get_ancestor.argtypes = [wintypes.HWND, wintypes.UINT]
+            get_ancestor.restype = wintypes.HWND
+
+            for flag in (GA_ROOT, GA_ROOTOWNER):
+                ancestor = get_ancestor(client_hwnd, flag)
+                if ancestor:
+                    handles.add(int(ancestor))
+
+        current_pid = int(kernel32.GetCurrentProcessId())
+
+        EnumWindowsProc = ctypes.WINFUNCTYPE(
+            wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
+        )
+
+        get_window_pid = user32.GetWindowThreadProcessId
+        get_window_pid.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        get_window_pid.restype = wintypes.DWORD
+
+        @EnumWindowsProc
+        def enum_callback(hwnd, _lparam):
+            pid = wintypes.DWORD()
+            get_window_pid(hwnd, ctypes.byref(pid))
+            if int(pid.value) == current_pid:
+                handles.add(int(hwnd))
+            return True
+
+        user32.EnumWindows(enum_callback, 0)
+        setattr(root, "_enum_windows_callback", enum_callback)
+
+        return [handle for handle in handles if handle]
+    except Exception:
+        return []
+
+
+def _set_windows_native_icons(root: tk.Tk, ico_path: Path) -> str:
+    """
+    Force the icon into the native Windows title bar.
+
+    This applies WM_SETICON to every HWND owned by the current process and also
+    updates the window-class HICON/HICONSM values. The latter is important for
+    Tk/PyInstaller combinations where setting only the Tk icon is insufficient.
+    """
+    if not sys.platform.startswith("win") or not ico_path.exists():
+        return ""
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+
+        IMAGE_ICON = 1
+        LR_LOADFROMFILE = 0x0010
+        WM_SETICON = 0x0080
+        ICON_SMALL = 0
+        ICON_BIG = 1
+        GCLP_HICON = -14
+        GCLP_HICONSM = -34
+
+        load_image = user32.LoadImageW
+        load_image.argtypes = [
+            wintypes.HINSTANCE,
+            wintypes.LPCWSTR,
+            wintypes.UINT,
+            ctypes.c_int,
+            ctypes.c_int,
+            wintypes.UINT,
+        ]
+        load_image.restype = wintypes.HANDLE
+
+        send_message = user32.SendMessageW
+        send_message.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        ]
+        send_message.restype = wintypes.LPARAM
+
+        if hasattr(user32, "SetClassLongPtrW"):
+            set_class_icon = user32.SetClassLongPtrW
+            set_class_icon.argtypes = [
+                wintypes.HWND,
+                ctypes.c_int,
+                ctypes.c_void_p,
+            ]
+            set_class_icon.restype = ctypes.c_void_p
+        else:
+            set_class_icon = user32.SetClassLongW
+            set_class_icon.argtypes = [
+                wintypes.HWND,
+                ctypes.c_int,
+                wintypes.LONG,
+            ]
+            set_class_icon.restype = wintypes.DWORD
+
+        large_icon = load_image(
+            None, str(ico_path), IMAGE_ICON, 32, 32, LR_LOADFROMFILE
+        )
+        small_icon = load_image(
+            None, str(ico_path), IMAGE_ICON, 16, 16, LR_LOADFROMFILE
+        )
+
+        handles = _collect_windows_process_handles(root)
+        applied = 0
+
+        for raw_hwnd in handles:
+            hwnd = wintypes.HWND(raw_hwnd)
+
+            if large_icon:
+                send_message(
+                    hwnd, WM_SETICON, ICON_BIG, int(large_icon)
+                )
+                try:
+                    set_class_icon(
+                        hwnd, GCLP_HICON, ctypes.c_void_p(int(large_icon))
+                    )
+                except Exception:
+                    pass
+                applied += 1
+
+            if small_icon:
+                send_message(
+                    hwnd, WM_SETICON, ICON_SMALL, int(small_icon)
+                )
+                try:
+                    set_class_icon(
+                        hwnd, GCLP_HICONSM, ctypes.c_void_p(int(small_icon))
+                    )
+                except Exception:
+                    pass
+                applied += 1
+
+        setattr(root, "_native_large_icon_handle", large_icon)
+        setattr(root, "_native_small_icon_handle", small_icon)
+
+        return "Windows 原生图标" if applied else ""
+    except Exception:
+        return ""
+
+
+def apply_application_icon(root: tk.Tk) -> str:
+    """Apply the bundled icon to Tk and the Windows native window class."""
+    icon_png_path = resource_path(APP_ICON_PNG_NAME)
+    icon_ico_path = resource_path(APP_ICON_ICO_NAME)
+    applied: list[str] = []
+
+    if icon_png_path.exists():
+        try:
+            icon_photo = tk.PhotoImage(file=str(icon_png_path))
+            root.iconphoto(True, icon_photo)
+            setattr(root, "_application_icon_photo", icon_photo)
+            applied.append("Tk PNG")
+        except Exception:
+            pass
+
+    if sys.platform.startswith("win") and icon_ico_path.exists():
+        try:
+            root.iconbitmap(default=str(icon_ico_path))
+            applied.append("Tk ICO")
+        except Exception:
+            try:
+                root.wm_iconbitmap(str(icon_ico_path))
+                applied.append("Tk ICO")
+            except Exception:
+                pass
+
+    def refresh_native_icon(_event=None) -> None:
+        result = _set_windows_native_icons(root, icon_ico_path)
+        if result:
+            setattr(root, "_native_icon_refresh_result", result)
+
+    refresh_native_icon()
+
+    if sys.platform.startswith("win"):
+        root.bind("<Map>", refresh_native_icon, add="+")
+        root.bind("<FocusIn>", refresh_native_icon, add="+")
+        for delay in (0, 100, 300, 800, 1500, 3000):
+            root.after(delay, refresh_native_icon)
+
+    if applied:
+        return "、".join(dict.fromkeys(applied))
+    return ""
 
 
 def choose_cjk_font_family(root: tk.Tk) -> str:
@@ -391,6 +621,7 @@ def process_split_pdf_async(
     overwrite: bool,
     stop_checker,
     progress_callback,
+    segment_progress_callback,
     log_callback,
     manual_query_event: Optional[threading.Event] = None,
 ) -> tuple[str, dict[str, Any]]:
@@ -398,6 +629,7 @@ def process_split_pdf_async(
     parts, work_dir, total_pages = split_pdf_for_upload(pdf_path, output_root, log_callback)
     merged_markdown_parts: list[str] = []
     merged_part_json: list[dict[str, Any]] = []
+    segment_progress_callback(0, len(parts))
 
     for part in parts:
         if stop_checker():
@@ -444,6 +676,7 @@ def process_split_pdf_async(
         merged_markdown_parts.append(
             f"<!-- 自动拆分 OCR：原 PDF 第 {part.page_start}-{part.page_end} 页 -->\n\n{markdown.strip()}"
         )
+        segment_progress_callback(part.part_index, len(parts))
         merged_part_json.append(
             {
                 "partIndex": part.part_index,
@@ -1299,8 +1532,14 @@ class PaddleOCRBatchGUI:
         self.token_state_var = tk.StringVar(value=self.token_state_text())
         self.status_var = tk.StringVar(value="准备就绪。")
         self.file_progress_var = tk.DoubleVar(value=0)
+        self.file_progress_text_var = tk.StringVar(value="文件总进度：尚未开始")
         self.page_progress_var = tk.DoubleVar(value=0)
         self.page_progress_text_var = tk.StringVar(value="当前文件页数进度：未开始")
+        self.split_progress_text_var = tk.StringVar(value="")
+        self.total_files = 0
+        self.current_file_index = 0
+        self.current_file_percent = 0.0
+        self.completed_files = 0
 
         self._build_ui()
         self.root.after(100, self._poll_log_queue)
@@ -1327,10 +1566,33 @@ class PaddleOCRBatchGUI:
     def _build_ui(self) -> None:
         pad = {"padx": 10, "pady": 6}
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(3, weight=1)
+        self.root.rowconfigure(4, weight=1)
+
+        brand = ttk.Frame(self.root)
+        brand.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 0))
+        brand.columnconfigure(1, weight=1)
+
+        try:
+            brand_icon_source = tk.PhotoImage(
+                file=str(resource_path(APP_ICON_PNG_NAME))
+            )
+            brand_icon = brand_icon_source.subsample(14, 14)
+            self._brand_icon_source = brand_icon_source
+            self._brand_icon = brand_icon
+            ttk.Label(brand, image=brand_icon).grid(
+                row=0, column=0, sticky="w", padx=(0, 8)
+            )
+        except Exception:
+            pass
+
+        ttk.Label(
+            brand,
+            text=f"{APP_NAME}  {APP_VERSION}",
+            font=("TkDefaultFont", 12, "bold"),
+        ).grid(row=0, column=1, sticky="w")
 
         top = ttk.LabelFrame(self.root, text="1. 选择项目文件夹")
-        top.grid(row=0, column=0, sticky="ew", **pad)
+        top.grid(row=1, column=0, sticky="ew", **pad)
         top.columnconfigure(1, weight=1)
 
         ttk.Label(top, text="PDF输入文件夹：").grid(row=0, column=0, sticky="w", padx=8, pady=8)
@@ -1342,7 +1604,7 @@ class PaddleOCRBatchGUI:
         ttk.Button(top, text="选择…", command=self.choose_output_dir).grid(row=1, column=2, padx=8, pady=8)
 
         opts = ttk.LabelFrame(self.root, text="2. 设置")
-        opts.grid(row=1, column=0, sticky="ew", **pad)
+        opts.grid(row=2, column=0, sticky="ew", **pad)
         opts.columnconfigure(0, weight=1)
 
         options_row = ttk.Frame(opts)
@@ -1376,14 +1638,15 @@ class PaddleOCRBatchGUI:
         ttk.Button(utility_row, text="扫描PDF数量", command=self.scan_pdfs).pack(side="left", padx=4, pady=4)
         ttk.Button(utility_row, text="修复JSON为MD", command=self.repair_json_to_md).pack(side="left", padx=4, pady=4)
         ttk.Button(utility_row, text="打开输出文件夹", command=self.open_output_dir).pack(side="left", padx=4, pady=4)
-        ttk.Button(utility_row, text="显示脚本位置", command=self.show_script_path).pack(side="left", padx=4, pady=4)
         ttk.Button(utility_row, text="显示配置位置", command=self.show_config_path).pack(side="left", padx=4, pady=4)
 
         run_box = ttk.LabelFrame(self.root, text="3. 批处理")
-        run_box.grid(row=2, column=0, sticky="ew", **pad)
+        run_box.grid(row=3, column=0, sticky="ew", **pad)
         run_box.columnconfigure(0, weight=1)
 
-        ttk.Label(run_box, text="文件总进度：").grid(row=0, column=0, sticky="w", padx=8, pady=(8, 0))
+        ttk.Label(run_box, textvariable=self.file_progress_text_var).grid(
+            row=0, column=0, sticky="w", padx=8, pady=(8, 0)
+        )
         self.file_progress = ttk.Progressbar(run_box, mode="determinate", maximum=100, variable=self.file_progress_var)
         self.file_progress.grid(row=1, column=0, sticky="ew", padx=8, pady=6)
 
@@ -1391,11 +1654,15 @@ class PaddleOCRBatchGUI:
         self.page_progress = ttk.Progressbar(run_box, mode="determinate", maximum=100, variable=self.page_progress_var)
         self.page_progress.grid(row=3, column=0, sticky="ew", padx=8, pady=6)
 
+        self.split_progress_label = ttk.Label(run_box, textvariable=self.split_progress_text_var)
+        self.split_progress_label.grid(row=4, column=0, sticky="w", padx=8, pady=(2, 0))
+        self.split_progress_label.grid_remove()
+
         self.status_label = ttk.Label(run_box, textvariable=self.status_var, wraplength=900)
-        self.status_label.grid(row=4, column=0, sticky="ew", padx=8, pady=(8, 2))
+        self.status_label.grid(row=5, column=0, sticky="ew", padx=8, pady=(8, 2))
 
         action_row = ttk.Frame(run_box)
-        action_row.grid(row=5, column=0, sticky="ew", padx=8, pady=(2, 8))
+        action_row.grid(row=6, column=0, sticky="ew", padx=8, pady=(2, 8))
         action_row.columnconfigure(0, weight=1)
         self.manual_query_btn = ttk.Button(
             action_row, text="手动查询当前结果", command=self.manual_query_current_result, state="disabled"
@@ -1421,7 +1688,7 @@ class PaddleOCRBatchGUI:
         self.start_btn.grid(row=0, column=3, sticky="e", padx=(4, 0))
 
         log_frame = ttk.LabelFrame(self.root, text="运行日志")
-        log_frame.grid(row=3, column=0, sticky="nsew", **pad)
+        log_frame.grid(row=4, column=0, sticky="nsew", **pad)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
@@ -1434,7 +1701,6 @@ class PaddleOCRBatchGUI:
         self.root.bind("<Configure>", self._on_resize)
         self.log("程序已启动。第一次运行请先输入 Access Token/API Key。")
         self.log(f"当前程序版本：{APP_VERSION}")
-        self.log(f"脚本位置：{SCRIPT_PATH}")
         self.log(f"配置文件位置：{CONFIG_PATH}")
         self.log("提示：超过 50MB 的 PDF 会自动拆分、逐段 OCR，并合并为一个同名 .md 和 .json。")
         self.log("提示：运行中可点击“手动查询当前结果”，立即查询当前 OCR 任务状态。")
@@ -1447,6 +1713,28 @@ class PaddleOCRBatchGUI:
                 self.status_label.configure(wraplength=wrap)
             except Exception:
                 pass
+
+    def _refresh_file_progress_display(self) -> None:
+        total = max(int(self.total_files), 0)
+        if total <= 0:
+            self.file_progress_var.set(0)
+            self.file_progress_text_var.set("文件总进度：尚未开始")
+            return
+
+        index = min(max(int(self.current_file_index), 0), total)
+        file_percent = min(max(float(self.current_file_percent), 0.0), 100.0)
+        if index > 0:
+            overall_percent = ((index - 1) + file_percent / 100.0) / total * 100.0
+            self.file_progress_text_var.set(
+                f"文件总进度：共 {total} 个文件，正在处理第 {index} 个，整体进度 {overall_percent:.2f}%"
+            )
+        else:
+            overall_percent = min(max(self.completed_files / total * 100.0, 0.0), 100.0)
+            self.file_progress_text_var.set(
+                f"文件总进度：共 {total} 个文件，尚未开始处理，整体进度 {overall_percent:.2f}%"
+            )
+        self.file_progress.config(mode="determinate", maximum=100)
+        self.file_progress_var.set(overall_percent)
 
     def ask_token_if_missing(self) -> None:
         if not self.config.token:
@@ -1545,11 +1833,6 @@ class PaddleOCRBatchGUI:
                     pass
         summary = f"JSON修复结束：成功 {ok}，失败 {failed}。输出目录：{output_dir}"
         self.log_queue.put(("repair_done", {"summary": summary, "outputs": outputs}))
-
-    def show_script_path(self) -> None:
-        msg = f"当前正在运行的脚本位置：\n{SCRIPT_PATH}\n\n版本：{APP_VERSION}"
-        self.log(msg)
-        messagebox.showinfo("脚本位置", msg, parent=self.root)
 
     def show_config_path(self) -> None:
         msg = f"配置文件位置：\n{CONFIG_PATH}"
@@ -1667,10 +1950,19 @@ class PaddleOCRBatchGUI:
         self.start_btn.config(state="disabled")
         self.manual_query_btn.config(state="normal")
         self.stop_btn.config(state="normal")
-        self.file_progress.config(maximum=len(pdfs), value=0)
+        self.total_files = len(pdfs)
+        self.current_file_index = 0
+        self.current_file_percent = 0.0
+        self.completed_files = 0
+        self.file_progress.config(maximum=100, value=0)
         self.file_progress_var.set(0)
+        self.file_progress_text_var.set(
+            f"文件总进度：共 {len(pdfs)} 个文件，尚未开始处理，整体进度 0.00%"
+        )
         self.page_progress_var.set(0)
         self.page_progress_text_var.set("当前文件页数进度：未开始")
+        self.split_progress_text_var.set("")
+        self.split_progress_label.grid_remove()
         self.status_var.set("批处理开始。")
 
         args = (
@@ -1747,10 +2039,12 @@ class PaddleOCRBatchGUI:
         def progress_callback(state: str, done_pages: int, total_pages: int, percent: float, message: str) -> None:
             self.log_queue.put(("page_progress", (state, done_pages, total_pages, percent, message)))
 
+        def segment_progress_callback(completed_segments: int, total_segments: int) -> None:
+            self.log_queue.put(("split_progress", (completed_segments, total_segments)))
+
         write_log_line("=" * 80)
         write_log_line(f"开始时间：{start_time:%Y-%m-%d %H:%M:%S}")
         write_log_line(f"程序版本：{APP_VERSION}")
-        write_log_line(f"脚本位置：{SCRIPT_PATH}")
         write_log_line(f"输入目录：{input_dir}")
         write_log_line(f"输出目录：{output_dir}")
         write_log_line(f"模型：{model_name}")
@@ -1763,8 +2057,10 @@ class PaddleOCRBatchGUI:
                 break
 
             out_path = build_output_path(pdf, input_dir, output_dir, preserve_subfolders, existing)
+            self.log_queue.put(("file_start", (index, len(pdfs), pdf.name)))
             self.log_queue.put(("status", f"正在处理 {index}/{len(pdfs)}：{pdf.name}"))
             self.log_queue.put(("page_progress", ("new", 0, 0, 0.0, "当前文件页数进度：等待提交")))
+            self.log_queue.put(("split_progress", (0, 0)))
             self.log_queue.put(("log", f"[{index}/{len(pdfs)}] 开始：{pdf}"))
 
             size_mb = get_file_size_mb(pdf)
@@ -1789,6 +2085,7 @@ class PaddleOCRBatchGUI:
                         model_name=model_name, base_url=base_url, request_timeout=request_timeout,
                         poll_timeout=poll_timeout, poll_interval=poll_interval, overwrite=overwrite,
                         stop_checker=stop_checker, progress_callback=progress_callback,
+                        segment_progress_callback=segment_progress_callback,
                         log_callback=log_callback, manual_query_event=self.manual_query_event,
                     )
                     write_log_line(f"OK_SPLIT\t{pdf}\t{out_path}\t{out_path.with_suffix('.json')}")
@@ -1843,24 +2140,49 @@ class PaddleOCRBatchGUI:
                     self.log(str(payload))
                 elif typ == "status":
                     self.status_var.set(str(payload))
+                elif typ == "file_start":
+                    index, total, _filename = payload
+                    self.total_files = int(total)
+                    self.current_file_index = int(index)
+                    self.completed_files = max(int(index) - 1, 0)
+                    self.current_file_percent = 0.0
+                    self._refresh_file_progress_display()
                 elif typ == "file_progress":
-                    self.file_progress_var.set(float(payload))
+                    completed = int(payload)
+                    self.completed_files = completed
+                    self.current_file_index = min(max(completed, 1), self.total_files) if self.total_files else 0
+                    self.current_file_percent = 100.0
+                    self._refresh_file_progress_display()
                 elif typ == "page_progress":
                     state, done_pages, total_pages, percent, message = payload
                     if total_pages and total_pages > 0:
                         self.page_progress.config(mode="determinate", maximum=100)
                         self.page_progress_var.set(float(percent))
                         self.page_progress_text_var.set(f"当前文件页数进度：{done_pages}/{total_pages} 页，{percent:.2f}%")
+                        self.current_file_percent = float(percent)
                     elif state in {"pending", "new"}:
                         self.page_progress.config(mode="determinate", maximum=100)
                         self.page_progress_var.set(0)
                         self.page_progress_text_var.set(f"当前文件页数进度：{message}")
+                        self.current_file_percent = 0.0
                     elif state == "done":
                         self.page_progress.config(mode="determinate", maximum=100)
                         self.page_progress_var.set(100)
                         self.page_progress_text_var.set("当前文件页数进度：100.00%")
+                        self.current_file_percent = 100.0
                     else:
                         self.page_progress_text_var.set(f"当前文件页数进度：{message}")
+                    self._refresh_file_progress_display()
+                elif typ == "split_progress":
+                    completed_segments, total_segments = payload
+                    if int(total_segments) > 0:
+                        self.split_progress_text_var.set(
+                            f"大文件分段进度：当前文件已处理 {int(completed_segments)}/{int(total_segments)} 段"
+                        )
+                        self.split_progress_label.grid()
+                    else:
+                        self.split_progress_text_var.set("")
+                        self.split_progress_label.grid_remove()
                 elif typ == "keycheck":
                     ok = bool(payload.get("ok"))
                     msg = str(payload.get("msg"))
@@ -1878,6 +2200,11 @@ class PaddleOCRBatchGUI:
                 elif typ == "done":
                     self.log(str(payload))
                     self.status_var.set(str(payload))
+                    if self.total_files > 0 and not self.stop_requested:
+                        self.completed_files = self.total_files
+                        self.current_file_index = self.total_files
+                        self.current_file_percent = 100.0
+                        self._refresh_file_progress_display()
                     self.start_btn.config(state="normal")
                     self.manual_query_btn.config(state="disabled")
                     self.stop_btn.config(state="disabled")
@@ -1897,11 +2224,22 @@ def main() -> None:
     try:
         if sys.platform.startswith("win"):
             import ctypes
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(1)
+            except Exception:
+                pass
+            try:
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                    WINDOWS_APP_USER_MODEL_ID
+                )
+            except Exception:
+                pass
     except Exception:
         pass
 
     root = tk.Tk()
+    apply_application_icon(root)
+
     try:
         style = ttk.Style(root)
         if "vista" in style.theme_names():
@@ -1909,9 +2247,8 @@ def main() -> None:
     except Exception:
         pass
 
-    selected_font = configure_unicode_ui_fonts(root)
+    configure_unicode_ui_fonts(root)
     app = PaddleOCRBatchGUI(root)
-    app.log(f"界面字体：{selected_font}")
     root.mainloop()
 
 

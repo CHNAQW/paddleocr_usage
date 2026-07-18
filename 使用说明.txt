@@ -1,0 +1,15 @@
+﻿PaddleOCR PDF to Markdown GUI 26.7.18.03
+
+本版改动：
+1. 强化 Windows 原生标题栏图标设置；
+2. 同时向当前进程全部顶层窗口发送 WM_SETICON；
+3. 设置窗口类的 HICON 与 HICONSM；
+4. 在程序内容区左上角加入可见应用图标；
+5. 删除“界面字体”“程序图标”和“脚本位置”运行日志；
+6. 删除“显示脚本位置”按钮。
+
+使用方法：
+1. 完整解压本文件夹；
+2. 双击 build_paddleocr_pdf_to_md_EXE.bat；
+3. 运行：
+   PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.18.03.exe
