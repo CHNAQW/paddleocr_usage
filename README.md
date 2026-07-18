@@ -1,4 +1,4 @@
-This is an executable (and the original `.py` script for Linux and macOS users!) that uses PaddleOCR to convert scanned, non-searchable **Chinese** PDFs into searchable `.md` and `.json` files (`.md` is much easier for AI to read and understand than PDF!).
+﻿This is an executable (and the original `.py` script for Linux and macOS users!) that uses PaddleOCR to convert scanned, non-searchable **Chinese** PDFs into searchable `.md` and `.json` files (`.md` is much easier for AI to read and understand than PDF!).
 
 For more information, please read the README. Terms And Condition please read below.
 
@@ -9,8 +9,8 @@ For more information, please read the README. Terms And Condition please read be
 # PaddleOCR PDF to Markdown GUI  
 # PaddleOCR PDF 转 Markdown 图形化工具
 
-**Version: 26.7.12.02**  
-**版本：26.7.12.02**
+**Version: 26.7.18.03**  
+**版本：26.7.18.03**
 
 **Primary platform: Windows 10/11**  
 **主要适用平台：Windows 10/11**
@@ -83,18 +83,25 @@ It supports page-level progress reporting, manual status checks, automatic retry
 
 ## 2. Package Contents  文件组成
 
-The package normally contains the following files.  
-安装包通常包含以下文件。
+The package normally contains the following current-version files.  
+安装包通常包含以下当前版本文件。
 
 ```text
 paddleocr_pdf_to_md_gui.py
 start_paddleocr_pdf_to_md_SAFE.bat
 build_paddleocr_pdf_to_md_EXE.bat
 README.md
+app_icon.ico
+app_icon.png
+version_info_26.7.18.03.txt
+requirements.txt
 ```
 
-The ZIP release may contain the same files.  
-ZIP 发布包通常也包含上述文件。
+Old version snapshots such as `paddleocr_pdf_to_md_gui_26.7.12.02.py` and `README_26.7.12.01.txt` are no longer part of the current package.  
+`paddleocr_pdf_to_md_gui_26.7.12.02.py`、`README_26.7.12.01.txt` 等旧版本快照不再属于当前发布包。
+
+The ZIP release may contain the same current-version files.  
+ZIP 发布包通常也包含上述当前版本文件。
 
 ---
 
@@ -388,6 +395,9 @@ It then polls the server until the task is complete.
 The application currently provides the following models.  
 程序当前提供以下模型。
 
+This list is current for version `26.7.18.03`.  
+以下列表对应 `26.7.18.03` 当前版本。
+
 ```text
 PaddleOCR-VL-1.6
 PaddleOCR-VL-1.5
@@ -397,6 +407,9 @@ PP-StructureV3
 
 The default model is `PaddleOCR-VL-1.6`.  
 默认模型为 `PaddleOCR-VL-1.6`。
+
+Version 26.7.18.03 keeps the default model unchanged and focuses on UI/icon and documentation cleanup.  
+26.7.18.03 版本保留默认模型不变，主要更新界面图标与文档清理。
 
 Actual availability depends on the PaddleOCR account and server-side API configuration.  
 模型是否实际可用，取决于 PaddleOCR 账户权限和服务端 API 配置。
@@ -689,7 +702,7 @@ The EXE is generated at the following location.
 EXE 会生成在以下位置。
 
 ```text
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD.exe
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.18.03.exe
 ```
 
 The packaging script also creates the following file.  
@@ -728,7 +741,7 @@ Then check the following path.
 随后检查以下路径。
 
 ```text
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD.exe
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.18.03.exe
 ```
 
 You can also open the following text file.  
@@ -740,14 +753,11 @@ EXE位置.txt
 
 ### The Model List Still Shows an Older Version  模型列表仍然显示旧版本
 
-Confirm that the application title shows `26.7.12.02`.  
-确认程序标题中显示 `26.7.12.02`。
+Confirm that the application title shows `26.7.18.03`.  
+确认程序标题中显示 `26.7.18.03`。
 
-Click **Show Script Location**.  
-点击“显示脚本位置”。
-
-Check which `.py` or `.exe` is actually running.  
-检查当前实际运行的是哪个 `.py` 或 `.exe`。
+Check the folder from which you launched `paddleocr_pdf_to_md_gui.py` or the versioned EXE.  
+检查你启动 `paddleocr_pdf_to_md_gui.py` 或带版本号 EXE 的所在文件夹。
 
 An older BAT file may be launching a different copy.  
 旧 BAT 可能正在启动其他目录中的旧副本。
