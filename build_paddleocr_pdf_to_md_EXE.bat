@@ -42,16 +42,33 @@ if not exist "%ICON_PNG%" (
 )
 
 set "BASEPY="
-py -3 --version >nul 2>nul
-if not errorlevel 1 set "BASEPY=py -3"
-if "%BASEPY%"=="" (
-    python --version >nul 2>nul
-    if not errorlevel 1 set "BASEPY=python"
-)
-if "%BASEPY%"=="" (
-    echo [错误] 没找到 Python 3.9 或更高版本。
+REM Nuitka 2.7.12 supports Python 3.9 through 3.13. Do not use `py -3`,
+REM because it may select an unsupported Python 3.14 installation.
+py -3.13 --version >nul 2>nul
+if not errorlevel 1 set "BASEPY=py -3.13"
+if not defined BASEPY py -3.12 --version >nul 2>nul
+if not defined BASEPY if not errorlevel 1 set "BASEPY=py -3.12"
+if not defined BASEPY py -3.11 --version >nul 2>nul
+if not defined BASEPY if not errorlevel 1 set "BASEPY=py -3.11"
+if not defined BASEPY py -3.10 --version >nul 2>nul
+if not defined BASEPY if not errorlevel 1 set "BASEPY=py -3.10"
+if not defined BASEPY py -3.9 --version >nul 2>nul
+if not defined BASEPY if not errorlevel 1 set "BASEPY=py -3.9"
+if not defined BASEPY python -c "import sys; raise SystemExit(0 if (3, 9) ^<= sys.version_info[:2] ^< (3, 14) else 1)" >nul 2>nul
+if not defined BASEPY if not errorlevel 1 set "BASEPY=python"
+if not defined BASEPY (
+    echo [错误] 没找到 Nuitka 2.7.12 支持的 Python 3.9 至 3.13。
     echo 安装 Python 时请勾选 Add python.exe to PATH。
     goto :failed
+)
+
+if exist "%PYTHON%" (
+    "%PYTHON%" -c "import sys; raise SystemExit(0 if (3, 9) ^<= sys.version_info[:2] ^< (3, 14) else 1)" >nul 2>nul
+    if errorlevel 1 (
+        echo [更新环境] 现有虚拟环境的 Python 不受 Nuitka 2.7.12 支持，正在重建...
+        rmdir /s /q "%VENV%"
+        if exist "%VENV%" goto :failed
+    )
 )
 
 if not exist "%PYTHON%" (

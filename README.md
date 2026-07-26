@@ -134,8 +134,8 @@ pypdf
 
 ### Building the EXE   打包 EXE
 
-The packaging script additionally installs the pinned Nuitka compiler and its build helpers.  
-打包脚本还会额外安装固定版本的 Nuitka 编译器及其构建依赖。
+The packaging script additionally installs the pinned Nuitka compiler and its build helpers. Because the pinned Nuitka 2.7.12 supports Python 3.9–3.13, the build script selects the newest installed interpreter in that range instead of an unsupported Python 3.14 installation.  
+打包脚本还会额外安装固定版本的 Nuitka 编译器及其构建依赖。由于固定的 Nuitka 2.7.12 支持 Python 3.9–3.13，构建脚本会选择该范围内已安装的最新解释器，而不会误用不受支持的 Python 3.14。
 
 Microsoft Visual Studio 2022 Build Tools with the **Desktop development with C++** workload is required. The build intentionally uses the installed MSVC compiler instead of automatically downloading MinGW.  
 需要安装 Microsoft Visual Studio 2022 Build Tools，并勾选 **使用 C++ 的桌面开发** 工作负载。构建脚本会有意使用本机 MSVC，而不会自动下载 MinGW。
