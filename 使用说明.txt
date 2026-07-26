@@ -1,15 +1,23 @@
-﻿PaddleOCR PDF to Markdown GUI 26.7.18.03
+﻿PaddleOCR PDF to Markdown GUI 26.7.26.01
 
 本版改动：
-1. 强化 Windows 原生标题栏图标设置；
-2. 同时向当前进程全部顶层窗口发送 WM_SETICON；
-3. 设置窗口类的 HICON 与 HICONSM；
-4. 在程序内容区左上角加入可见应用图标；
-5. 删除“界面字体”“程序图标”和“脚本位置”运行日志；
-6. 删除“显示脚本位置”按钮。
+1. 更新统一界面设计语言及彩色运行日志；
+2. 改用 Nuitka 将 Python 转换为 C，再由 Microsoft MSVC 原生编译；
+3. 启用 LTO，并禁用 UPX、MinGW 和载荷压缩，减少常见打包器启发式特征；
+4. 生成一个可以直接对外发布的 EXE，不需要配套目录；
+5. 不需要购买或配置代码签名证书；
+6. 自动生成 EXE 的 SHA-256 校验文件。
 
-使用方法：
-1. 完整解压本文件夹；
-2. 双击 build_paddleocr_pdf_to_md_EXE.bat；
-3. 运行：
-   PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.18.03.exe
+打包方法：
+1. 安装 Visual Studio 2022 Build Tools，并勾选“使用 C++ 的桌面开发”；
+2. 完整解压源码文件夹；
+3. 双击 build_paddleocr_pdf_to_md_EXE.bat；
+4. 生成文件：
+   PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.26.01.exe
+
+对外发布：
+1. 直接发布上面的 EXE；
+2. 同时发布 PaddleOCR_PDF_to_MD_26.7.26.01.exe.sha256.txt；
+3. 接收者只需要 EXE，不需要安装 Python，也不需要配套目录；
+4. 发布前按正常安全流程扫描最终 EXE；
+5. 如仍误报 AndroidOS/Multiverze，请把该 EXE 提交给 Microsoft Security Intelligence 复核后再分发。

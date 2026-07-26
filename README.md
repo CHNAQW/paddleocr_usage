@@ -9,8 +9,8 @@ For more information, please read the README. Terms And Condition please read be
 # PaddleOCR PDF to Markdown GUI  
 # PaddleOCR PDF 转 Markdown 图形化工具
 
-**Version: 26.7.18.03**  
-**版本：26.7.18.03**
+**Version: 26.7.26.01**  
+**版本：26.7.26.01**
 
 **Primary platform: Windows 10/11**  
 **主要适用平台：Windows 10/11**
@@ -93,7 +93,7 @@ build_paddleocr_pdf_to_md_EXE.bat
 README.md
 app_icon.ico
 app_icon.png
-version_info_26.7.18.03.txt
+version_info_26.7.26.01.txt
 requirements.txt
 ```
 
@@ -134,11 +134,15 @@ pypdf
 
 ### Building the EXE   打包 EXE
 
-The packaging script additionally installs PyInstaller.  
-打包脚本还会额外安装 PyInstaller。
+The packaging script additionally installs the pinned Nuitka compiler and its build helpers.  
+打包脚本还会额外安装固定版本的 Nuitka 编译器及其构建依赖。
+
+Microsoft Visual Studio 2022 Build Tools with the **Desktop development with C++** workload is required. The build intentionally uses the installed MSVC compiler instead of automatically downloading MinGW.  
+需要安装 Microsoft Visual Studio 2022 Build Tools，并勾选 **使用 C++ 的桌面开发** 工作负载。构建脚本会有意使用本机 MSVC，而不会自动下载 MinGW。
 
 ```text
-pyinstaller
+Nuitka
+ordered-set
 ```
 
 ---
@@ -395,8 +399,8 @@ It then polls the server until the task is complete.
 The application currently provides the following models.  
 程序当前提供以下模型。
 
-This list is current for version `26.7.18.03`.  
-以下列表对应 `26.7.18.03` 当前版本。
+This list is current for version `26.7.26.01`.  
+以下列表对应 `26.7.26.01` 当前版本。
 
 ```text
 PaddleOCR-VL-1.6
@@ -408,8 +412,8 @@ PP-StructureV3
 The default model is `PaddleOCR-VL-1.6`.  
 默认模型为 `PaddleOCR-VL-1.6`。
 
-Version 26.7.18.03 keeps the default model unchanged and focuses on UI/icon and documentation cleanup.  
-26.7.18.03 版本保留默认模型不变，主要更新界面图标与文档清理。
+Version 26.7.26.01 keeps the default model unchanged, refreshes the GUI design language, and hardens Windows distribution against heuristic antivirus detections.  
+26.7.26.01 版本保留默认模型不变，更新 GUI 设计语言，并调整 Windows 分发方式以减少杀毒软件启发式误报。
 
 Actual availability depends on the PaddleOCR account and server-side API configuration.  
 模型是否实际可用，取决于 PaddleOCR 账户权限和服务端 API 配置。
@@ -695,25 +699,19 @@ The script creates a virtual environment if needed.
 It installs the required packages.  
 脚本会安装所需依赖。
 
-It runs PyInstaller in single-file windowed mode.  
-脚本会使用 PyInstaller 的单文件、无控制台窗口模式进行打包。
+It uses pinned Nuitka with Microsoft's MSVC toolchain and link-time optimization to compile the application into one uncompressed, windowed EXE. It does not use PyInstaller, UPX, downloaded MinGW binaries, or compressed payloads—the build choices that directly affect common packer heuristics. The recipient needs only the resulting EXE.  
+脚本使用固定版本的 Nuitka、Microsoft MSVC 工具链和链接时优化，将程序编译为一个无压缩、无控制台窗口的 EXE。它不使用 PyInstaller、UPX、下载的 MinGW 二进制文件或压缩载荷；这些才是直接影响常见打包器启发式检测的构建因素。接收者只需要最终 EXE。
 
-The EXE is generated at the following location.  
-EXE 会生成在以下位置。
-
-```text
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.18.03.exe
-```
-
-The packaging script also creates the following file.  
-打包脚本还会生成以下文件。
+The EXE and its SHA-256 record are generated at the following locations.  
+EXE 及其 SHA-256 校验文件会生成在以下位置。
 
 ```text
-EXE位置.txt
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.26.01.exe
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.26.01.exe.sha256.txt
 ```
 
-The script opens File Explorer with the generated EXE selected.  
-脚本会自动打开资源管理器并选中生成的 EXE。
+Publish the EXE directly and provide the checksum alongside it. The script opens File Explorer with the generated EXE selected.  
+可以直接发布该 EXE，并同时提供校验文件。脚本会自动打开资源管理器并选中生成的 EXE。
 
 The generated EXE contains the Python runtime and bundled dependencies.  
 生成的 EXE 已包含 Python 运行环境和打包依赖。
@@ -728,6 +726,22 @@ Internet access and a valid PaddleOCR API token are still required.
 
 ## 15. Troubleshooting  常见问题
 
+### Antivirus Reports AndroidOS/Multiverze or Another Threat   杀毒软件报告 AndroidOS/Multiverze 或其他威胁
+
+The public artifact is now a single `PaddleOCR_PDF_to_MD_26.7.26.01.exe`, compiled with Nuitka rather than bundled with PyInstaller. It uses uncompressed one-file mode to avoid UPX and compressed PyInstaller bootloader patterns; no code-signing certificate is required.  
+现在的公开发布物就是单个 `PaddleOCR_PDF_to_MD_26.7.26.01.exe`。它改用 Nuitka 编译，不再使用 PyInstaller 打包，并采用无压缩单文件模式，以避开 UPX 和压缩式 PyInstaller 引导器特征；不要求代码签名证书。
+
+The build no longer waits for an antivirus alert and then deletes the EXE. Instead, it changes the executable itself: Python modules are translated to C, compiled with the installed Microsoft compiler, linked with LTO, and placed in an uncompressed one-file payload. This targets the packaging characteristics that caused the previous alert while preserving direct EXE distribution.  
+构建流程不再等杀毒软件告警后删除 EXE，而是直接改变 EXE 的构建方式：Python 模块会转换为 C，使用本机 Microsoft 编译器编译，以 LTO 链接，并放入无压缩单文件载荷中。这样是在保留单 EXE 直接发布的同时，针对旧版告警涉及的打包特征进行处理。
+
+No unsigned build system can guarantee acceptance by every antivirus engine because cloud reputation and heuristic definitions change independently of the source code. If Microsoft still classifies this clean MSVC/Nuitka build as `AndroidOS/Multiverze`, submit that exact EXE to Microsoft Security Intelligence as an incorrectly detected file. Do not disable antivirus protection or tell recipients to add an exclusion.  
+任何无签名构建方式都无法保证被每个杀毒引擎接受，因为云信誉和启发式规则会独立变化。如果 Microsoft 仍把这一份干净的 MSVC/Nuitka 构建识别为 `AndroidOS/Multiverze`，请将准确的 EXE 提交给 Microsoft Security Intelligence 并选择“错误检测”。不要关闭杀毒保护，也不要让接收者添加排除项。
+
+```powershell
+Get-FileHash -Algorithm SHA256 .\PaddleOCR_PDF_to_MD_26.7.26.01.exe
+Get-Content .\PaddleOCR_PDF_to_MD_26.7.26.01.exe.sha256.txt
+```
+
 ### The EXE Cannot Be Found   找不到生成的 EXE
 
 Run the packaging BAT file again.  
@@ -741,7 +755,7 @@ Then check the following path.
 随后检查以下路径。
 
 ```text
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.18.03.exe
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.26.01.exe
 ```
 
 You can also open the following text file.  
@@ -753,8 +767,8 @@ EXE位置.txt
 
 ### The Model List Still Shows an Older Version  模型列表仍然显示旧版本
 
-Confirm that the application title shows `26.7.18.03`.  
-确认程序标题中显示 `26.7.18.03`。
+Confirm that the application title shows `26.7.26.01`.  
+确认程序标题中显示 `26.7.26.01`。
 
 Check the folder from which you launched `paddleocr_pdf_to_md_gui.py` or the versioned EXE.  
 检查你启动 `paddleocr_pdf_to_md_gui.py` 或带版本号 EXE 的所在文件夹。
