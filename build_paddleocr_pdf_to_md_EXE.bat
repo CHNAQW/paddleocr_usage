@@ -98,6 +98,7 @@ echo [提示] 首次打包会自动下载并缓存 MinGW64，无需安装 Visual
 "%PYTHON%" -m nuitka ^
   --mode=onefile ^
   --onefile-no-compression ^
+  --onefile-tempdir-spec="{CACHE_DIR}/PaddleOCR/PDFToMarkdown/26.7.27.01" ^
   --mingw64 ^
   --assume-yes-for-downloads ^
   --lto=yes ^
@@ -125,6 +126,9 @@ if not exist "%WORKDIR%\%EXE_NAME%" (
 move /y "%WORKDIR%\%EXE_NAME%" "%EXE_PATH%" >nul
 if errorlevel 1 goto :failed
 
+REM 使用固定的用户缓存目录，而不是 %%TEMP%%\onefile_* 随机目录。
+REM 同一版本只需安全软件检查一次，且不会与临时目录清理发生竞争。
+
 REM 不在打包流程中调用 Defender：构建目标是避免产生高风险打包特征，
 REM 而不是在告警发生后删除产物。发布者仍可在上传前自行扫描。
 
@@ -141,7 +145,8 @@ echo %EXE_PATH%
 echo [校验文件] %HASH_PATH%
 echo.
 echo 本构建不需要代码签名证书；请将 EXE 和 SHA-256 文件一起发布。
-echo 本脚本使用 Nuitka 管理的 MinGW64 原生编译、无 UPX、无压缩载荷，避免常见打包器启发式特征。
+echo 本脚本使用 Nuitka 管理的 MinGW64 原生编译、无 UPX、无压缩载荷。
+echo EXE 仍是单个文件；运行时组件固定缓存到 LocalAppData，而不使用 Temp\onefile_* 随机目录。
 echo.
 
 start "" explorer.exe /select,"%EXE_PATH%"

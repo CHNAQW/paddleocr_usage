@@ -76,7 +76,7 @@ It supports page-level progress reporting, manual status checks, automatic retry
 - Safely request cancellation with a confirmation dialog.  
   通过二次确认对话框安全停止转换。
 
-- Build a standalone Windows EXE with the included packaging script.  
+- Build a standalone Windows EXE with the included packaging script.
   可通过配套打包脚本生成独立的 Windows EXE。
 
 ---
@@ -699,10 +699,10 @@ The script creates a virtual environment if needed.
 It installs the required packages.  
 脚本会安装所需依赖。
 
-It uses pinned Nuitka, the MinGW64 toolchain managed by Nuitka, and link-time optimization to compile the application into one uncompressed, windowed EXE. It automatically accepts Nuitka's toolchain download prompt, so a missing local C compiler no longer causes a fatal error. It does not use PyInstaller, UPX, or compressed payloads. The recipient needs only the resulting EXE.  
+It uses pinned Nuitka, the MinGW64 toolchain managed by Nuitka, and link-time optimization to compile the application into one uncompressed, windowed EXE. It automatically accepts Nuitka's toolchain download prompt, so a missing local C compiler no longer causes a fatal error. It does not use PyInstaller, UPX, or compressed payloads. The recipient needs only the resulting EXE.
 脚本使用固定版本的 Nuitka、由 Nuitka 管理的 MinGW64 工具链和链接时优化，将程序编译为一个无压缩、无控制台窗口的 EXE。脚本会自动同意 Nuitka 的工具链下载提示，不会再因本机缺少 C 编译器而直接报 fatal error。它不使用 PyInstaller、UPX 或压缩载荷。接收者只需要最终 EXE。
 
-The EXE and its SHA-256 record are generated at the following locations.  
+The EXE and its SHA-256 record are generated at the following locations.
 EXE 及其 SHA-256 校验文件会生成在以下位置。
 
 ```text
@@ -710,10 +710,10 @@ PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.27.01.exe
 PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.27.01.exe.sha256.txt
 ```
 
-Publish the EXE directly and provide the checksum alongside it. The script opens File Explorer with the generated EXE selected.  
+Publish the EXE directly and provide the checksum alongside it. The script opens File Explorer with the generated EXE selected.
 可以直接发布该 EXE，并同时提供校验文件。脚本会自动打开资源管理器并选中生成的 EXE。
 
-The generated EXE contains the Python runtime and bundled dependencies.  
+The generated EXE contains the Python runtime and bundled dependencies.
 生成的 EXE 已包含 Python 运行环境和打包依赖。
 
 End users normally do not need to install Python.  
@@ -728,10 +728,10 @@ Internet access and a valid PaddleOCR API token are still required.
 
 ### Antivirus Reports AndroidOS/Multiverze or Another Threat   杀毒软件报告 AndroidOS/Multiverze 或其他威胁
 
-The public artifact is now a single `PaddleOCR_PDF_to_MD_26.7.27.01.exe`, compiled with Nuitka rather than bundled with PyInstaller. It uses uncompressed one-file mode to avoid UPX and compressed PyInstaller bootloader patterns; no code-signing certificate is required.  
+The public artifact is now a single `PaddleOCR_PDF_to_MD_26.7.27.01.exe`, compiled with Nuitka rather than bundled with PyInstaller. It uses uncompressed one-file mode to avoid UPX and compressed PyInstaller bootloader patterns; no code-signing certificate is required.
 现在的公开发布物就是单个 `PaddleOCR_PDF_to_MD_26.7.27.01.exe`。它改用 Nuitka 编译，不再使用 PyInstaller 打包，并采用无压缩单文件模式，以避开 UPX 和压缩式 PyInstaller 引导器特征；不要求代码签名证书。
 
-The build no longer waits for an antivirus alert and then deletes the EXE. Instead, Python modules are translated to C, compiled with Nuitka's managed MinGW64 toolchain, linked with LTO, and placed in an uncompressed one-file payload. This targets the packaging characteristics that caused the previous alert while preserving direct EXE distribution.  
+The build no longer waits for an antivirus alert and then deletes the EXE. Instead, Python modules are translated to C, compiled with Nuitka's managed MinGW64 toolchain, linked with LTO, and placed in an uncompressed one-file payload. This targets the packaging characteristics that caused the previous alert while preserving direct EXE distribution.
 构建流程不再等杀毒软件告警后删除 EXE。Python 模块会转换为 C，使用 Nuitka 管理的 MinGW64 工具链编译，以 LTO 链接，并放入无压缩单文件载荷中。这样是在保留单 EXE 直接发布的同时，针对旧版告警涉及的打包特征进行处理。
 
 No unsigned build system can guarantee acceptance by every antivirus engine because cloud reputation and heuristic definitions change independently of the source code. If Microsoft still classifies this clean Nuitka build as `AndroidOS/Multiverze`, submit that exact EXE to Microsoft Security Intelligence as an incorrectly detected file. Do not disable antivirus protection or tell recipients to add an exclusion.  
@@ -741,6 +741,17 @@ No unsigned build system can guarantee acceptance by every antivirus engine beca
 Get-FileHash -Algorithm SHA256 .\PaddleOCR_PDF_to_MD_26.7.27.01.exe
 Get-Content .\PaddleOCR_PDF_to_MD_26.7.27.01.exe.sha256.txt
 ```
+
+### Bad Image / status 0xc0e90002   DLL 错误 / 状态 0xc0e90002
+
+The release remains one independent EXE. The current one-file build uses a stable per-user cache under `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.7.27.01` instead of a random `%TEMP%\onefile_*` directory. This avoids races with Temp cleanup and lets security software inspect the extracted runtime once rather than at every launch.
+发布物仍然是一个独立 EXE。当前单文件构建使用 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.7.27.01` 下的固定用户缓存，不再使用随机 `%TEMP%\onefile_*` 目录。这样可避免与临时目录清理发生竞争，也无需安全软件在每次启动时重新检查运行组件。
+
+If an older EXE reports this error, delete that old EXE and its old `%TEMP%\onefile_*` folder, rebuild with the current BAT, and send the newly generated EXE together with its SHA-256 record. The recipient should verify that the downloaded EXE hash matches before running it.
+如果旧 EXE 出现此错误，请删除旧 EXE 及其旧 `%TEMP%\onefile_*` 目录，用当前 BAT 重新构建，并将新 EXE 与 SHA-256 记录一起发送。接收者运行前应确认下载所得 EXE 的哈希一致。
+
+If the current build is interrupted during its first extraction, close the application, delete `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.7.27.01`, and launch the same EXE again so it can recreate a clean cache. Do not disable antivirus protection or add an exclusion.
+如果当前构建首次释放组件时被中断，请关闭程序，删除 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.7.27.01`，然后重新启动同一个 EXE，让它重建干净缓存。不要关闭杀毒保护，也不要添加排除项。
 
 ### The EXE Cannot Be Found   找不到生成的 EXE
 

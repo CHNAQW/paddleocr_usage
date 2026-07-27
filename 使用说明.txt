@@ -21,3 +21,11 @@
 3. 接收者只需要 EXE，不需要安装 Python，也不需要配套目录；
 4. 发布前按正常安全流程扫描最终 EXE；
 5. 如仍误报 AndroidOS/Multiverze，请把该 EXE 提交给 Microsoft Security Intelligence 复核后再分发。
+
+
+DLL 错误 / 状态 0xc0e90002：
+本程序仍然只发布一个独立 EXE。新版会把运行组件固定缓存到：
+%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.7.27.01
+而不是随机的 %TEMP%\onefile_* 目录。请重新打包并发送新 EXE 和 SHA-256 文件。
+若首次启动被中断，请关闭程序、删除上面的缓存目录，再重新运行同一个 EXE。
+不要关闭杀毒保护，也不要添加排除项。
