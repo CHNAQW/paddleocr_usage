@@ -53,7 +53,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "PaddleOCR PDF批量转Markdown"
-APP_VERSION = "26.7.18.03"
+APP_VERSION = "26.7.26.01"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -82,9 +82,135 @@ APP_ICON_PNG_NAME = "app_icon.png"
 APP_ICON_ICO_NAME = "app_icon.ico"
 WINDOWS_APP_USER_MODEL_ID = "PaddleOCR.PDFToMarkdown.GUI"
 
+DESIGN_COLORS = {
+    "canvas": "#f6f7fb",
+    "surface": "#ffffff",
+    "surface_muted": "#f1f3f8",
+    "border": "#d9deea",
+    "text": "#172033",
+    "muted": "#667085",
+    "accent": "#2563eb",
+    "accent_active": "#1d4ed8",
+    "accent_soft": "#dbeafe",
+    "danger": "#dc2626",
+    "danger_active": "#b91c1c",
+    "log_bg": "#0b1020",
+    "log_fg": "#d7e1f5",
+    "log_timestamp": "#7c8aa5",
+    "log_info": "#bfdbfe",
+    "log_success": "#86efac",
+    "log_warning": "#fde68a",
+    "log_error": "#fca5a5",
+    "log_panel_border": "#1e293b",
+}
+
+
+def configure_design_language(root: tk.Tk) -> None:
+    """Apply a crisp, calm design language inspired by design-engineering rules.
+
+    Tkinter does not support the full motion system of web UI, so this function
+    focuses on the transferable pieces: quiet surfaces, strong hierarchy, exact
+    states, and responsive controls that avoid ornamental animation.
+    """
+    colors = DESIGN_COLORS
+    root.configure(bg=colors["canvas"])
+
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except Exception:
+        pass
+
+    style.configure(".", background=colors["canvas"], foreground=colors["text"])
+    style.configure("TFrame", background=colors["canvas"])
+    style.configure(
+        "TLabelframe",
+        background=colors["surface"],
+        bordercolor=colors["border"],
+        relief="solid",
+        padding=12,
+    )
+    style.configure(
+        "TLabelframe.Label",
+        background=colors["canvas"],
+        foreground=colors["muted"],
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    style.configure("TLabel", background=colors["surface"], foreground=colors["text"])
+    style.configure(
+        "HeroTitle.TLabel",
+        background=colors["canvas"],
+        foreground=colors["text"],
+        font=("TkDefaultFont", 16, "bold"),
+    )
+    style.configure(
+        "HeroSubtitle.TLabel",
+        background=colors["canvas"],
+        foreground=colors["muted"],
+        font=("TkDefaultFont", 10),
+    )
+    style.configure(
+        "TEntry",
+        fieldbackground=colors["surface"],
+        foreground=colors["text"],
+        bordercolor=colors["border"],
+        lightcolor=colors["border"],
+        darkcolor=colors["border"],
+        padding=6,
+    )
+    style.map("TEntry", bordercolor=[("focus", colors["accent"])])
+    style.configure(
+        "TButton",
+        background=colors["surface_muted"],
+        foreground=colors["text"],
+        bordercolor=colors["border"],
+        focusthickness=1,
+        focuscolor=colors["accent_soft"],
+        padding=(12, 7),
+        relief="flat",
+    )
+    style.map(
+        "TButton",
+        background=[("pressed", colors["border"]), ("active", colors["accent_soft"])],
+        foreground=[("disabled", colors["muted"])],
+        relief=[("pressed", "sunken")],
+    )
+    style.configure(
+        "Accent.TButton",
+        background=colors["accent"],
+        foreground="#ffffff",
+        bordercolor=colors["accent"],
+        padding=(16, 8),
+    )
+    style.map(
+        "Accent.TButton",
+        background=[
+            ("pressed", colors["accent_active"]),
+            ("active", colors["accent_active"]),
+            ("disabled", colors["border"]),
+        ],
+        foreground=[("disabled", colors["muted"]), ("!disabled", "#ffffff")],
+    )
+    style.configure(
+        "TCheckbutton",
+        background=colors["surface"],
+        foreground=colors["text"],
+        padding=4,
+    )
+    style.configure("TCombobox", padding=6)
+    style.configure(
+        "Horizontal.TProgressbar",
+        troughcolor=colors["surface_muted"],
+        background=colors["accent"],
+        bordercolor=colors["surface_muted"],
+        lightcolor=colors["accent"],
+        darkcolor=colors["accent"],
+        thickness=10,
+    )
+
 
 def resource_path(relative_name: str) -> Path:
-    """Return a bundled-resource path in source and PyInstaller EXE modes."""
+    """Return a bundled-resource path in source and frozen EXE modes."""
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return Path(getattr(sys, "_MEIPASS")) / relative_name
     return Path(__file__).resolve().parent / relative_name
@@ -1585,11 +1711,18 @@ class PaddleOCRBatchGUI:
         except Exception:
             pass
 
+        title_stack = ttk.Frame(brand)
+        title_stack.grid(row=0, column=1, sticky="w")
         ttk.Label(
-            brand,
-            text=f"{APP_NAME}  {APP_VERSION}",
-            font=("TkDefaultFont", 12, "bold"),
-        ).grid(row=0, column=1, sticky="w")
+            title_stack,
+            text=APP_NAME,
+            style="HeroTitle.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            title_stack,
+            text=f"{APP_VERSION} · 批量 OCR、可恢复、少打扰",
+            style="HeroSubtitle.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
 
         top = ttk.LabelFrame(self.root, text="1. 选择项目文件夹")
         top.grid(row=1, column=0, sticky="ew", **pad)
@@ -1673,9 +1806,9 @@ class PaddleOCRBatchGUI:
             text="停止转换",
             command=self.request_stop,
             state="disabled",
-            bg="#c62828",
+            bg=DESIGN_COLORS["danger"],
             fg="white",
-            activebackground="#b71c1c",
+            activebackground=DESIGN_COLORS["danger_active"],
             activeforeground="white",
             disabledforeground="#f4f4f4",
             relief="raised",
@@ -1684,16 +1817,37 @@ class PaddleOCRBatchGUI:
             font="TkDefaultFont",
         )
         self.stop_btn.grid(row=0, column=2, sticky="e", padx=4)
-        self.start_btn = ttk.Button(action_row, text="开始批量转换", command=self.start_batch)
+        self.start_btn = ttk.Button(
+            action_row, text="开始批量转换", command=self.start_batch, style="Accent.TButton"
+        )
         self.start_btn.grid(row=0, column=3, sticky="e", padx=(4, 0))
 
-        log_frame = ttk.LabelFrame(self.root, text="运行日志")
+        log_frame = ttk.LabelFrame(self.root, text="4. 运行日志")
         log_frame.grid(row=4, column=0, sticky="nsew", **pad)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
-        self.log_text = tk.Text(log_frame, wrap="word", height=18, font="TkTextFont")
+        self.log_text = tk.Text(
+            log_frame,
+            wrap="word",
+            height=18,
+            font="TkTextFont",
+            bg=DESIGN_COLORS["log_bg"],
+            fg=DESIGN_COLORS["log_fg"],
+            insertbackground=DESIGN_COLORS["log_fg"],
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=DESIGN_COLORS["log_panel_border"],
+            highlightcolor=DESIGN_COLORS["accent"],
+            padx=14,
+            pady=12,
+            spacing1=2,
+            spacing3=6,
+            state="disabled",
+        )
         self.log_text.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=8)
+        self._configure_log_tags()
         yscroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
         yscroll.grid(row=0, column=1, sticky="ns", padx=(0, 8), pady=8)
         self.log_text.configure(yscrollcommand=yscroll.set)
@@ -2213,9 +2367,33 @@ class PaddleOCRBatchGUI:
             pass
         self.root.after(100, self._poll_log_queue)
 
+    def _configure_log_tags(self) -> None:
+        self.log_text.tag_configure("timestamp", foreground=DESIGN_COLORS["log_timestamp"])
+        self.log_text.tag_configure("info", foreground=DESIGN_COLORS["log_info"])
+        self.log_text.tag_configure("success", foreground=DESIGN_COLORS["log_success"])
+        self.log_text.tag_configure("warning", foreground=DESIGN_COLORS["log_warning"])
+        self.log_text.tag_configure("error", foreground=DESIGN_COLORS["log_error"])
+
+    def _log_message_tag(self, message: str) -> str:
+        normalized = message.lower()
+        error_markers = ("失败", "错误", "异常", "无效", "error", "failed", "fail")
+        warning_markers = ("警告", "重试", "等待", "队列已满", "warning", "retry")
+        success_markers = ("完成", "成功", "已保存", "有效", "done", "success")
+        if any(marker in normalized for marker in error_markers):
+            return "error"
+        if any(marker in normalized for marker in warning_markers):
+            return "warning"
+        if any(marker in normalized for marker in success_markers):
+            return "success"
+        return "info"
+
     def log(self, message: str) -> None:
         ts = datetime.now().strftime("%H:%M:%S")
-        self.log_text.insert("end", f"[{ts}] {message}\n")
+        tag = self._log_message_tag(message)
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", f"[{ts}] ", ("timestamp",))
+        self.log_text.insert("end", f"{message}\n", (tag,))
+        self.log_text.configure(state="disabled")
         self.log_text.see("end")
         self.root.update_idletasks()
 
@@ -2248,6 +2426,7 @@ def main() -> None:
         pass
 
     configure_unicode_ui_fonts(root)
+    configure_design_language(root)
     app = PaddleOCRBatchGUI(root)
     root.mainloop()
 
