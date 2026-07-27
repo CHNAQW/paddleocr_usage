@@ -16,11 +16,11 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'PaddleOCR PDF to Markdown GUI'),
           StringStruct('FileDescription', 'PaddleOCR PDF Batch to Markdown GUI'),
-          StringStruct('FileVersion', '26.7.27.01'),
+          StringStruct('FileVersion', '26.7.27.02'),
           StringStruct('InternalName', 'PaddleOCR_PDF_to_MD'),
-          StringStruct('OriginalFilename', 'PaddleOCR_PDF_to_MD_26.7.27.01.exe'),
+          StringStruct('OriginalFilename', 'PaddleOCR_PDF_to_MD_26.7.27.02.exe'),
           StringStruct('ProductName', 'PaddleOCR PDF to Markdown GUI'),
-          StringStruct('ProductVersion', '26.7.27.01')
+          StringStruct('ProductVersion', '26.7.27.02')
         ]
       )
     ]),
