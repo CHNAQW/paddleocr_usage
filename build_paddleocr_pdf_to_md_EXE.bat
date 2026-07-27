@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal EnableExtensions
 
 REM ============================================================
-REM PaddleOCR PDF -> Markdown GUI 26.7.26.01 EXE 打包器
+REM PaddleOCR PDF -> Markdown GUI 26.7.27.01 EXE 打包器
 REM 使用 Nuitka 原生编译为单个、无压缩 EXE，不要求代码签名证书。
 REM ============================================================
 
@@ -15,14 +15,14 @@ set "VENV=%ROOT%.venv"
 set "PYTHON=%VENV%\Scripts\python.exe"
 set "OUTDIR=%ROOT%PaddleOCR_PDF_to_MD_EXE"
 set "WORKDIR=%ROOT%build\nuitka"
-set "EXE_NAME=PaddleOCR_PDF_to_MD_26.7.26.01.exe"
+set "EXE_NAME=PaddleOCR_PDF_to_MD_26.7.27.01.exe"
 set "EXE_PATH=%OUTDIR%\%EXE_NAME%"
 set "HASH_PATH=%OUTDIR%\%EXE_NAME%.sha256.txt"
 
 pushd "%ROOT%" >nul 2>nul
 
 echo ============================================================
-echo PaddleOCR PDF -^> Markdown GUI 26.7.26.01 EXE 打包器
+echo PaddleOCR PDF -^> Markdown GUI 26.7.27.01 EXE 打包器
 echo 输出形式：可直接对外发布的单个 EXE
 echo 当前目录：%ROOT%
 echo ============================================================
@@ -93,11 +93,13 @@ mkdir "%OUTDIR%"
 mkdir "%WORKDIR%"
 
 echo.
-echo [编译] 正在使用 Microsoft MSVC 原生编译无压缩单文件 EXE...
+echo [编译] 正在使用 Nuitka 管理的 MinGW64 编译无压缩单文件 EXE...
+echo [提示] 首次打包会自动下载并缓存 MinGW64，无需安装 Visual Studio。
 "%PYTHON%" -m nuitka ^
   --mode=onefile ^
   --onefile-no-compression ^
-  --msvc=latest ^
+  --mingw64 ^
+  --assume-yes-for-downloads ^
   --lto=yes ^
   --enable-plugin=tk-inter ^
   --windows-console-mode=disable ^
@@ -107,8 +109,8 @@ echo [编译] 正在使用 Microsoft MSVC 原生编译无压缩单文件 EXE...
   --company-name="PaddleOCR PDF to Markdown GUI" ^
   --product-name="PaddleOCR PDF to Markdown GUI" ^
   --file-description="PaddleOCR PDF Batch to Markdown GUI" ^
-  --file-version=26.7.26.1 ^
-  --product-version=26.7.26.1 ^
+  --file-version=26.7.27.1 ^
+  --product-version=26.7.27.1 ^
   --output-dir="%WORKDIR%" ^
   --output-filename="%EXE_NAME%" ^
   --remove-output ^
@@ -139,7 +141,7 @@ echo %EXE_PATH%
 echo [校验文件] %HASH_PATH%
 echo.
 echo 本构建不需要代码签名证书；请将 EXE 和 SHA-256 文件一起发布。
-echo 本脚本使用 MSVC、Nuitka 原生编译、无 UPX、无压缩载荷，避免常见打包器启发式特征。
+echo 本脚本使用 Nuitka 管理的 MinGW64 原生编译、无 UPX、无压缩载荷，避免常见打包器启发式特征。
 echo.
 
 start "" explorer.exe /select,"%EXE_PATH%"
