@@ -9,8 +9,8 @@ For more information, please read the README. Terms And Condition please read be
 # PaddleOCR PDF to Markdown GUI  
 # PaddleOCR PDF 转 Markdown 图形化工具
 
-**Version: 26.7.27.02**
-**版本：26.7.27.02**
+**Version: 26.8.13.01**
+**版本：26.8.13.01**
 
 **Primary platform: Windows 10/11**  
 **主要适用平台：Windows 10/11**
@@ -21,8 +21,8 @@ For more information, please read the README. Terms And Condition please read be
 A Windows desktop tool for batch-converting PDF files to Markdown through the PaddleOCR online asynchronous API.  
 本工具是一个 Windows 桌面程序，用于通过 PaddleOCR 在线异步 API 批量将 PDF 转换为 Markdown。
 
-It supports page-level progress reporting, manual status checks, automatic retry when the submission queue is full, automatic splitting of PDFs larger than 50 MB, JSON/JSONL recovery, and one-click EXE packaging.  
-本工具支持页级进度显示、手动查询任务状态、提交队列已满时自动重试、自动拆分超过 50MB 的 PDF、JSON/JSONL 修复，以及一键打包 EXE。
+It supports page-level progress reporting, Markdown word-count quality checks with automatic resubmission, manual status checks, automatic retry when the submission queue is full, automatic splitting of PDFs larger than 50 MB, JSON/JSONL recovery, and one-click EXE packaging.  
+本工具支持页级进度显示、Markdown 字数质量检测与自动重新提交、手动查询任务状态、提交队列已满时自动重试、自动拆分超过 50MB 的 PDF、JSON/JSONL 修复，以及一键打包 EXE。
 
 ---
 
@@ -64,6 +64,9 @@ It supports page-level progress reporting, manual status checks, automatic retry
 - Save the Access Token locally so it does not need to be entered every time.  
   在本地保存 Access Token，无需每次重新输入。
 
+- Verify the generated Markdown contains at least 150 words/CJK characters per page; otherwise delete the result and job cache and resubmit up to three total attempts.  
+  生成 Markdown 后检查平均每页是否至少包含 150 个词/汉字；不足时删除结果及 jobId 缓存并重新提交，最多共尝试三次。
+
 - Automatically retry when PaddleOCR reports that the submission queue is full.  
   当 PaddleOCR 提示提交队列已满时自动重试。
 
@@ -93,7 +96,7 @@ build_paddleocr_pdf_to_md_EXE.bat
 README.md
 app_icon.ico
 app_icon.png
-version_info_26.7.27.02.txt
+version_info_26.8.13.01.txt
 requirements.txt
 ```
 
@@ -399,8 +402,8 @@ It then polls the server until the task is complete.
 The application currently provides the following models.  
 程序当前提供以下模型。
 
-This list is current for version `26.7.27.02`.
-以下列表对应 `26.7.27.02` 当前版本。
+This list is current for version `26.8.13.01`.
+以下列表对应 `26.8.13.01` 当前版本。
 
 ```text
 PaddleOCR-VL-1.6
@@ -412,8 +415,8 @@ PP-StructureV3
 The default model is `PaddleOCR-VL-1.6`.  
 默认模型为 `PaddleOCR-VL-1.6`。
 
-Version 26.7.27.02 keeps the default model unchanged, refreshes the GUI design language, and hardens Windows distribution against heuristic antivirus detections.
-26.7.27.02 版本保留默认模型不变，更新 GUI 设计语言，并调整 Windows 分发方式以减少杀毒软件启发式误报。
+Version 26.8.13.01 adds a post-OCR word-count quality check and automatic resubmission while keeping `PaddleOCR-VL-1.6` as the default model.
+26.8.13.01 版本新增 OCR 后字数质量检测与自动重新提交功能，同时继续使用 `PaddleOCR-VL-1.6` 作为默认模型。
 
 Actual availability depends on the PaddleOCR account and server-side API configuration.  
 模型是否实际可用，取决于 PaddleOCR 账户权限和服务端 API 配置。
@@ -503,6 +506,37 @@ If the application is interrupted, the saved `jobId` may allow the next run to c
 
 This may avoid submitting the same document again.  
 这样可能避免重复提交同一文档。
+
+### Markdown Word-Count Quality Check   Markdown 字数质量检测
+
+After each OCR job generates Markdown, the application counts its text before accepting the result. Chinese, Japanese, and Korean unified ideographs are counted one character at a time; non-CJK text is counted by word. Markdown punctuation and formatting symbols are not counted as words.  
+每次 OCR 任务生成 Markdown 后，程序都会先统计文本数量，再决定是否接受该结果。中日韩统一表意文字按单个汉字计数，非 CJK 文本按单词计数；Markdown 标点和格式符号不计入字数。
+
+The result passes when it contains at least **150 words/CJK characters per PDF page**. For example, a two-page PDF must contain at least 300 counted units. The page count is read from the PaddleOCR job result when available and otherwise from the local PDF.  
+当结果达到**平均每页至少 150 个词/汉字**时即通过。例如，两页 PDF 至少需要 300 个计数单位。程序优先读取 PaddleOCR 任务返回的页数，若返回结果没有页数，则读取本地 PDF。
+
+If the result is below the threshold on the first or second attempt, the application deletes all artifacts from that attempt before submitting a completely new OCR job:  
+如果第一次或第二次结果低于阈值，程序会删除该次尝试产生的全部文件，然后重新提交一个全新的 OCR 任务：
+
+```text
+example.md
+example.json (when present)
+example.raw.json
+_paddleocr_jobs\<document>.job.json
+```
+
+Deleting the job-cache JSON prevents the previous `jobId` from being reused. Each quality attempt receives a distinct batch ID. There are at most **three OCR attempts in total**; this is separate from queue-full submission retries.  
+删除 Job 缓存 JSON 可以防止程序复用上一次的 `jobId`。每次质量重试都会使用不同的批次 ID。每个文档**最多共执行三次 OCR**；此流程与“队列已满”时的提交重试相互独立。
+
+If the third OCR result is still below the threshold, the application keeps that final Markdown and JSON for inspection instead of entering an infinite retry loop. It records the count, page count, threshold, attempt number, and warning in the raw JSON, and appends the following warning to the runtime log and final batch summary:  
+如果第三次 OCR 结果仍低于阈值，程序会保留最后一次 Markdown 和 JSON 供人工检查，而不会无限重试。Raw JSON 会记录计数、页数、阈值、尝试次数和警告，并在运行日志与最终批处理摘要中追加以下警告：
+
+```text
+请核验原件字数，PaddleOCR返回结果可能存在问题。
+```
+
+For PDFs larger than 50 MB, the check is applied to every automatically split part using that part's page count. A warning from any part is propagated to the final batch summary.  
+对于超过 50MB 并被自动拆分的 PDF，程序会按照每个分段自身的页数分别检查字数；任一分段产生警告时，最终批处理摘要也会显示该警告。
 
 ---
 
@@ -706,8 +740,8 @@ The EXE and its SHA-256 record are generated at the following locations.
 EXE 及其 SHA-256 校验文件会生成在以下位置。
 
 ```text
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.27.02.exe
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.27.02.exe.sha256.txt
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.8.13.01.exe
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.8.13.01.exe.sha256.txt
 ```
 
 Publish the EXE directly and provide the checksum alongside it. The script opens File Explorer with the generated EXE selected.
@@ -728,8 +762,8 @@ Internet access and a valid PaddleOCR API token are still required.
 
 ### Antivirus Reports AndroidOS/Multiverze or Another Threat   杀毒软件报告 AndroidOS/Multiverze 或其他威胁
 
-The public artifact is now a single `PaddleOCR_PDF_to_MD_26.7.27.02.exe`, compiled with Nuitka rather than bundled with PyInstaller. It uses uncompressed one-file mode to avoid UPX and compressed PyInstaller bootloader patterns; no code-signing certificate is required.
-现在的公开发布物就是单个 `PaddleOCR_PDF_to_MD_26.7.27.02.exe`。它改用 Nuitka 编译，不再使用 PyInstaller 打包，并采用无压缩单文件模式，以避开 UPX 和压缩式 PyInstaller 引导器特征；不要求代码签名证书。
+The public artifact is now a single `PaddleOCR_PDF_to_MD_26.8.13.01.exe`, compiled with Nuitka rather than bundled with PyInstaller. It uses uncompressed one-file mode to avoid UPX and compressed PyInstaller bootloader patterns; no code-signing certificate is required.
+现在的公开发布物就是单个 `PaddleOCR_PDF_to_MD_26.8.13.01.exe`。它改用 Nuitka 编译，不再使用 PyInstaller 打包，并采用无压缩单文件模式，以避开 UPX 和压缩式 PyInstaller 引导器特征；不要求代码签名证书。
 
 The build no longer waits for an antivirus alert and then deletes the EXE. Instead, Python modules are translated to C, compiled with Nuitka's managed MinGW64 toolchain, linked with LTO, and placed in an uncompressed one-file payload. This targets the packaging characteristics that caused the previous alert while preserving direct EXE distribution.
 构建流程不再等杀毒软件告警后删除 EXE。Python 模块会转换为 C，使用 Nuitka 管理的 MinGW64 工具链编译，以 LTO 链接，并放入无压缩单文件载荷中。这样是在保留单 EXE 直接发布的同时，针对旧版告警涉及的打包特征进行处理。
@@ -738,20 +772,20 @@ No unsigned build system can guarantee acceptance by every antivirus engine beca
 任何无签名构建方式都无法保证被每个杀毒引擎接受，因为云信誉和启发式规则会独立变化。如果 Microsoft 仍把这一份干净的 Nuitka 构建识别为 `AndroidOS/Multiverze`，请将准确的 EXE 提交给 Microsoft Security Intelligence 并选择“错误检测”。不要关闭杀毒保护，也不要让接收者添加排除项。
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\PaddleOCR_PDF_to_MD_26.7.27.02.exe
-Get-Content .\PaddleOCR_PDF_to_MD_26.7.27.02.exe.sha256.txt
+Get-FileHash -Algorithm SHA256 .\PaddleOCR_PDF_to_MD_26.8.13.01.exe
+Get-Content .\PaddleOCR_PDF_to_MD_26.8.13.01.exe.sha256.txt
 ```
 
 ### Bad Image / status 0xc0e90002   DLL 错误 / 状态 0xc0e90002
 
-The release remains one independent EXE. The current one-file build uses a stable per-user cache under `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.7.27.02` instead of a random `%TEMP%\onefile_*` directory. This avoids races with Temp cleanup and lets security software inspect the extracted runtime once rather than at every launch.
-发布物仍然是一个独立 EXE。当前单文件构建使用 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.7.27.02` 下的固定用户缓存，不再使用随机 `%TEMP%\onefile_*` 目录。这样可避免与临时目录清理发生竞争，也无需安全软件在每次启动时重新检查运行组件。
+The release remains one independent EXE. The current one-file build uses a stable per-user cache under `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.01` instead of a random `%TEMP%\onefile_*` directory. This avoids races with Temp cleanup and lets security software inspect the extracted runtime once rather than at every launch.
+发布物仍然是一个独立 EXE。当前单文件构建使用 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.01` 下的固定用户缓存，不再使用随机 `%TEMP%\onefile_*` 目录。这样可避免与临时目录清理发生竞争，也无需安全软件在每次启动时重新检查运行组件。
 
 If an older EXE reports this error, delete that old EXE and its old `%TEMP%\onefile_*` folder, rebuild with the current BAT, and send the newly generated EXE together with its SHA-256 record. The recipient should verify that the downloaded EXE hash matches before running it.
 如果旧 EXE 出现此错误，请删除旧 EXE 及其旧 `%TEMP%\onefile_*` 目录，用当前 BAT 重新构建，并将新 EXE 与 SHA-256 记录一起发送。接收者运行前应确认下载所得 EXE 的哈希一致。
 
-If the current build is interrupted during its first extraction, close the application, delete `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.7.27.02`, and launch the same EXE again so it can recreate a clean cache. Do not disable antivirus protection or add an exclusion.
-如果当前构建首次释放组件时被中断，请关闭程序，删除 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.7.27.02`，然后重新启动同一个 EXE，让它重建干净缓存。不要关闭杀毒保护，也不要添加排除项。
+If the current build is interrupted during its first extraction, close the application, delete `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.01`, and launch the same EXE again so it can recreate a clean cache. Do not disable antivirus protection or add an exclusion.
+如果当前构建首次释放组件时被中断，请关闭程序，删除 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.01`，然后重新启动同一个 EXE，让它重建干净缓存。不要关闭杀毒保护，也不要添加排除项。
 
 ### The EXE Cannot Be Found   找不到生成的 EXE
 
@@ -766,7 +800,7 @@ Then check the following path.
 随后检查以下路径。
 
 ```text
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.7.27.02.exe
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.8.13.01.exe
 ```
 
 You can also open the following text file.  
@@ -778,8 +812,8 @@ EXE位置.txt
 
 ### The Model List Still Shows an Older Version  模型列表仍然显示旧版本
 
-Confirm that the application title shows `26.7.27.02`.
-确认程序标题中显示 `26.7.27.02`。
+Confirm that the application title shows `26.8.13.01`.
+确认程序标题中显示 `26.8.13.01`。
 
 Check the folder from which you launched `paddleocr_pdf_to_md_gui.py` or the versioned EXE.  
 检查你启动 `paddleocr_pdf_to_md_gui.py` 或带版本号 EXE 的所在文件夹。

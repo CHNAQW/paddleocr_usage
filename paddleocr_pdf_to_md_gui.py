@@ -53,7 +53,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "PaddleOCR PDF批量转Markdown"
-APP_VERSION = "26.7.27.02"
+APP_VERSION = "26.8.13.01"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -68,6 +68,9 @@ QUEUE_FULL_MAX_ATTEMPTS = 3
 RATE_LIMIT_RETRY_SECONDS = 20.0
 REQUEST_TIMEOUT_SECONDS = 300.0
 TOKEN_CHECK_TIMEOUT_SECONDS = 20.0
+MIN_WORDS_OR_CJK_PER_PAGE = 150
+MAX_OCR_QUALITY_ATTEMPTS = 3
+OCR_QUALITY_WARNING = "请核验原件字数，PaddleOCR返回结果可能存在问题。"
 
 DEFAULT_MODEL = "PaddleOCR-VL-1.6"
 MODEL_CHOICES = [
@@ -946,6 +949,50 @@ def get_job_cache_path(output_root: Path, pdf_path: Path) -> Path:
     return cache_dir / f"{safe_filename(pdf_path.stem)}_{file_identity_key(pdf_path)}.job.json"
 
 
+def count_words_and_cjk(text: str) -> int:
+    """Count CJK characters individually and non-CJK words as word-count units."""
+    cjk_count = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", text or ""))
+    without_cjk = re.sub(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", " ", text or "")
+    word_count = len(re.findall(r"[^\W_]+(?:['’.-][^\W_]+)*", without_cjk, flags=re.UNICODE))
+    return cjk_count + word_count
+
+
+def get_result_page_count(done_payload: dict[str, Any], pdf_path: Path) -> int:
+    """Read the API page count, falling back to the local PDF when necessary."""
+    for item in iter_dicts(done_payload):
+        for key in ("totalPages", "pageCount", "total_pages", "page_count"):
+            pages = int_or_zero(item.get(key))
+            if pages > 0:
+                return pages
+    if PdfReader is not None:
+        try:
+            return max(1, len(PdfReader(str(pdf_path)).pages))
+        except Exception:
+            pass
+    return 1
+
+
+def markdown_is_too_short(markdown: str, page_count: int) -> tuple[bool, int]:
+    units = count_words_and_cjk(markdown)
+    return units < max(1, page_count) * MIN_WORDS_OR_CJK_PER_PAGE, units
+
+
+def remove_low_wordcount_artifacts(output_md_path: Path, job_cache_path: Path) -> None:
+    """Remove all results and the job cache so the next attempt is a new API job."""
+    candidates = {
+        output_md_path,
+        output_md_path.with_suffix(".json"),
+        output_md_path.with_suffix(".raw.json"),
+        job_cache_path,
+    }
+    for path in candidates:
+        try:
+            path.unlink(missing_ok=True)
+        except TypeError:  # Python 3.7 compatibility for source execution.
+            if path.exists():
+                path.unlink()
+
+
 def get_job_url(base_url: str) -> str:
     base = (base_url or DEFAULT_BASE_URL).strip().rstrip("/")
     return f"{base}{JOB_PATH}"
@@ -1543,10 +1590,14 @@ def process_one_pdf_async(
     progress_callback,
     log_callback,
     manual_query_event: Optional[threading.Event] = None,
+    quality_attempt: int = 1,
 ) -> tuple[str, dict[str, Any]]:
     job_cache_path = get_job_cache_path(output_root, pdf_path)
     raw_json_path = output_md_path.with_suffix(".raw.json")
-    batch_id = f"batch-{datetime.now():%Y%m%d-%H%M%S}-{file_identity_key(pdf_path)}"
+    batch_id = (
+        f"batch-{datetime.now():%Y%m%d-%H%M%S}-{file_identity_key(pdf_path)}"
+        f"-quality{quality_attempt}"
+    )
 
     job_id = ""
     if job_cache_path.exists() and not overwrite:
@@ -1627,10 +1678,54 @@ def process_one_pdf_async(
                 progress_callback=progress_callback,
                 log_callback=log_callback,
                 manual_query_event=manual_query_event,
+                quality_attempt=quality_attempt,
             )
         raise
 
-    return save_result_resources(done_payload, output_md_path, raw_json_path, request_timeout)
+    markdown, raw_data = save_result_resources(
+        done_payload, output_md_path, raw_json_path, request_timeout
+    )
+    page_count = get_result_page_count(done_payload, pdf_path)
+    too_short, word_count = markdown_is_too_short(markdown, page_count)
+    raw_data["wordCountCheck"] = {
+        "count": word_count,
+        "pageCount": page_count,
+        "minimumPerPage": MIN_WORDS_OR_CJK_PER_PAGE,
+        "attempt": quality_attempt,
+        "passed": not too_short,
+    }
+    raw_json_path.write_text(json.dumps(raw_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    log_callback(
+        f"字数检测（第 {quality_attempt}/{MAX_OCR_QUALITY_ATTEMPTS} 次）："
+        f"{word_count} 词/汉字，{page_count} 页，平均 {word_count / page_count:.1f}/页。"
+    )
+    if too_short and quality_attempt < MAX_OCR_QUALITY_ATTEMPTS:
+        log_callback(
+            f"平均每页少于 {MIN_WORDS_OR_CJK_PER_PAGE} 词/汉字，删除本次结果和 jobId 缓存后重新提交。"
+        )
+        remove_low_wordcount_artifacts(output_md_path, job_cache_path)
+        return process_one_pdf_async(
+            pdf_path=pdf_path,
+            output_md_path=output_md_path,
+            output_root=output_root,
+            token=token,
+            model_name=model_name,
+            base_url=base_url,
+            request_timeout=request_timeout,
+            poll_timeout=poll_timeout,
+            poll_interval=poll_interval,
+            overwrite=True,
+            stop_checker=stop_checker,
+            progress_callback=progress_callback,
+            log_callback=log_callback,
+            manual_query_event=manual_query_event,
+            quality_attempt=quality_attempt + 1,
+        )
+    if too_short:
+        raw_data["qualityWarning"] = OCR_QUALITY_WARNING
+        raw_json_path.write_text(json.dumps(raw_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        log_callback(f"警告：{OCR_QUALITY_WARNING}")
+    return markdown, raw_data
 
 
 class PaddleOCRBatchGUI:
@@ -2177,6 +2272,7 @@ class PaddleOCRBatchGUI:
         skipped = 0
         failed = 0
         split_count = 0
+        quality_warning_count = 0
         existing: set[Path] = set()
         log_path = output_dir / LOG_FILE_NAME
 
@@ -2252,6 +2348,11 @@ class PaddleOCRBatchGUI:
                         log_callback=log_callback, manual_query_event=self.manual_query_event,
                     )
                     write_log_line(f"OK\t{pdf}\t{out_path}")
+                if any(
+                    item.get("qualityWarning") == OCR_QUALITY_WARNING
+                    for item in iter_dicts(raw_data)
+                ):
+                    quality_warning_count += 1
                 ok += 1
                 self.log_queue.put(("log", f"完成：{out_path}"))
             except StopRequested as e:
@@ -2282,6 +2383,8 @@ class PaddleOCRBatchGUI:
             f"批处理结束：成功 {ok}，跳过 {skipped}，失败 {failed}，"
             f"自动拆分大文件 {split_count} 个，耗时 {elapsed}。日志：{log_path}"
         )
+        if quality_warning_count:
+            summary += f" 警告：{OCR_QUALITY_WARNING}（{quality_warning_count} 个文件）"
         write_log_line(f"结束时间：{end_time:%Y-%m-%d %H:%M:%S}")
         write_log_line(summary)
         self.log_queue.put(("done", summary))
