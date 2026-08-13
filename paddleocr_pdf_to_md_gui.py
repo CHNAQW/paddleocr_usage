@@ -1125,7 +1125,7 @@ def fetch_openai_compatible_models(
     return models
 
 
-def test_openai_compatible_api(
+def check_openai_compatible_api(
     base_url: str,
     api_key: str,
     model: str,
@@ -2364,7 +2364,7 @@ class PaddleOCRBatchGUI:
 
     def _test_llm_api_worker(self) -> None:
         try:
-            reply = test_openai_compatible_api(
+            reply = check_openai_compatible_api(
                 self.config.llm_base_url,
                 self.config.llm_api_key,
                 self.config.llm_model,
