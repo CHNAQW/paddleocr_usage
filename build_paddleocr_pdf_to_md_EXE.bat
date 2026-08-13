@@ -11,7 +11,9 @@ set "ROOT=%~dp0"
 set "SCRIPT=%ROOT%paddleocr_pdf_to_md_gui.py"
 set "ICON_ICO=%ROOT%app_icon.ico"
 set "ICON_PNG=%ROOT%app_icon.png"
-set "VENV=%ROOT%.venv"
+REM Keep the build environment separate from the launcher's .venv. The launcher
+REM may legitimately use Python 3.14, while pinned Nuitka 2.7.12 requires 3.9-3.13.
+set "VENV=%ROOT%.venv-nuitka-2.7.12"
 set "PYTHON=%VENV%\Scripts\python.exe"
 set "OUTDIR=%ROOT%PaddleOCR_PDF_to_MD_EXE"
 set "WORKDIR=%ROOT%build\nuitka"
@@ -54,7 +56,7 @@ if not defined BASEPY py -3.10 --version >nul 2>nul
 if not defined BASEPY if not errorlevel 1 set "BASEPY=py -3.10"
 if not defined BASEPY py -3.9 --version >nul 2>nul
 if not defined BASEPY if not errorlevel 1 set "BASEPY=py -3.9"
-if not defined BASEPY python -c "import sys; raise SystemExit(0 if (3, 9) ^<= sys.version_info[:2] ^< (3, 14) else 1)" >nul 2>nul
+if not defined BASEPY python -c "import sys; raise SystemExit(0 if sys.version_info[:2] in ((3,9),(3,10),(3,11),(3,12),(3,13)) else 1)" >nul 2>nul
 if not defined BASEPY if not errorlevel 1 set "BASEPY=python"
 if not defined BASEPY (
     echo [错误] 没找到 Nuitka 2.7.12 支持的 Python 3.9 至 3.13。
@@ -63,13 +65,14 @@ if not defined BASEPY (
 )
 
 if exist "%PYTHON%" (
-    "%PYTHON%" -c "import sys; raise SystemExit(0 if (3, 9) ^<= sys.version_info[:2] ^< (3, 14) else 1)" >nul 2>nul || goto :rebuild_venv
+    "%PYTHON%" -c "import sys; raise SystemExit(0 if sys.version_info[:2] in ((3,9),(3,10),(3,11),(3,12),(3,13)) else 1)" >nul 2>nul || goto :rebuild_venv
 )
 
 goto :venv_ready
 
 :rebuild_venv
 echo [更新环境] 现有虚拟环境的 Python 不受 Nuitka 2.7.12 支持，正在重建...
+if exist "%PYTHON%" "%PYTHON%" --version
 rmdir /s /q "%VENV%"
 if exist "%VENV%" goto :failed
 
