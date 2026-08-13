@@ -12,7 +12,7 @@ from paddleocr_pdf_to_md_gui import (
     remove_low_wordcount_artifacts,
     fetch_openai_compatible_models,
     review_markdown_with_llm,
-    test_openai_compatible_api,
+    check_openai_compatible_api,
 )
 
 
@@ -102,7 +102,7 @@ class LLMReviewTests(unittest.TestCase):
         response = Mock(ok=True)
         response.json.return_value = {"choices": [{"message": {"content": "OK"}}]}
         with patch("paddleocr_pdf_to_md_gui.requests.post", return_value=response) as post_mock:
-            reply = test_openai_compatible_api(
+            reply = check_openai_compatible_api(
                 "https://api.example/v1/", "secret", "test-model", timeout=3
             )
         self.assertEqual(reply, "OK")
