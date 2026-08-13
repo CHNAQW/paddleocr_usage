@@ -9,8 +9,8 @@ For more information, please read the README. Terms And Condition please read be
 # PaddleOCR PDF to Markdown GUI  
 # PaddleOCR PDF 转 Markdown 图形化工具
 
-**Version: 26.8.13.01**
-**版本：26.8.13.01**
+**Version: 26.8.13.02**
+**版本：26.8.13.02**
 
 **Primary platform: Windows 10/11**  
 **主要适用平台：Windows 10/11**
@@ -96,7 +96,7 @@ build_paddleocr_pdf_to_md_EXE.bat
 README.md
 app_icon.ico
 app_icon.png
-version_info_26.8.13.01.txt
+version_info_26.8.13.02.txt
 requirements.txt
 ```
 
@@ -402,8 +402,8 @@ It then polls the server until the task is complete.
 The application currently provides the following models.  
 程序当前提供以下模型。
 
-This list is current for version `26.8.13.01`.
-以下列表对应 `26.8.13.01` 当前版本。
+This list is current for version `26.8.13.02`.
+以下列表对应 `26.8.13.02` 当前版本。
 
 ```text
 PaddleOCR-VL-1.6
@@ -415,8 +415,8 @@ PP-StructureV3
 The default model is `PaddleOCR-VL-1.6`.  
 默认模型为 `PaddleOCR-VL-1.6`。
 
-Version 26.8.13.01 adds a post-OCR word-count quality check and automatic resubmission while keeping `PaddleOCR-VL-1.6` as the default model.
-26.8.13.01 版本新增 OCR 后字数质量检测与自动重新提交功能，同时继续使用 `PaddleOCR-VL-1.6` 作为默认模型。
+Version 26.8.13.02 adds a post-OCR word-count quality check and automatic resubmission while keeping `PaddleOCR-VL-1.6` as the default model.
+26.8.13.02 版本新增 OCR 后字数质量检测与自动重新提交功能，同时继续使用 `PaddleOCR-VL-1.6` 作为默认模型。
 
 Actual availability depends on the PaddleOCR account and server-side API configuration.  
 模型是否实际可用，取决于 PaddleOCR 账户权限和服务端 API 配置。
@@ -740,8 +740,8 @@ The EXE and its SHA-256 record are generated at the following locations.
 EXE 及其 SHA-256 校验文件会生成在以下位置。
 
 ```text
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.8.13.01.exe
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.8.13.01.exe.sha256.txt
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.8.13.02.exe
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.8.13.02.exe.sha256.txt
 ```
 
 Publish the EXE directly and provide the checksum alongside it. The script opens File Explorer with the generated EXE selected.
@@ -762,8 +762,8 @@ Internet access and a valid PaddleOCR API token are still required.
 
 ### Antivirus Reports AndroidOS/Multiverze or Another Threat   杀毒软件报告 AndroidOS/Multiverze 或其他威胁
 
-The public artifact is now a single `PaddleOCR_PDF_to_MD_26.8.13.01.exe`, compiled with Nuitka rather than bundled with PyInstaller. It uses uncompressed one-file mode to avoid UPX and compressed PyInstaller bootloader patterns; no code-signing certificate is required.
-现在的公开发布物就是单个 `PaddleOCR_PDF_to_MD_26.8.13.01.exe`。它改用 Nuitka 编译，不再使用 PyInstaller 打包，并采用无压缩单文件模式，以避开 UPX 和压缩式 PyInstaller 引导器特征；不要求代码签名证书。
+The public artifact is now a single `PaddleOCR_PDF_to_MD_26.8.13.02.exe`, compiled with Nuitka rather than bundled with PyInstaller. It uses uncompressed one-file mode to avoid UPX and compressed PyInstaller bootloader patterns; no code-signing certificate is required.
+现在的公开发布物就是单个 `PaddleOCR_PDF_to_MD_26.8.13.02.exe`。它改用 Nuitka 编译，不再使用 PyInstaller 打包，并采用无压缩单文件模式，以避开 UPX 和压缩式 PyInstaller 引导器特征；不要求代码签名证书。
 
 The build no longer waits for an antivirus alert and then deletes the EXE. Instead, Python modules are translated to C, compiled with Nuitka's managed MinGW64 toolchain, linked with LTO, and placed in an uncompressed one-file payload. This targets the packaging characteristics that caused the previous alert while preserving direct EXE distribution.
 构建流程不再等杀毒软件告警后删除 EXE。Python 模块会转换为 C，使用 Nuitka 管理的 MinGW64 工具链编译，以 LTO 链接，并放入无压缩单文件载荷中。这样是在保留单 EXE 直接发布的同时，针对旧版告警涉及的打包特征进行处理。
@@ -772,20 +772,20 @@ No unsigned build system can guarantee acceptance by every antivirus engine beca
 任何无签名构建方式都无法保证被每个杀毒引擎接受，因为云信誉和启发式规则会独立变化。如果 Microsoft 仍把这一份干净的 Nuitka 构建识别为 `AndroidOS/Multiverze`，请将准确的 EXE 提交给 Microsoft Security Intelligence 并选择“错误检测”。不要关闭杀毒保护，也不要让接收者添加排除项。
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\PaddleOCR_PDF_to_MD_26.8.13.01.exe
-Get-Content .\PaddleOCR_PDF_to_MD_26.8.13.01.exe.sha256.txt
+Get-FileHash -Algorithm SHA256 .\PaddleOCR_PDF_to_MD_26.8.13.02.exe
+Get-Content .\PaddleOCR_PDF_to_MD_26.8.13.02.exe.sha256.txt
 ```
 
 ### Bad Image / status 0xc0e90002   DLL 错误 / 状态 0xc0e90002
 
-The release remains one independent EXE. The current one-file build uses a stable per-user cache under `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.01` instead of a random `%TEMP%\onefile_*` directory. This avoids races with Temp cleanup and lets security software inspect the extracted runtime once rather than at every launch.
-发布物仍然是一个独立 EXE。当前单文件构建使用 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.01` 下的固定用户缓存，不再使用随机 `%TEMP%\onefile_*` 目录。这样可避免与临时目录清理发生竞争，也无需安全软件在每次启动时重新检查运行组件。
+The release remains one independent EXE. The current one-file build uses a stable per-user cache under `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.02` instead of a random `%TEMP%\onefile_*` directory. This avoids races with Temp cleanup and lets security software inspect the extracted runtime once rather than at every launch.
+发布物仍然是一个独立 EXE。当前单文件构建使用 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.02` 下的固定用户缓存，不再使用随机 `%TEMP%\onefile_*` 目录。这样可避免与临时目录清理发生竞争，也无需安全软件在每次启动时重新检查运行组件。
 
 If an older EXE reports this error, delete that old EXE and its old `%TEMP%\onefile_*` folder, rebuild with the current BAT, and send the newly generated EXE together with its SHA-256 record. The recipient should verify that the downloaded EXE hash matches before running it.
 如果旧 EXE 出现此错误，请删除旧 EXE 及其旧 `%TEMP%\onefile_*` 目录，用当前 BAT 重新构建，并将新 EXE 与 SHA-256 记录一起发送。接收者运行前应确认下载所得 EXE 的哈希一致。
 
-If the current build is interrupted during its first extraction, close the application, delete `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.01`, and launch the same EXE again so it can recreate a clean cache. Do not disable antivirus protection or add an exclusion.
-如果当前构建首次释放组件时被中断，请关闭程序，删除 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.01`，然后重新启动同一个 EXE，让它重建干净缓存。不要关闭杀毒保护，也不要添加排除项。
+If the current build is interrupted during its first extraction, close the application, delete `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.02`, and launch the same EXE again so it can recreate a clean cache. Do not disable antivirus protection or add an exclusion.
+如果当前构建首次释放组件时被中断，请关闭程序，删除 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.02`，然后重新启动同一个 EXE，让它重建干净缓存。不要关闭杀毒保护，也不要添加排除项。
 
 ### The EXE Cannot Be Found   找不到生成的 EXE
 
@@ -800,7 +800,7 @@ Then check the following path.
 随后检查以下路径。
 
 ```text
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.8.13.01.exe
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.8.13.02.exe
 ```
 
 You can also open the following text file.  
@@ -812,8 +812,8 @@ EXE位置.txt
 
 ### The Model List Still Shows an Older Version  模型列表仍然显示旧版本
 
-Confirm that the application title shows `26.8.13.01`.
-确认程序标题中显示 `26.8.13.01`。
+Confirm that the application title shows `26.8.13.02`.
+确认程序标题中显示 `26.8.13.02`。
 
 Check the folder from which you launched `paddleocr_pdf_to_md_gui.py` or the versioned EXE.  
 检查你启动 `paddleocr_pdf_to_md_gui.py` 或带版本号 EXE 的所在文件夹。
@@ -1028,3 +1028,50 @@ To the maximum extent permitted by applicable law, the Licensor shall not be lia
 
 For commercial licensing or permissions beyond those stated above, please contact the Licensor.  
 如需商业许可或超出本文件范围的其他授权，请与许可人联系。
+
+
+## Optional OpenAI-compatible LLM review  可选 LLM 核验
+
+Version `26.8.13.02` can optionally send each generated Markdown file to an OpenAI-compatible Chat Completions API (for example DeepSeek) to identify obvious conversion failures. This feature is disabled by default and does not rewrite the Markdown. If the LLM reports a conversion problem, the app deletes the current `.md`, result JSON, review report, and jobId cache, then submits a fresh OCR job (up to three quality attempts). An LLM request failure is logged without deleting a successful OCR result.
+
+`26.8.13.02` 可选接入 OpenAI-compatible Chat Completions API（例如 DeepSeek），检查每个已生成 Markdown 是否存在明显转换失败。该功能默认关闭，不会改写 Markdown。若 LLM 判定转换有问题，程序会删除本次 `.md`、结果 JSON、核验报告和 jobId 缓存，然后重新提交 OCR（质量核验最多三次）；LLM 请求失败只记录警告，不删除已成功生成的 OCR 结果。
+
+1. Enable **使用 LLM 核验 .md 转换质量** in Settings.
+2. Enter the provider Base URL (the default is `https://api.deepseek.com/v1`) and API Key.
+3. Click **拉取模型列表** to query the compatible `GET /models` endpoint, then select a model. A model ID can also be entered manually for providers that do not expose model discovery.
+4. Start the normal batch conversion. Long Markdown is reviewed in 50,000-character chunks so the whole file is covered.
+
+The review prompt asks the model to detect garbled text, truncation, page/paragraph disorder, large duplicate regions, leaked JSON/HTML error responses, severely broken tables/formulas, missing pages, or nearly empty body text. It explicitly forbids rewriting and avoids treating ordinary OCR typos as a conversion failure. The model must return structured JSON with a boolean conclusion, severity, summary, issues, and short evidence.
+
+1. 在“设置”中勾选 **使用 LLM 核验 .md 转换质量**。
+2. 填写服务商 Base URL（默认 `https://api.deepseek.com/v1`）和 API Key。
+3. 点击 **拉取模型列表**，程序会调用兼容的 `GET /models` 接口，然后选择模型；若服务商不支持模型发现，也可手工输入模型 ID。
+4. 正常开始批处理。长 Markdown 会按每段 50,000 字符逐段核验，避免只检查文件开头。
+
+API Key 会与 PaddleOCR Token 一样保存在当前用户配置文件中。请只在可信的个人电脑上使用，并确认服务商的数据处理政策；文档正文会发送给所配置的第三方 LLM 服务。
+
+### Manual Markdown checks  手动检验
+
+Use **手动字数检验** to select one or more existing `.md` files. The application reads the page count from a sibling `.raw.json`/`.json` or same-name PDF when available; otherwise it conservatively treats the document as one page. It reports the counted words/CJK characters and the required threshold without deleting files or resubmitting OCR.
+
+Use **手动LLM检验** to review existing `.md` files with the configured OpenAI-compatible model. It runs in the background and writes a sibling `.llm-review.json`. Manual checks are diagnostic only: they never delete files or submit OCR jobs.
+
+使用 **手动字数检验** 可选择一个或多个已有 `.md`。程序优先从同名 `.raw.json`、`.json` 或 PDF 获取页数，均不存在时按一页计算；该操作只显示字数与阈值，不删除文件，也不重新提交 OCR。
+
+使用 **手动LLM检验** 可通过已配置的 OpenAI-compatible 模型核验已有 `.md`。检验在后台运行，并写入同名 `.llm-review.json`。两种手动检验都仅供诊断，不会删除文件或提交 OCR 任务。
+
+### Why the build environment was rebuilt every time  为什么每次构建都重建虚拟环境
+
+The previous BAT checked `%ERRORLEVEL%` inside a parenthesized block. Windows `cmd.exe` expands `%ERRORLEVEL%` when parsing the whole block, so it could reuse the status from an earlier command and incorrectly conclude that a supported Python was unsupported. The build script now branches directly from the Python version-check command with `|| goto :rebuild_venv`, so a valid Python 3.9–3.13 environment is reused.
+
+旧 BAT 在括号块内检查 `%ERRORLEVEL%`。Windows `cmd.exe` 会在解析整个括号块时提前展开该值，因此可能沿用之前命令的状态，误判现有 Python 不受支持。现在版本检测命令使用 `|| goto :rebuild_venv` 直接按自身退出码跳转，合法的 Python 3.9–3.13 虚拟环境会被正常复用。
+
+**Build environment correction:** the build script now uses `.venv-nuitka-2.7.12`, separate from the launcher's `.venv`. The launcher may create `.venv` with Python 3.14, which is valid for running this application but unsupported by pinned Nuitka 2.7.12. Sharing that directory made the build legitimately replace it. In addition, the old quoted Python version expression contained CMD caret escapes (`^<`); those characters can reach Python literally and make the probe fail with a syntax error, producing the same misleading rebuild message. The new probe avoids CMD metacharacters entirely and prints the rejected interpreter version before a real rebuild.
+
+**构建环境修正：**构建脚本现在使用独立的 `.venv-nuitka-2.7.12`，不再与启动器的 `.venv` 共用。启动器可能用 Python 3.14 创建 `.venv`；它可以正常运行本程序，但固定的 Nuitka 2.7.12 不支持它，所以共用环境时构建脚本确实会替换该环境。此外，旧版放在引号内的 Python 版本表达式含有 CMD 脱字符（`^<`），这些字符可能被原样交给 Python，导致检测语句发生语法错误，进而显示同一条误导性的重建提示。新检测不再包含 CMD 元字符，并会在确实需要重建前显示被拒绝的 Python 版本。
+
+### Test LLM API connectivity  测试 LLM API 连通性
+
+After entering the Base URL, API Key, and model, click **测试LLM API**. The application sends a small `chat/completions` request asking the selected model to reply `OK`. A successful result therefore verifies the endpoint, authentication, selected model access, and actual generation path—not merely that `GET /models` is reachable. The test runs in the background and shows the model reply; it does not send document content.
+
+填写 Base URL、API Key 和模型后，点击 **测试LLM API**。程序会向 `chat/completions` 发送一个仅要求所选模型回复 `OK` 的小请求。因此测试成功能够同时验证接口地址、鉴权、模型访问权限和实际生成链路，而不只是验证 `GET /models` 是否可访问。测试在后台运行，会显示模型回复，且不会发送文档内容。
