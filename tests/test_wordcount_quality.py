@@ -108,7 +108,19 @@ class LLMReviewTests(unittest.TestCase):
         self.assertEqual(reply, "OK")
         self.assertEqual(post_mock.call_args.args[0], "https://api.example/v1/chat/completions")
         self.assertEqual(post_mock.call_args.kwargs["json"]["model"], "test-model")
+        self.assertNotIn("max_tokens", post_mock.call_args.kwargs["json"])
         self.assertEqual(post_mock.call_args.kwargs["timeout"], 3)
+
+    def test_llm_api_empty_reply_reports_finish_reason(self):
+        response = Mock(ok=True)
+        response.json.return_value = {
+            "choices": [{"message": {"content": ""}, "finish_reason": "length"}]
+        }
+        with patch("paddleocr_pdf_to_md_gui.requests.post", return_value=response):
+            with self.assertRaisesRegex(RuntimeError, "finish_reason=length"):
+                check_openai_compatible_api(
+                    "https://api.example/v1", "secret", "reasoning-model"
+                )
 
     def test_fetches_and_sorts_openai_compatible_models(self):
         response = Mock(ok=True)

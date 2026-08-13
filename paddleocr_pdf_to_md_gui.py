@@ -53,7 +53,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "PaddleOCR PDF批量转Markdown"
-APP_VERSION = "26.8.13.02"
+APP_VERSION = "26.8.13.03"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -1141,7 +1141,6 @@ def check_openai_compatible_api(
         json={
             "model": model.strip(),
             "temperature": 0,
-            "max_tokens": 8,
             "messages": [{"role": "user", "content": "只回复 OK"}],
         },
         timeout=timeout,
@@ -1152,11 +1151,19 @@ def check_openai_compatible_api(
         )
     payload = parse_response_json(response)
     try:
-        content = str(payload["choices"][0]["message"]["content"]).strip()
+        choice = payload["choices"][0]
+        content_value = choice["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise RuntimeError("LLM API 已响应，但缺少 choices[0].message.content。") from exc
+    content = content_value.strip() if isinstance(content_value, str) else ""
     if not content:
-        raise RuntimeError("LLM API 已响应，但返回内容为空。")
+        finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+        suffix = f"（finish_reason={finish_reason}）" if finish_reason else ""
+        raise RuntimeError(
+            "LLM API 已响应，但返回内容为空"
+            f"{suffix}。测试请求已不再限制 max_tokens；如果仍出现此错误，请确认所选模型支持 "
+            "chat/completions 文本输出，而不是仅支持推理、嵌入或图像输出的模型。"
+        )
     return content
 
 
