@@ -53,7 +53,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "PaddleOCR PDF批量转Markdown"
-APP_VERSION = "26.8.13.03"
+APP_VERSION = "26.8.13.04"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -70,7 +70,7 @@ REQUEST_TIMEOUT_SECONDS = 300.0
 TOKEN_CHECK_TIMEOUT_SECONDS = 20.0
 DEFAULT_LLM_BASE_URL = "https://api.deepseek.com/v1"
 LLM_REVIEW_CHUNK_CHARS = 50000
-LLM_REVIEW_PROMPT = """你是文档转换质量核验员。请只检查下面由 PDF/OCR 转换得到的 Markdown 是否存在明显的未顺利转换问题，例如：乱码或异常字符、内容被截断、页序/段落错乱、大段重复、只剩 JSON/HTML 错误信息、表格或公式严重破损、明显缺页或几乎没有正文。不要润色、改写或评价原文内容，也不要因为普通 OCR 错别字就判定失败。
+LLM_REVIEW_PROMPT = """你是文档转换质量核验员。has_problem=true 会触发成本很高的整份 PDF 重新转换，因此只有确认存在缺页、少页、漏页，或使原意无法成立的严重逻辑错误时，才可设为 true。普通 OCR 错别字、乱码、排版或表格/公式瑕疵、段落顺序小问题、局部重复、文风和原文自身的问题都必须设为 false；证据不足或不确定时也必须设为 false。不要润色、改写或评价原文内容。
 
 请仅返回一个 JSON 对象，不要使用 Markdown 代码围栏：
 {{"has_problem": true或false, "severity": "none|low|medium|high", "summary": "简短中文结论", "issues": ["具体问题"], "evidence": ["简短证据"]}}
@@ -1055,7 +1055,7 @@ def manually_check_markdown_wordcount(markdown_path: Path) -> dict[str, Any]:
     }
 
 
-def remove_quality_failed_artifacts(output_md_path: Path, job_cache_path: Path) -> None:
+def remove_quality_failed_artifacts(output_md_path: Path, job_cache_path: Path) -> list[Path]:
     """Remove OCR/review results and the job cache before a fresh API submission."""
     candidates = {
         output_md_path,
@@ -1064,12 +1064,19 @@ def remove_quality_failed_artifacts(output_md_path: Path, job_cache_path: Path) 
         output_md_path.with_suffix(".llm-review.json"),
         job_cache_path,
     }
+    removed: list[Path] = []
     for path in candidates:
+        existed = path.exists()
         try:
             path.unlink(missing_ok=True)
         except TypeError:  # Python 3.7 compatibility for source execution.
             if path.exists():
                 path.unlink()
+        if existed:
+            removed.append(path)
+        if path.exists():
+            raise RuntimeError(f"质量重试前无法删除旧文件：{path}")
+    return removed
 
 
 # Backwards-compatible name retained for callers/tests from earlier releases.
@@ -1186,6 +1193,7 @@ def review_markdown_with_llm(
     api_key: str,
     model: str,
     timeout: float = REQUEST_TIMEOUT_SECONDS,
+    response_callback=None,
 ) -> dict[str, Any]:
     """Ask an OpenAI-compatible chat-completions API to review every Markdown chunk."""
     require_requests()
@@ -1215,7 +1223,10 @@ def review_markdown_with_llm(
             content = payload["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise RuntimeError("LLM chat/completions 响应缺少 choices[0].message.content。") from exc
-        review = _parse_llm_json(str(content))
+        content = str(content)
+        if response_callback is not None:
+            response_callback(index, len(chunks), content)
+        review = _parse_llm_json(content)
         review["chunkIndex"] = index
         reviews.append(review)
     return {
@@ -1945,6 +1956,9 @@ def process_one_pdf_async(
                 api_key=llm_api_key,
                 model=llm_model,
                 timeout=request_timeout,
+                response_callback=lambda index, total, content: log_callback(
+                    f"LLM 回答（分段 {index}/{total}）：\n{content}"
+                ),
             )
             llm_review["attempt"] = quality_attempt
             llm_has_problem = bool(llm_review.get("hasProblem"))
@@ -1972,10 +1986,12 @@ def process_one_pdf_async(
             reasons.append(f"平均每页少于 {MIN_WORDS_OR_CJK_PER_PAGE} 词/汉字")
         if llm_has_problem:
             reasons.append("LLM 核验发现疑似转换问题")
+        log_callback("、".join(reasons) + "，准备删除旧结果后重新提交。")
+        removed = remove_quality_failed_artifacts(output_md_path, job_cache_path)
         log_callback(
-            "、".join(reasons) + "，删除本次 .md、结果 JSON 和 jobId 缓存后重新提交。"
+            "已删除旧文件：" + ("、".join(str(path) for path in removed) if removed else "无残留文件")
+            + "；下一次将提交全新 OCR 任务。"
         )
-        remove_quality_failed_artifacts(output_md_path, job_cache_path)
         return process_one_pdf_async(
             pdf_path=pdf_path,
             output_md_path=output_md_path,
@@ -2433,6 +2449,9 @@ class PaddleOCRBatchGUI:
                     path.read_text(encoding="utf-8"), path.name,
                     self.config.llm_base_url, self.config.llm_api_key,
                     self.config.llm_model, self.config.request_timeout,
+                    response_callback=lambda index, total, content: self.log_queue.put(
+                        ("log", f"LLM 回答（分段 {index}/{total}）：\n{content}")
+                    ),
                 )
                 report_path = path.with_suffix(".llm-review.json")
                 report_path.write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")
