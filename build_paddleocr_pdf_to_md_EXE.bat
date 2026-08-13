@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal EnableExtensions
 
 REM ============================================================
-REM PaddleOCR PDF -> Markdown GUI 26.8.13.01 EXE 打包器
+REM PaddleOCR PDF -> Markdown GUI 26.8.13.02 EXE 打包器
 REM 使用 Nuitka 原生编译为单个、无压缩 EXE，不要求代码签名证书。
 REM ============================================================
 
@@ -15,14 +15,14 @@ set "VENV=%ROOT%.venv"
 set "PYTHON=%VENV%\Scripts\python.exe"
 set "OUTDIR=%ROOT%PaddleOCR_PDF_to_MD_EXE"
 set "WORKDIR=%ROOT%build\nuitka"
-set "EXE_NAME=PaddleOCR_PDF_to_MD_26.8.13.01.exe"
+set "EXE_NAME=PaddleOCR_PDF_to_MD_26.8.13.02.exe"
 set "EXE_PATH=%OUTDIR%\%EXE_NAME%"
 set "HASH_PATH=%OUTDIR%\%EXE_NAME%.sha256.txt"
 
 pushd "%ROOT%" >nul 2>nul
 
 echo ============================================================
-echo PaddleOCR PDF -^> Markdown GUI 26.8.13.01 EXE 打包器
+echo PaddleOCR PDF -^> Markdown GUI 26.8.13.02 EXE 打包器
 echo 输出形式：可直接对外发布的单个 EXE
 echo 当前目录：%ROOT%
 echo ============================================================
@@ -63,13 +63,17 @@ if not defined BASEPY (
 )
 
 if exist "%PYTHON%" (
-    "%PYTHON%" -c "import sys; raise SystemExit(0 if (3, 9) ^<= sys.version_info[:2] ^< (3, 14) else 1)" >nul 2>nul
-    if errorlevel 1 (
-        echo [更新环境] 现有虚拟环境的 Python 不受 Nuitka 2.7.12 支持，正在重建...
-        rmdir /s /q "%VENV%"
-        if exist "%VENV%" goto :failed
-    )
+    "%PYTHON%" -c "import sys; raise SystemExit(0 if (3, 9) ^<= sys.version_info[:2] ^< (3, 14) else 1)" >nul 2>nul || goto :rebuild_venv
 )
+
+goto :venv_ready
+
+:rebuild_venv
+echo [更新环境] 现有虚拟环境的 Python 不受 Nuitka 2.7.12 支持，正在重建...
+rmdir /s /q "%VENV%"
+if exist "%VENV%" goto :failed
+
+:venv_ready
 
 if not exist "%PYTHON%" (
     echo [首次运行] 正在创建虚拟环境：%VENV%
@@ -98,7 +102,7 @@ echo [提示] 首次打包会自动下载并缓存 MinGW64，无需安装 Visual
 "%PYTHON%" -m nuitka ^
   --mode=onefile ^
   --onefile-no-compression ^
-  --onefile-tempdir-spec="{CACHE_DIR}/PaddleOCR/PDFToMarkdown/26.8.13.01" ^
+  --onefile-tempdir-spec="{CACHE_DIR}/PaddleOCR/PDFToMarkdown/26.8.13.02" ^
   --mingw64 ^
   --assume-yes-for-downloads ^
   --lto=yes ^
@@ -110,8 +114,8 @@ echo [提示] 首次打包会自动下载并缓存 MinGW64，无需安装 Visual
   --company-name="PaddleOCR PDF to Markdown GUI" ^
   --product-name="PaddleOCR PDF to Markdown GUI" ^
   --file-description="PaddleOCR PDF Batch to Markdown GUI" ^
-  --file-version=26.8.13.1 ^
-  --product-version=26.8.13.1 ^
+  --file-version=26.8.13.02 ^
+  --product-version=26.8.13.02 ^
   --output-dir="%WORKDIR%" ^
   --output-filename="%EXE_NAME%" ^
   --remove-output ^

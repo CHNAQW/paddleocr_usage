@@ -53,7 +53,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "PaddleOCR PDF批量转Markdown"
-APP_VERSION = "26.8.13.01"
+APP_VERSION = "26.8.13.02"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -68,6 +68,18 @@ QUEUE_FULL_MAX_ATTEMPTS = 3
 RATE_LIMIT_RETRY_SECONDS = 20.0
 REQUEST_TIMEOUT_SECONDS = 300.0
 TOKEN_CHECK_TIMEOUT_SECONDS = 20.0
+DEFAULT_LLM_BASE_URL = "https://api.deepseek.com/v1"
+LLM_REVIEW_CHUNK_CHARS = 50000
+LLM_REVIEW_PROMPT = """你是文档转换质量核验员。请只检查下面由 PDF/OCR 转换得到的 Markdown 是否存在明显的未顺利转换问题，例如：乱码或异常字符、内容被截断、页序/段落错乱、大段重复、只剩 JSON/HTML 错误信息、表格或公式严重破损、明显缺页或几乎没有正文。不要润色、改写或评价原文内容，也不要因为普通 OCR 错别字就判定失败。
+
+请仅返回一个 JSON 对象，不要使用 Markdown 代码围栏：
+{{"has_problem": true或false, "severity": "none|low|medium|high", "summary": "简短中文结论", "issues": ["具体问题"], "evidence": ["简短证据"]}}
+
+文件名：{filename}
+分段：{chunk_index}/{chunk_count}
+Markdown 内容：
+{markdown}
+"""
 MIN_WORDS_OR_CJK_PER_PAGE = 150
 MAX_OCR_QUALITY_ATTEMPTS = 3
 OCR_QUALITY_WARNING = "请核验原件字数，PaddleOCR返回结果可能存在问题。"
@@ -535,6 +547,10 @@ class AppConfig:
     poll_timeout: float = 3600.0
     poll_interval: float = DEFAULT_POLL_INTERVAL
     base_url: str = DEFAULT_BASE_URL
+    llm_review_enabled: bool = False
+    llm_base_url: str = DEFAULT_LLM_BASE_URL
+    llm_api_key: str = ""
+    llm_model: str = ""
 
 
 class PaddleOCRAPIError(RuntimeError):
@@ -753,6 +769,10 @@ def process_split_pdf_async(
     segment_progress_callback,
     log_callback,
     manual_query_event: Optional[threading.Event] = None,
+    llm_review_enabled: bool = False,
+    llm_base_url: str = DEFAULT_LLM_BASE_URL,
+    llm_api_key: str = "",
+    llm_model: str = "",
 ) -> tuple[str, dict[str, Any]]:
     """拆分超限 PDF、逐段 OCR，并合并为一个 .md 和一个 .json。"""
     parts, work_dir, total_pages = split_pdf_for_upload(pdf_path, output_root, log_callback)
@@ -801,6 +821,10 @@ def process_split_pdf_async(
             progress_callback=part_progress,
             log_callback=log_callback,
             manual_query_event=manual_query_event,
+            llm_review_enabled=llm_review_enabled,
+            llm_base_url=llm_base_url,
+            llm_api_key=llm_api_key,
+            llm_model=llm_model,
         )
         merged_markdown_parts.append(
             f"<!-- 自动拆分 OCR：原 PDF 第 {part.page_start}-{part.page_end} 页 -->\n\n{markdown.strip()}"
@@ -833,6 +857,25 @@ def process_split_pdf_async(
     output_md_path.write_text(merged_markdown, encoding="utf-8")
     merged_json_path = output_md_path.with_suffix(".json")
     merged_json_path.write_text(json.dumps(merged_json, ensure_ascii=False, indent=2), encoding="utf-8")
+    if llm_review_enabled:
+        part_reviews = [
+            item["rawResult"]["llmReview"]
+            for item in merged_part_json
+            if isinstance(item.get("rawResult"), dict)
+            and isinstance(item["rawResult"].get("llmReview"), dict)
+        ]
+        if part_reviews:
+            merged_review = {
+                "programVersion": APP_VERSION,
+                "reviewedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "filename": output_md_path.name,
+                "model": llm_model,
+                "hasProblem": any(bool(review.get("hasProblem")) for review in part_reviews),
+                "parts": part_reviews,
+            }
+            output_md_path.with_suffix(".llm-review.json").write_text(
+                json.dumps(merged_review, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
 
     # 成功合并后移除中间 PDF、分段 Markdown 和分段 raw.json；job 缓存保留以便排错。
     shutil.rmtree(work_dir, ignore_errors=True)
@@ -977,12 +1020,48 @@ def markdown_is_too_short(markdown: str, page_count: int) -> tuple[bool, int]:
     return units < max(1, page_count) * MIN_WORDS_OR_CJK_PER_PAGE, units
 
 
-def remove_low_wordcount_artifacts(output_md_path: Path, job_cache_path: Path) -> None:
-    """Remove all results and the job cache so the next attempt is a new API job."""
+def infer_markdown_page_count(markdown_path: Path) -> int:
+    """Infer page count from sibling result JSON or PDF for a manual check."""
+    for json_path in (markdown_path.with_suffix(".raw.json"), markdown_path.with_suffix(".json")):
+        if json_path.exists():
+            try:
+                payload = json.loads(json_path.read_text(encoding="utf-8"))
+                for item in iter_dicts(payload):
+                    for key in ("totalPages", "pageCount", "total_pages", "page_count"):
+                        pages = int_or_zero(item.get(key))
+                        if pages > 0:
+                            return pages
+            except Exception:
+                pass
+    pdf_path = markdown_path.with_suffix(".pdf")
+    if PdfReader is not None and pdf_path.exists():
+        try:
+            return max(1, len(PdfReader(str(pdf_path)).pages))
+        except Exception:
+            pass
+    return 1
+
+
+def manually_check_markdown_wordcount(markdown_path: Path) -> dict[str, Any]:
+    markdown = markdown_path.read_text(encoding="utf-8")
+    page_count = infer_markdown_page_count(markdown_path)
+    too_short, count = markdown_is_too_short(markdown, page_count)
+    return {
+        "path": str(markdown_path),
+        "count": count,
+        "pageCount": page_count,
+        "minimum": page_count * MIN_WORDS_OR_CJK_PER_PAGE,
+        "hasProblem": too_short,
+    }
+
+
+def remove_quality_failed_artifacts(output_md_path: Path, job_cache_path: Path) -> None:
+    """Remove OCR/review results and the job cache before a fresh API submission."""
     candidates = {
         output_md_path,
         output_md_path.with_suffix(".json"),
         output_md_path.with_suffix(".raw.json"),
+        output_md_path.with_suffix(".llm-review.json"),
         job_cache_path,
     }
     for path in candidates:
@@ -993,9 +1072,18 @@ def remove_low_wordcount_artifacts(output_md_path: Path, job_cache_path: Path) -
                 path.unlink()
 
 
+# Backwards-compatible name retained for callers/tests from earlier releases.
+remove_low_wordcount_artifacts = remove_quality_failed_artifacts
+
+
 def get_job_url(base_url: str) -> str:
     base = (base_url or DEFAULT_BASE_URL).strip().rstrip("/")
     return f"{base}{JOB_PATH}"
+
+
+def require_requests() -> None:
+    if requests is None:
+        raise RuntimeError("缺少 requests，请先运行：python -m pip install --upgrade requests")
 
 
 def auth_headers(token: str, json_content: bool = False) -> dict[str, str]:
@@ -1003,6 +1091,99 @@ def auth_headers(token: str, json_content: bool = False) -> dict[str, str]:
     if json_content:
         headers["Content-Type"] = "application/json"
     return headers
+
+
+def openai_compatible_url(base_url: str, endpoint: str) -> str:
+    """Build an OpenAI-compatible endpoint without accidentally duplicating /v1."""
+    base = base_url.strip().rstrip("/")
+    if not base:
+        raise ValueError("LLM Base URL 不能为空。")
+    return f"{base}/{endpoint.lstrip('/')}"
+
+
+def fetch_openai_compatible_models(
+    base_url: str, api_key: str, timeout: float = TOKEN_CHECK_TIMEOUT_SECONDS
+) -> list[str]:
+    """Fetch model IDs from an OpenAI-compatible GET /models endpoint."""
+    require_requests()
+    response = requests.get(
+        openai_compatible_url(base_url, "models"),
+        headers=auth_headers(api_key),
+        timeout=timeout,
+    )
+    if not response.ok:
+        raise RuntimeError(f"拉取 LLM 模型列表失败：{api_error_message(parse_response_json(response), response.status_code)}")
+    payload = parse_response_json(response)
+    items = payload.get("data")
+    if not isinstance(items, list):
+        raise RuntimeError("LLM /models 响应中没有 data 数组。")
+    models = sorted(
+        {str(item.get("id")).strip() for item in items if isinstance(item, dict) and item.get("id")}
+    )
+    if not models:
+        raise RuntimeError("LLM /models 没有返回可用模型。")
+    return models
+
+
+def _parse_llm_json(content: str) -> dict[str, Any]:
+    cleaned = (content or "").strip()
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE)
+    try:
+        result = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"LLM 未返回有效 JSON：{cleaned[:300]}") from exc
+    if not isinstance(result, dict) or not isinstance(result.get("has_problem"), bool):
+        raise RuntimeError("LLM 核验结果缺少布尔字段 has_problem。")
+    return result
+
+
+def review_markdown_with_llm(
+    markdown: str,
+    filename: str,
+    base_url: str,
+    api_key: str,
+    model: str,
+    timeout: float = REQUEST_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Ask an OpenAI-compatible chat-completions API to review every Markdown chunk."""
+    require_requests()
+    if not api_key.strip() or not model.strip():
+        raise ValueError("启用 LLM 核验时必须填写 API Key 并选择模型。")
+    chunks = [markdown[i : i + LLM_REVIEW_CHUNK_CHARS] for i in range(0, len(markdown), LLM_REVIEW_CHUNK_CHARS)] or [""]
+    reviews: list[dict[str, Any]] = []
+    for index, chunk in enumerate(chunks, start=1):
+        prompt = LLM_REVIEW_PROMPT.format(
+            filename=filename, chunk_index=index, chunk_count=len(chunks), markdown=chunk
+        )
+        response = requests.post(
+            openai_compatible_url(base_url, "chat/completions"),
+            headers=auth_headers(api_key, json_content=True),
+            json={
+                "model": model,
+                "temperature": 0,
+                "response_format": {"type": "json_object"},
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=timeout,
+        )
+        if not response.ok:
+            raise RuntimeError(f"LLM 核验失败：{api_error_message(parse_response_json(response), response.status_code)}")
+        payload = parse_response_json(response)
+        try:
+            content = payload["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError("LLM chat/completions 响应缺少 choices[0].message.content。") from exc
+        review = _parse_llm_json(str(content))
+        review["chunkIndex"] = index
+        reviews.append(review)
+    return {
+        "programVersion": APP_VERSION,
+        "reviewedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "filename": filename,
+        "model": model,
+        "hasProblem": any(item["has_problem"] for item in reviews),
+        "chunks": reviews,
+    }
 
 
 def parse_response_json(resp: Any) -> dict[str, Any]:
@@ -1591,6 +1772,10 @@ def process_one_pdf_async(
     log_callback,
     manual_query_event: Optional[threading.Event] = None,
     quality_attempt: int = 1,
+    llm_review_enabled: bool = False,
+    llm_base_url: str = DEFAULT_LLM_BASE_URL,
+    llm_api_key: str = "",
+    llm_model: str = "",
 ) -> tuple[str, dict[str, Any]]:
     job_cache_path = get_job_cache_path(output_root, pdf_path)
     raw_json_path = output_md_path.with_suffix(".raw.json")
@@ -1679,6 +1864,10 @@ def process_one_pdf_async(
                 log_callback=log_callback,
                 manual_query_event=manual_query_event,
                 quality_attempt=quality_attempt,
+                llm_review_enabled=llm_review_enabled,
+                llm_base_url=llm_base_url,
+                llm_api_key=llm_api_key,
+                llm_model=llm_model,
             )
         raise
 
@@ -1699,11 +1888,52 @@ def process_one_pdf_async(
         f"字数检测（第 {quality_attempt}/{MAX_OCR_QUALITY_ATTEMPTS} 次）："
         f"{word_count} 词/汉字，{page_count} 页，平均 {word_count / page_count:.1f}/页。"
     )
-    if too_short and quality_attempt < MAX_OCR_QUALITY_ATTEMPTS:
+    llm_review: Optional[dict[str, Any]] = None
+    llm_has_problem = False
+    if llm_review_enabled:
         log_callback(
-            f"平均每页少于 {MIN_WORDS_OR_CJK_PER_PAGE} 词/汉字，删除本次结果和 jobId 缓存后重新提交。"
+            f"LLM 转换质量核验（第 {quality_attempt}/{MAX_OCR_QUALITY_ATTEMPTS} 次）："
+            f"正在使用 {llm_model}。"
         )
-        remove_low_wordcount_artifacts(output_md_path, job_cache_path)
+        try:
+            llm_review = review_markdown_with_llm(
+                markdown=markdown,
+                filename=output_md_path.name,
+                base_url=llm_base_url,
+                api_key=llm_api_key,
+                model=llm_model,
+                timeout=request_timeout,
+            )
+            llm_review["attempt"] = quality_attempt
+            llm_has_problem = bool(llm_review.get("hasProblem"))
+            review_path = output_md_path.with_suffix(".llm-review.json")
+            review_path.write_text(
+                json.dumps(llm_review, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            raw_data["llmReview"] = llm_review
+        except Exception as exc:
+            raw_data["llmReviewError"] = str(exc)
+            log_callback(f"警告：LLM 核验调用失败，保留本次 OCR 结果：{exc}")
+        raw_json_path.write_text(
+            json.dumps(raw_data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        if llm_review is not None:
+            log_callback(
+                "LLM 核验结论："
+                + ("发现疑似转换问题。" if llm_has_problem else "未发现明显转换问题。")
+            )
+
+    quality_failed = too_short or llm_has_problem
+    if quality_failed and quality_attempt < MAX_OCR_QUALITY_ATTEMPTS:
+        reasons = []
+        if too_short:
+            reasons.append(f"平均每页少于 {MIN_WORDS_OR_CJK_PER_PAGE} 词/汉字")
+        if llm_has_problem:
+            reasons.append("LLM 核验发现疑似转换问题")
+        log_callback(
+            "、".join(reasons) + "，删除本次 .md、结果 JSON 和 jobId 缓存后重新提交。"
+        )
+        remove_quality_failed_artifacts(output_md_path, job_cache_path)
         return process_one_pdf_async(
             pdf_path=pdf_path,
             output_md_path=output_md_path,
@@ -1719,10 +1949,16 @@ def process_one_pdf_async(
             progress_callback=progress_callback,
             log_callback=log_callback,
             manual_query_event=manual_query_event,
+            llm_review_enabled=llm_review_enabled,
+            llm_base_url=llm_base_url,
+            llm_api_key=llm_api_key,
+            llm_model=llm_model,
             quality_attempt=quality_attempt + 1,
         )
-    if too_short:
+    if quality_failed:
         raw_data["qualityWarning"] = OCR_QUALITY_WARNING
+        if llm_has_problem:
+            raw_data["llmQualityWarning"] = "LLM 核验连续三次发现疑似转换问题，请人工核验原件。"
         raw_json_path.write_text(json.dumps(raw_data, ensure_ascii=False, indent=2), encoding="utf-8")
         log_callback(f"警告：{OCR_QUALITY_WARNING}")
     return markdown, raw_data
@@ -1741,6 +1977,8 @@ class PaddleOCRBatchGUI:
         self.worker_thread: Optional[threading.Thread] = None
         self.check_thread: Optional[threading.Thread] = None
         self.repair_thread: Optional[threading.Thread] = None
+        self.model_fetch_thread: Optional[threading.Thread] = None
+        self.manual_check_thread: Optional[threading.Thread] = None
         self.stop_requested = False
         self.manual_query_event = threading.Event()
 
@@ -1750,6 +1988,10 @@ class PaddleOCRBatchGUI:
         self.recursive_var = tk.BooleanVar(value=self.config.recursive)
         self.preserve_var = tk.BooleanVar(value=self.config.preserve_subfolders)
         self.overwrite_var = tk.BooleanVar(value=self.config.overwrite)
+        self.llm_review_var = tk.BooleanVar(value=self.config.llm_review_enabled)
+        self.llm_base_url_var = tk.StringVar(value=self.config.llm_base_url or DEFAULT_LLM_BASE_URL)
+        self.llm_api_key_var = tk.StringVar(value=self.config.llm_api_key)
+        self.llm_model_var = tk.StringVar(value=self.config.llm_model)
         self.token_state_var = tk.StringVar(value=self.token_state_text())
         self.status_var = tk.StringVar(value="准备就绪。")
         self.file_progress_var = tk.DoubleVar(value=0)
@@ -1865,8 +2107,24 @@ class PaddleOCRBatchGUI:
         utility_row.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
         ttk.Button(utility_row, text="扫描PDF数量", command=self.scan_pdfs).pack(side="left", padx=4, pady=4)
         ttk.Button(utility_row, text="修复JSON为MD", command=self.repair_json_to_md).pack(side="left", padx=4, pady=4)
+        ttk.Button(utility_row, text="手动字数检验", command=self.manual_wordcount_check).pack(side="left", padx=4, pady=4)
+        ttk.Button(utility_row, text="手动LLM检验", command=self.manual_llm_check).pack(side="left", padx=4, pady=4)
         ttk.Button(utility_row, text="打开输出文件夹", command=self.open_output_dir).pack(side="left", padx=4, pady=4)
         ttk.Button(utility_row, text="显示配置位置", command=self.show_config_path).pack(side="left", padx=4, pady=4)
+
+        llm_row = ttk.Frame(opts)
+        llm_row.grid(row=3, column=0, sticky="ew", padx=6, pady=(0, 6))
+        llm_row.columnconfigure(2, weight=1)
+        ttk.Checkbutton(llm_row, text="使用 LLM 核验 .md 转换质量", variable=self.llm_review_var).grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        ttk.Label(llm_row, text="Base URL：").grid(row=0, column=1, sticky="e", padx=(10, 2))
+        ttk.Entry(llm_row, textvariable=self.llm_base_url_var).grid(row=0, column=2, sticky="ew", padx=2)
+        ttk.Label(llm_row, text="API Key：").grid(row=0, column=3, sticky="e", padx=(10, 2))
+        ttk.Entry(llm_row, textvariable=self.llm_api_key_var, show="*", width=22).grid(row=0, column=4, padx=2)
+        ttk.Label(llm_row, text="模型：").grid(row=0, column=5, sticky="e", padx=(10, 2))
+        self.llm_model_combo = ttk.Combobox(llm_row, textvariable=self.llm_model_var, width=20)
+        self.llm_model_combo.grid(row=0, column=6, padx=2)
+        self.fetch_models_btn = ttk.Button(llm_row, text="拉取模型列表", command=self.fetch_llm_models)
+        self.fetch_models_btn.grid(row=0, column=7, padx=4)
 
         run_box = ttk.LabelFrame(self.root, text="3. 批处理")
         run_box.grid(row=3, column=0, sticky="ew", **pad)
@@ -1954,6 +2212,7 @@ class PaddleOCRBatchGUI:
         self.log("提示：超过 50MB 的 PDF 会自动拆分、逐段 OCR，并合并为一个同名 .md 和 .json。")
         self.log("提示：运行中可点击“手动查询当前结果”，立即查询当前 OCR 任务状态。")
         self.log("提示：如果已经生成 .raw.json 或下载了 jsonUrl，可用“修复JSON为MD”重新提取 Markdown。")
+        self.log("提示：可选用 OpenAI-compatible LLM（如 DeepSeek）逐段核验生成的 .md，并保存 .llm-review.json 报告。")
 
     def _on_resize(self, event: tk.Event) -> None:
         if event.widget == self.root:
@@ -2028,6 +2287,88 @@ class PaddleOCRBatchGUI:
     def _check_api_key_worker(self) -> None:
         ok, msg, payload = validate_access_token(self.config.token, self.config.base_url)
         self.log_queue.put(("keycheck", {"ok": ok, "msg": msg, "payload": payload}))
+
+    def fetch_llm_models(self) -> None:
+        self.save_current_config()
+        if not self.config.llm_api_key:
+            messagebox.showerror("缺少 API Key", "请先填写 LLM API Key。", parent=self.root)
+            return
+        if self.model_fetch_thread and self.model_fetch_thread.is_alive():
+            return
+        self.fetch_models_btn.config(state="disabled")
+        self.status_var.set("正在拉取 LLM 模型列表……")
+        self.model_fetch_thread = threading.Thread(target=self._fetch_llm_models_worker, daemon=True)
+        self.model_fetch_thread.start()
+
+    def _fetch_llm_models_worker(self) -> None:
+        try:
+            models = fetch_openai_compatible_models(
+                self.config.llm_base_url, self.config.llm_api_key
+            )
+            self.log_queue.put(("llm_models", {"models": models}))
+        except Exception as exc:
+            self.log_queue.put(("llm_models", {"error": str(exc)}))
+
+    def _choose_markdown_files(self, title: str) -> list[Path]:
+        initial = self.output_var.get() or self.input_var.get() or str(Path.home() / "Desktop")
+        paths = filedialog.askopenfilenames(
+            title=title,
+            initialdir=initial,
+            filetypes=[("Markdown", "*.md"), ("All files", "*.*")],
+            parent=self.root,
+        )
+        return [Path(path) for path in paths]
+
+    def manual_wordcount_check(self) -> None:
+        paths = self._choose_markdown_files("选择要手动进行字数检验的 Markdown")
+        if not paths:
+            return
+        results = [manually_check_markdown_wordcount(path) for path in paths]
+        lines = []
+        for result in results:
+            conclusion = "有问题" if result["hasProblem"] else "通过"
+            lines.append(
+                f"{Path(result['path']).name}：{conclusion}；{result['count']} 词/汉字，"
+                f"{result['pageCount']} 页，最低 {result['minimum']}。"
+            )
+        summary = "\n".join(lines)
+        self.log("手动字数检验完成：\n" + summary)
+        messagebox.showinfo("手动字数检验", summary, parent=self.root)
+
+    def manual_llm_check(self) -> None:
+        self.save_current_config()
+        if not self.config.llm_api_key or not self.config.llm_model:
+            messagebox.showerror(
+                "LLM 配置不完整", "请先填写 LLM API Key 并选择或输入模型。", parent=self.root
+            )
+            return
+        if self.manual_check_thread and self.manual_check_thread.is_alive():
+            messagebox.showwarning("正在检验", "已有手动 LLM 检验正在运行。", parent=self.root)
+            return
+        paths = self._choose_markdown_files("选择要手动进行 LLM 检验的 Markdown")
+        if not paths:
+            return
+        self.status_var.set("正在进行手动 LLM 检验……")
+        self.manual_check_thread = threading.Thread(
+            target=self._manual_llm_check_worker, args=(paths,), daemon=True
+        )
+        self.manual_check_thread.start()
+
+    def _manual_llm_check_worker(self, paths: list[Path]) -> None:
+        results = []
+        for path in paths:
+            try:
+                review = review_markdown_with_llm(
+                    path.read_text(encoding="utf-8"), path.name,
+                    self.config.llm_base_url, self.config.llm_api_key,
+                    self.config.llm_model, self.config.request_timeout,
+                )
+                report_path = path.with_suffix(".llm-review.json")
+                report_path.write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")
+                results.append({"path": str(path), "review": review, "report": str(report_path)})
+            except Exception as exc:
+                results.append({"path": str(path), "error": str(exc)})
+        self.log_queue.put(("manual_llm_done", results))
 
     def repair_json_to_md(self) -> None:
         if self.repair_thread and self.repair_thread.is_alive():
@@ -2119,6 +2460,10 @@ class PaddleOCRBatchGUI:
         self.config.recursive = bool(self.recursive_var.get())
         self.config.preserve_subfolders = bool(self.preserve_var.get())
         self.config.overwrite = bool(self.overwrite_var.get())
+        self.config.llm_review_enabled = bool(self.llm_review_var.get())
+        self.config.llm_base_url = self.llm_base_url_var.get().strip() or DEFAULT_LLM_BASE_URL
+        self.config.llm_api_key = self.llm_api_key_var.get().strip()
+        self.config.llm_model = self.llm_model_var.get().strip()
         if not self.config.base_url:
             self.config.base_url = DEFAULT_BASE_URL
         save_config(self.config)
@@ -2161,6 +2506,15 @@ class PaddleOCRBatchGUI:
             if not self.config.token:
                 messagebox.showerror("缺少 Token", "未输入 Access Token/API Key，无法调用在线 API。", parent=self.root)
                 return
+        if self.config.llm_review_enabled and (
+            not self.config.llm_api_key or not self.config.llm_model
+        ):
+            messagebox.showerror(
+                "LLM 配置不完整",
+                "已启用 LLM 核验，请填写 API Key 并选择或输入模型。",
+                parent=self.root,
+            )
+            return
 
         try:
             input_dir, output_dir = self.validate_paths()
@@ -2189,6 +2543,7 @@ class PaddleOCRBatchGUI:
             f"输入：{input_dir}\n"
             f"输出：{output_dir}\n"
             f"模型：{self.model_var.get()}\n\n"
+            f"LLM 核验：{'启用（' + self.config.llm_model + '）' if self.config.llm_review_enabled else '未启用'}\n\n"
             "大文件将按页拆分为约 45MB 的分段，逐段 OCR 后合并为一个 .md 和一个 .json。是否继续？"
         )
         if not messagebox.askyesno("确认开始", msg, parent=self.root):
@@ -2218,6 +2573,8 @@ class PaddleOCRBatchGUI:
             pdfs, input_dir, output_dir, self.config.token, self.model_var.get(),
             self.config.base_url or DEFAULT_BASE_URL, self.preserve_var.get(), self.overwrite_var.get(),
             self.config.request_timeout, self.config.poll_timeout, self.config.poll_interval,
+            self.config.llm_review_enabled, self.config.llm_base_url,
+            self.config.llm_api_key, self.config.llm_model,
         )
         self.worker_thread = threading.Thread(target=self._worker, args=args, daemon=True)
         self.worker_thread.start()
@@ -2266,6 +2623,10 @@ class PaddleOCRBatchGUI:
         request_timeout: float,
         poll_timeout: float,
         poll_interval: float,
+        llm_review_enabled: bool,
+        llm_base_url: str,
+        llm_api_key: str,
+        llm_model: str,
     ) -> None:
         start_time = datetime.now()
         ok = 0
@@ -2300,6 +2661,7 @@ class PaddleOCRBatchGUI:
         write_log_line(f"模型：{model_name}")
         write_log_line(f"Base URL：{base_url}")
         write_log_line(f"PDF数量：{len(pdfs)}")
+        write_log_line(f"LLM核验：{'启用，模型=' + llm_model if llm_review_enabled else '未启用'}")
 
         for index, pdf in enumerate(pdfs, start=1):
             if self.stop_requested:
@@ -2337,6 +2699,8 @@ class PaddleOCRBatchGUI:
                         stop_checker=stop_checker, progress_callback=progress_callback,
                         segment_progress_callback=segment_progress_callback,
                         log_callback=log_callback, manual_query_event=self.manual_query_event,
+                        llm_review_enabled=llm_review_enabled, llm_base_url=llm_base_url,
+                        llm_api_key=llm_api_key, llm_model=llm_model,
                     )
                     write_log_line(f"OK_SPLIT\t{pdf}\t{out_path}\t{out_path.with_suffix('.json')}")
                 else:
@@ -2346,6 +2710,8 @@ class PaddleOCRBatchGUI:
                         poll_timeout=poll_timeout, poll_interval=poll_interval, overwrite=overwrite,
                         stop_checker=stop_checker, progress_callback=progress_callback,
                         log_callback=log_callback, manual_query_event=self.manual_query_event,
+                        llm_review_enabled=llm_review_enabled, llm_base_url=llm_base_url,
+                        llm_api_key=llm_api_key, llm_model=llm_model,
                     )
                     write_log_line(f"OK\t{pdf}\t{out_path}")
                 if any(
@@ -2449,6 +2815,35 @@ class PaddleOCRBatchGUI:
                         messagebox.showinfo("API Key 检测", msg, parent=self.root)
                     else:
                         messagebox.showerror("API Key 检测", msg, parent=self.root)
+                elif typ == "llm_models":
+                    self.fetch_models_btn.config(state="normal")
+                    error = payload.get("error")
+                    if error:
+                        self.status_var.set("拉取 LLM 模型列表失败。")
+                        self.log(f"拉取 LLM 模型列表失败：{error}")
+                        messagebox.showerror("拉取模型失败", str(error), parent=self.root)
+                    else:
+                        models = list(payload.get("models") or [])
+                        self.llm_model_combo.configure(values=models)
+                        if models and self.llm_model_var.get() not in models:
+                            self.llm_model_var.set(models[0])
+                        self.save_current_config()
+                        msg = f"已拉取 {len(models)} 个 LLM 模型。"
+                        self.status_var.set(msg)
+                        self.log(msg)
+                elif typ == "manual_llm_done":
+                    lines = []
+                    for item in payload:
+                        name = Path(item["path"]).name
+                        if item.get("error"):
+                            lines.append(f"{name}：检验失败；{item['error']}")
+                        else:
+                            conclusion = "发现疑似转换问题" if item["review"]["hasProblem"] else "未发现明显问题"
+                            lines.append(f"{name}：{conclusion}；报告：{item['report']}")
+                    summary = "\n".join(lines)
+                    self.status_var.set("手动 LLM 检验完成。")
+                    self.log("手动 LLM 检验完成：\n" + summary)
+                    messagebox.showinfo("手动 LLM 检验", summary, parent=self.root)
                 elif typ == "repair_done":
                     summary = str(payload.get("summary"))
                     self.log(summary)
