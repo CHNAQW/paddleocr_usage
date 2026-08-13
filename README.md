@@ -1069,3 +1069,9 @@ The previous BAT checked `%ERRORLEVEL%` inside a parenthesized block. Windows `c
 **Build environment correction:** the build script now uses `.venv-nuitka-2.7.12`, separate from the launcher's `.venv`. The launcher may create `.venv` with Python 3.14, which is valid for running this application but unsupported by pinned Nuitka 2.7.12. Sharing that directory made the build legitimately replace it. In addition, the old quoted Python version expression contained CMD caret escapes (`^<`); those characters can reach Python literally and make the probe fail with a syntax error, producing the same misleading rebuild message. The new probe avoids CMD metacharacters entirely and prints the rejected interpreter version before a real rebuild.
 
 **构建环境修正：**构建脚本现在使用独立的 `.venv-nuitka-2.7.12`，不再与启动器的 `.venv` 共用。启动器可能用 Python 3.14 创建 `.venv`；它可以正常运行本程序，但固定的 Nuitka 2.7.12 不支持它，所以共用环境时构建脚本确实会替换该环境。此外，旧版放在引号内的 Python 版本表达式含有 CMD 脱字符（`^<`），这些字符可能被原样交给 Python，导致检测语句发生语法错误，进而显示同一条误导性的重建提示。新检测不再包含 CMD 元字符，并会在确实需要重建前显示被拒绝的 Python 版本。
+
+### Test LLM API connectivity  测试 LLM API 连通性
+
+After entering the Base URL, API Key, and model, click **测试LLM API**. The application sends a small `chat/completions` request asking the selected model to reply `OK`. A successful result therefore verifies the endpoint, authentication, selected model access, and actual generation path—not merely that `GET /models` is reachable. The test runs in the background and shows the model reply; it does not send document content.
+
+填写 Base URL、API Key 和模型后，点击 **测试LLM API**。程序会向 `chat/completions` 发送一个仅要求所选模型回复 `OK` 的小请求。因此测试成功能够同时验证接口地址、鉴权、模型访问权限和实际生成链路，而不只是验证 `GET /models` 是否可访问。测试在后台运行，会显示模型回复，且不会发送文档内容。

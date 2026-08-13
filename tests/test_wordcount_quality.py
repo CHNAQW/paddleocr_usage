@@ -12,6 +12,7 @@ from paddleocr_pdf_to_md_gui import (
     remove_low_wordcount_artifacts,
     fetch_openai_compatible_models,
     review_markdown_with_llm,
+    test_openai_compatible_api,
 )
 
 
@@ -97,6 +98,18 @@ class WordCountQualityTests(unittest.TestCase):
 
 
 class LLMReviewTests(unittest.TestCase):
+    def test_llm_api_sends_minimal_chat_completion(self):
+        response = Mock(ok=True)
+        response.json.return_value = {"choices": [{"message": {"content": "OK"}}]}
+        with patch("paddleocr_pdf_to_md_gui.requests.post", return_value=response) as post_mock:
+            reply = test_openai_compatible_api(
+                "https://api.example/v1/", "secret", "test-model", timeout=3
+            )
+        self.assertEqual(reply, "OK")
+        self.assertEqual(post_mock.call_args.args[0], "https://api.example/v1/chat/completions")
+        self.assertEqual(post_mock.call_args.kwargs["json"]["model"], "test-model")
+        self.assertEqual(post_mock.call_args.kwargs["timeout"], 3)
+
     def test_fetches_and_sorts_openai_compatible_models(self):
         response = Mock(ok=True)
         response.json.return_value = {"data": [{"id": "deepseek-reasoner"}, {"id": "deepseek-chat"}]}

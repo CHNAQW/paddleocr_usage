@@ -1125,6 +1125,41 @@ def fetch_openai_compatible_models(
     return models
 
 
+def test_openai_compatible_api(
+    base_url: str,
+    api_key: str,
+    model: str,
+    timeout: float = TOKEN_CHECK_TIMEOUT_SECONDS,
+) -> str:
+    """Send a minimal chat request to verify URL, key, and selected model end to end."""
+    require_requests()
+    if not api_key.strip() or not model.strip():
+        raise ValueError("测试 LLM API 前必须填写 API Key 并选择或输入模型。")
+    response = requests.post(
+        openai_compatible_url(base_url, "chat/completions"),
+        headers=auth_headers(api_key, json_content=True),
+        json={
+            "model": model.strip(),
+            "temperature": 0,
+            "max_tokens": 8,
+            "messages": [{"role": "user", "content": "只回复 OK"}],
+        },
+        timeout=timeout,
+    )
+    if not response.ok:
+        raise RuntimeError(
+            f"LLM API 测试失败：{api_error_message(parse_response_json(response), response.status_code)}"
+        )
+    payload = parse_response_json(response)
+    try:
+        content = str(payload["choices"][0]["message"]["content"]).strip()
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError("LLM API 已响应，但缺少 choices[0].message.content。") from exc
+    if not content:
+        raise RuntimeError("LLM API 已响应，但返回内容为空。")
+    return content
+
+
 def _parse_llm_json(content: str) -> dict[str, Any]:
     cleaned = (content or "").strip()
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE)
@@ -2125,6 +2160,8 @@ class PaddleOCRBatchGUI:
         self.llm_model_combo.grid(row=0, column=6, padx=2)
         self.fetch_models_btn = ttk.Button(llm_row, text="拉取模型列表", command=self.fetch_llm_models)
         self.fetch_models_btn.grid(row=0, column=7, padx=4)
+        self.test_llm_api_btn = ttk.Button(llm_row, text="测试LLM API", command=self.test_llm_api)
+        self.test_llm_api_btn.grid(row=0, column=8, padx=4)
 
         run_box = ttk.LabelFrame(self.root, text="3. 批处理")
         run_box.grid(row=3, column=0, sticky="ew", **pad)
@@ -2308,6 +2345,33 @@ class PaddleOCRBatchGUI:
             self.log_queue.put(("llm_models", {"models": models}))
         except Exception as exc:
             self.log_queue.put(("llm_models", {"error": str(exc)}))
+
+    def test_llm_api(self) -> None:
+        self.save_current_config()
+        if not self.config.llm_api_key or not self.config.llm_model:
+            messagebox.showerror(
+                "LLM 配置不完整", "请先填写 LLM API Key 并选择或输入模型。", parent=self.root
+            )
+            return
+        if self.check_thread and self.check_thread.is_alive():
+            messagebox.showwarning("正在检测", "已有 API 检测任务正在运行。", parent=self.root)
+            return
+        self.test_llm_api_btn.config(state="disabled")
+        self.status_var.set("正在测试 LLM API 连通性……")
+        self.log("开始测试 LLM API、API Key 和所选模型。")
+        self.check_thread = threading.Thread(target=self._test_llm_api_worker, daemon=True)
+        self.check_thread.start()
+
+    def _test_llm_api_worker(self) -> None:
+        try:
+            reply = test_openai_compatible_api(
+                self.config.llm_base_url,
+                self.config.llm_api_key,
+                self.config.llm_model,
+            )
+            self.log_queue.put(("llm_api_test", {"reply": reply}))
+        except Exception as exc:
+            self.log_queue.put(("llm_api_test", {"error": str(exc)}))
 
     def _choose_markdown_files(self, title: str) -> list[Path]:
         initial = self.output_var.get() or self.input_var.get() or str(Path.home() / "Desktop")
@@ -2831,6 +2895,20 @@ class PaddleOCRBatchGUI:
                         msg = f"已拉取 {len(models)} 个 LLM 模型。"
                         self.status_var.set(msg)
                         self.log(msg)
+                elif typ == "llm_api_test":
+                    self.test_llm_api_btn.config(state="normal")
+                    error = payload.get("error")
+                    if error:
+                        msg = f"LLM API 测试失败：{error}"
+                        self.status_var.set(msg)
+                        self.log(msg)
+                        messagebox.showerror("LLM API 测试", msg, parent=self.root)
+                    else:
+                        reply = str(payload.get("reply") or "")
+                        msg = f"LLM API 测试成功。模型回复：{reply}"
+                        self.status_var.set(msg)
+                        self.log(msg)
+                        messagebox.showinfo("LLM API 测试", msg, parent=self.root)
                 elif typ == "manual_llm_done":
                     lines = []
                     for item in payload:
