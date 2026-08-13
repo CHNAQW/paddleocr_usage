@@ -10,7 +10,7 @@ def test_windows_version_metadata_has_no_leading_zero_components():
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
     versions = re.findall(r"--(?:file|product)-version=([^\s^]+)", script)
 
-    assert versions == ["26.8.13.3", "26.8.13.3"]
+    assert versions == ["26.8.13.4", "26.8.13.4"]
     for version in versions:
         components = version.split(".")
         assert len(components) == 4
@@ -21,4 +21,4 @@ def test_windows_version_metadata_has_no_leading_zero_components():
 def test_release_filename_keeps_display_version():
     """The public filename may retain the zero-padded release label."""
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
-    assert 'set "EXE_NAME=PaddleOCR_PDF_to_MD_26.8.13.03.exe"' in script
+    assert 'set "EXE_NAME=PaddleOCR_PDF_to_MD_26.8.13.04.exe"' in script

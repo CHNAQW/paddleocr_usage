@@ -1,4 +1,4 @@
-﻿PaddleOCR PDF to Markdown GUI 26.8.13.03
+﻿PaddleOCR PDF to Markdown GUI 26.8.13.04
 
 本版改动：
 1. 更新统一界面设计语言及彩色运行日志；
@@ -13,11 +13,11 @@
 2. 双击 build_paddleocr_pdf_to_md_EXE.bat；
 3. 首次打包时，Nuitka 会自动下载并缓存 MinGW64，请耐心等待；
 4. 生成文件：
-   PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.8.13.03.exe
+   PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.8.13.04.exe
 
 对外发布：
 1. 直接发布上面的 EXE；
-2. 同时发布 PaddleOCR_PDF_to_MD_26.8.13.03.exe.sha256.txt；
+2. 同时发布 PaddleOCR_PDF_to_MD_26.8.13.04.exe.sha256.txt；
 3. 接收者只需要 EXE，不需要安装 Python，也不需要配套目录；
 4. 发布前按正常安全流程扫描最终 EXE；
 5. 如仍误报 AndroidOS/Multiverze，请把该 EXE 提交给 Microsoft Security Intelligence 复核后再分发。
@@ -25,7 +25,7 @@
 
 DLL 错误 / 状态 0xc0e90002：
 本程序仍然只发布一个独立 EXE。新版会把运行组件固定缓存到：
-%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.03
+%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.04
 而不是随机的 %TEMP%\onefile_* 目录。请重新打包并发送新 EXE 和 SHA-256 文件。
 若首次启动被中断，请关闭程序、删除上面的缓存目录，再重新运行同一个 EXE。
 不要关闭杀毒保护，也不要添加排除项。

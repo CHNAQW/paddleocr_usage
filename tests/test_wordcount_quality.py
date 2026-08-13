@@ -146,13 +146,19 @@ class LLMReviewTests(unittest.TestCase):
             }
             responses.append(response)
         markdown = "字" * 50001
+        answers = []
         with patch("paddleocr_pdf_to_md_gui.requests.post", side_effect=responses) as post_mock:
             result = review_markdown_with_llm(
-                markdown, "document.md", "https://api.example/v1", "secret", "model"
+                markdown, "document.md", "https://api.example/v1", "secret", "model",
+                response_callback=lambda index, total, content: answers.append(
+                    (index, total, content)
+                ),
             )
         self.assertTrue(result["hasProblem"])
         self.assertEqual(len(result["chunks"]), 2)
         self.assertEqual(post_mock.call_count, 2)
+        self.assertEqual([(item[0], item[1]) for item in answers], [(1, 2), (2, 2)])
+        self.assertIn('"has_problem": true', answers[1][2])
 
     def test_llm_problem_removes_artifacts_and_resubmits(self):
         with tempfile.TemporaryDirectory() as directory:
