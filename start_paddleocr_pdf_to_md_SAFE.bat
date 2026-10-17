@@ -3,8 +3,8 @@ chcp 65001 >nul
 setlocal
 
 REM ============================================================
-REM PaddleOCR PDF -> Markdown GUI 稳定启动脚本
-REM 版本：26.8.13.03
+REM 文献处理软件 稳定启动脚本
+REM 版本：26.10.17.1
 REM 请把本 bat 与 paddleocr_pdf_to_md_gui.py 放在同一个文件夹后再双击。
 REM 在线异步 API 版：需要 requests；自动拆分大 PDF 需要 pypdf。
 REM ============================================================
@@ -17,7 +17,7 @@ set "PYTHON=%VENV%\Scripts\python.exe"
 pushd "%ROOT%" >nul 2>nul
 
 echo ============================================================
-echo PaddleOCR PDF -^> Markdown GUI 启动器 26.8.13.03
+echo 文献处理软件 启动器 26.10.17.1
 echo 当前目录：%ROOT%
 echo ============================================================
 echo.
@@ -29,6 +29,14 @@ if not exist "%SCRIPT%" (
     echo 请确认 bat 与 paddleocr_pdf_to_md_gui.py 在同一个文件夹。
     pause
     exit /b 1
+)
+
+for %%F in (literature_processing.py literature_ui.py) do (
+    if not exist "%ROOT%%%F" (
+        echo [错误] 缺少文献处理模块：%%F，请完整解压源码。
+        pause
+        exit /b 1
+    )
 )
 
 set "BASEPY="
