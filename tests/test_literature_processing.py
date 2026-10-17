@@ -125,12 +125,13 @@ class TranslationTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_multiple_chunks_require_all_checks_to_pass(self):
-        self.source.write_text("A" * 350, encoding="utf-8")
+        self.source.write_text("A" * 3500, encoding="utf-8")
+        self.profile = lp.ModelProfile(self.profile.base_url, "secret", "translator", input_limit=18000)
         result, chat = self.translate([self.detect, "第一段", '{"has_problem":false}', "第二段", '{"has_problem":true}'],
-            options=lp.TranslationOptions(chunk_size=200, proofreading=True), proofreader=self.profile)
+            options=lp.TranslationOptions(proofreading=True), proofreader=self.profile)
         self.assertEqual(len(result["checks"]), 2)
         self.assertFalse(result["verified"])
-        self.assertEqual(chat.call_args_list[3].args[2]["source"], "A" * 150)
+        self.assertEqual(chat.call_args_list[1].args[2]["source"] + chat.call_args_list[3].args[2]["source"], "A" * 3500)
 
     def test_empty_or_unknown_language_cannot_be_misreported_as_translated(self):
         with self.assertRaises(ValueError):
@@ -143,12 +144,6 @@ class TranslationTests(unittest.TestCase):
         with self.assertRaises(lp.ProcessingCancelled):
             self.translate([self.detect], stop=lambda: True)
         self.assertFalse(self.output.exists())
-
-    def test_chunks_preserve_all_characters_and_maximum_length(self):
-        text = ("# Header\n\n" + "Paragraph\n" * 120 + "X" * 2000) * 3
-        chunks = lp.markdown_chunks(text, 500)
-        self.assertEqual("".join(chunks), text)
-        self.assertTrue(all(0 < len(chunk) <= 500 for chunk in chunks))
 
     def test_scan_excludes_generated_outputs_and_preserves_nested_paths(self):
         nested = self.root / "nested"

@@ -40,6 +40,7 @@ from typing import Any, Iterable, Optional
 
 from workspace_ui import WorkspaceLayout, configure_workspace_theme
 from literature_processing import ProcessingCancelled
+from model_budget import ModelCatalog
 
 import tkinter as tk
 from tkinter import font as tkfont, ttk
@@ -57,7 +58,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "文献处理软件"
-APP_VERSION = "26.10.18.01"
+APP_VERSION = "26.10.18.03"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -1027,9 +1028,7 @@ def fetch_openai_compatible_models(
     items = payload.get("data")
     if not isinstance(items, list):
         raise RuntimeError(tr('LLM /models 响应中没有 data 数组。'))
-    models = sorted(
-        {str(item.get("id")).strip() for item in items if isinstance(item, dict) and item.get("id")}
-    )
+    models = ModelCatalog(items)
     if not models:
         raise RuntimeError(tr('LLM /models 没有返回可用模型。'))
     return models
