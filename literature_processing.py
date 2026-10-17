@@ -306,12 +306,141 @@ class GitHubOptions:
     folder: str = ""
 
     def validate(self):
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.repository):
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.repository) or any(part in {".", ".."} for part in self.repository.split("/")):
             raise ValueError(tr('GitHub 仓库请填写 owner/repository。'))
         if not self.token.strip() or not self.branch.strip():
             raise ValueError(tr('请填写 GitHub Token 和目标分支。'))
         if "\\" in self.folder or self.folder.startswith("/") or ".." in PurePosixPath(self.folder).parts:
             raise ValueError(tr('GitHub 目录必须是仓库内的相对路径。'))
+
+
+def github_repository_name(value: str) -> str:
+    """Accept a repository name or a copied GitHub page URL, never a custom API host."""
+    value = value.strip()
+    if value.startswith("github.com/"):
+        value = "https://" + value
+    if "://" in value:
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or parsed.netloc.lower() != "github.com" or parsed.username:
+            raise ValueError(tr("请粘贴 github.com 的仓库链接，或填写 owner/repository。"))
+        value = "/".join(parsed.path.strip("/").split("/")[:2])
+    value = value.rstrip("/")
+    if value.endswith(".git"):
+        value = value[:-4]
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value) or any(part in {".", ".."} for part in value.split("/")):
+        raise ValueError(tr("请粘贴 github.com 的仓库链接，或填写 owner/repository。"))
+    return value
+
+
+def github_folder_name(value: str) -> str:
+    value = value.strip()
+    if value == "/":
+        return ""
+    if "\\" in value or value.startswith("/") or "://" in value or ".." in PurePosixPath(value).parts:
+        raise ValueError(tr('GitHub 目录必须是仓库内的相对路径。'))
+    return str(PurePosixPath(value)) if value and value != "." else ""
+
+
+@dataclass
+class GitHubSetupClient:
+    """Read-only setup checks. This client never sends a write request."""
+    token: str = field(repr=False)
+    stop: Callable[[], bool] = field(default=lambda: False, repr=False)
+
+    def get(self, path, params=None, missing_ok=False):
+        _cancel(self.stop)
+        if not self.token.strip():
+            raise ValueError(tr("请先粘贴 GitHub 访问凭据（Token）。"))
+        if requests is None:
+            raise RuntimeError(tr('缺少 requests。'))
+        try:
+            response = requests.get("https://api.github.com" + path,
+                headers={"Authorization": f"Bearer {self.token.strip()}", "Accept": "application/vnd.github+json",
+                         "X-GitHub-Api-Version": "2022-11-28"},
+                params=params, timeout=(10, 30), allow_redirects=False)
+        except requests.RequestException:
+            raise RuntimeError(tr("无法连接 GitHub，请检查网络或代理后重试。")) from None
+        _cancel(self.stop)
+        if response.status_code == 404 and missing_ok:
+            return None
+        if response.status_code == 401:
+            raise ValueError(tr("访问凭据无效或已过期，请重新生成并粘贴 Token。"))
+        if response.status_code in {403, 429}:
+            raise RuntimeError(tr("GitHub 拒绝访问或请求次数已达上限，请检查凭据权限，稍后重试。"))
+        if response.status_code == 404:
+            raise ValueError(tr("找不到仓库或分支，请检查选择，并确认 Token 已授权访问该仓库。"))
+        if response.status_code != 200:
+            raise RuntimeError(tr("GitHub 连接检查失败（HTTP {arg0}），请稍后重试。", arg0=response.status_code))
+        try:
+            return response.json()
+        except ValueError:
+            raise RuntimeError(tr("GitHub 返回的数据无法读取，请稍后重试。")) from None
+
+    def pages(self, path, **params):
+        result = []
+        page = 1
+        while True:
+            values = self.get(path, {**params, "per_page": 100, "page": page})
+            if not isinstance(values, list):
+                raise RuntimeError(tr("GitHub 返回的数据无法读取，请稍后重试。"))
+            result.extend(value for value in values if isinstance(value, dict))
+            if len(values) < 100:
+                return result
+            page += 1
+
+    def connect(self):
+        user = self.get("/user")
+        if not isinstance(user, dict) or not isinstance(user.get("login"), str):
+            raise RuntimeError(tr("GitHub 返回的数据无法读取，请稍后重试。"))
+        repos = self.pages("/user/repos", sort="updated", affiliation="owner,collaborator,organization_member")
+        names = [repo["full_name"] for repo in repos if isinstance(repo.get("full_name"), str)
+                 and not repo.get("archived") and not repo.get("disabled")
+                 and (repo.get("permissions") or {}).get("push") is not False]
+        return {"login": user["login"], "repositories": names}
+
+    def repository(self, repository):
+        repository = github_repository_name(repository)
+        info = self.get(f"/repos/{repository}")
+        if not isinstance(info, dict):
+            raise RuntimeError(tr("GitHub 返回的数据无法读取，请稍后重试。"))
+        if info.get("archived") or info.get("disabled"):
+            raise ValueError(tr("该仓库已归档或停用，请选择可写入的仓库。"))
+        if (info.get("permissions") or {}).get("push") is False:
+            raise ValueError(tr("当前账号没有该仓库的写入权限，请换一个仓库或联系仓库所有者。"))
+        return info
+
+    def prepare_repository(self, repository):
+        repository = github_repository_name(repository)
+        info = self.repository(repository)
+        branches = self.pages(f"/repos/{repository}/branches")
+        names = [value["name"] for value in branches if isinstance(value.get("name"), str)]
+        if not names:
+            raise ValueError(tr("仓库还没有分支，请先在 GitHub 添加 README 文件，再返回重试。"))
+        return {"repository": repository, "branches": names, "default_branch": info.get("default_branch", names[0])}
+
+    def folders(self, repository, branch, folder=""):
+        repository, folder = github_repository_name(repository), github_folder_name(folder)
+        values = self.get(f"/repos/{repository}/contents/{quote(folder, safe='/')}", {"ref": branch})
+        if not isinstance(values, list):
+            raise ValueError(tr("此路径是文件，请选择文件夹。"))
+        return [value["path"] for value in values if isinstance(value, dict) and value.get("type") == "dir"
+                and isinstance(value.get("path"), str)]
+
+    def check_destination(self, options):
+        options.validate()
+        self.repository(options.repository)
+        self.get(f"/repos/{options.repository}/branches/{quote(options.branch, safe='')}")
+        folder = github_folder_name(options.folder)
+        while folder:
+            value = self.get(f"/repos/{options.repository}/contents/{quote(folder, safe='/')}",
+                             {"ref": options.branch}, missing_ok=True)
+            if value is not None:
+                if not isinstance(value, list):
+                    raise ValueError(tr("目标路径中已有同名文件，请改用其他文件夹名称。"))
+                break
+            parent = str(PurePosixPath(folder).parent)
+            folder = "" if parent == "." else parent
+        return True
 
 
 def upload_verified_file(path: Path, relative_name: str, verified: bool, options: GitHubOptions,

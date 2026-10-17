@@ -64,8 +64,6 @@ def localize_widgets(widget):
     options = widget.keys()
     if "text" in options and not ("textvariable" in options and widget.cget("textvariable")):
         widget.configure(text=ui_text(widget.cget("text")))
-    if getattr(widget, "localized_field_label", False):
-        widget.configure(width=16 if language() == "en" else 10)
     if isinstance(widget, ttk.Combobox) and getattr(widget, "localized_choices", False):
         widget.configure(values=[ui_text(value) for value in widget.cget("values")])
     if isinstance(widget, ttk.Notebook):
@@ -80,6 +78,8 @@ def localize_widgets(widget):
         widget.title(tr(widget.localized_title) if hasattr(widget, "localized_title") else ui_text(widget.title()))
     for child in widget.winfo_children():
         localize_widgets(child)
+    if hasattr(widget, "reflow"):
+        widget.reflow()
 
 
 class _Dialogs:

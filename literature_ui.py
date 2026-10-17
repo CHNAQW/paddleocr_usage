@@ -12,6 +12,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from ui_i18n import ChoiceVar, LocalizedVar, filedialog, localize_widgets, messagebox, tr, ui_text
+from responsive_ui import AdaptiveLabel, ResponsiveForm
 
 from literature_processing import (
     PROVIDERS, LANGUAGES, GitHubOptions, ModelProfile, ProcessingCancelled,
@@ -67,30 +68,29 @@ class ModelControls:
     def __init__(self, parent, title, saved, events, fetch, test):
         self.events, self.fetch, self.test = events, fetch, test
         self.box = ttk.Frame(parent, style="Paper.TFrame", padding=16)
-        self.box.columnconfigure(1, weight=1)
+        self.box.columnconfigure(0, weight=1)
+        self.form = ResponsiveForm(self.box)
+        self.form.grid(row=0, column=0, sticky="ew")
         saved = saved if isinstance(saved, dict) else {}
         self.url = tk.StringVar(value=saved.get("base_url", PROVIDERS["DeepSeek"]))
         self.key = tk.StringVar(value=saved.get("api_key", ""))
         self.model = tk.StringVar(value=saved.get("model", ""))
         self.provider = ChoiceVar(value=next((name for name, url in PROVIDERS.items()
                                                 if url and url == self.url.get()), tr('自定义 OpenAI compatible')))
-        selector = ttk.Combobox(self.box, textvariable=self.provider, values=[ui_text(value) for value in PROVIDERS], state="readonly")
+        selector = ttk.Combobox(self.form, textvariable=self.provider, values=[ui_text(value) for value in PROVIDERS], state="readonly")
         selector.localized_choices = True
-        selector.grid(row=0, column=1, sticky="ew", padx=6, pady=3)
-        ttk.Label(self.box, text=tr('服务商预设'), style="Card.TLabel").grid(row=0, column=0, padx=6)
+        self.form.add(tr('服务商预设'), selector)
         selector.bind("<<ComboboxSelected>>", self.preset)
         for row, label, variable, hidden in ((1, "Base URL", self.url, False), (2, "API Key", self.key, True)):
-            ttk.Label(self.box, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", padx=6)
-            ttk.Entry(self.box, textvariable=variable, show="*" if hidden else "").grid(row=row, column=1, sticky="ew", padx=6, pady=3)
-        ttk.Label(self.box, text=tr('模型 / 接入点 ID'), style="Card.TLabel").grid(row=3, column=0, padx=6)
-        self.combo = ttk.Combobox(self.box, textvariable=self.model)
-        self.combo.grid(row=3, column=1, sticky="ew", padx=6, pady=3)
+            self.form.add(label, ttk.Entry(self.form, textvariable=variable, show="*" if hidden else ""))
+        self.combo = ttk.Combobox(self.form, textvariable=self.model)
+        self.form.add(tr('模型 / 接入点 ID'), self.combo)
         actions = ttk.Frame(self.box, style="Paper.TFrame")
-        actions.grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=4)
+        actions.grid(row=1, column=0, sticky="w", pady=8)
         ttk.Button(actions, text=tr('拉取模型'), command=lambda: self.request(False)).pack(side="left", padx=3)
         ttk.Button(actions, text=tr('测试接口'), command=lambda: self.request(True)).pack(side="left", padx=3)
-        ttk.Label(self.box, text=tr('兼容 /chat/completions；不支持 /models 的服务可手填模型或接入点 ID。'), style="Hint.TLabel",
-                  wraplength=360).grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=4)
+        AdaptiveLabel(self.box, text=tr('兼容 /chat/completions；不支持 /models 的服务可手填模型或接入点 ID。'),
+                      style="Hint.TLabel").grid(row=2, column=0, sticky="ew", pady=4)
 
     def preset(self, _event=None):
         value = PROVIDERS[self.provider.get()]
@@ -197,7 +197,10 @@ class LiteratureControls:
         if self.upload.get():
             github = GitHubOptions(self.repository.get().strip(), self.github_token.get().strip(),
                                    self.branch.get().strip(), self.folder.get().strip())
-            github.validate()
+            try:
+                github.validate()
+            except ValueError as exc:
+                raise ValueError(tr("请先通过“偏好设置 → GitHub 上传”的向导完成上传设置：{arg0}", arg0=exc.args[0])) from None
         if translating and not self.same_folder.get() and not self.output.get().strip():
             raise ValueError(tr('请选择译文输出文件夹，或勾选输出到原文文件夹。'))
         return {"profiles": profiles, "options": TranslationOptions(self.target.get().strip(), self.source.get().strip() or "自动检测",

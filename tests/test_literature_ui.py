@@ -131,6 +131,43 @@ class DesktopLayoutTests(unittest.TestCase):
             self.root.update()
             self.assertTrue(all(value is wide for value in self.app.workspace_layout.form_columns.values()))
 
+    def test_field_captions_and_long_values_reflow_without_clipping_or_hiding_logs(self):
+        controls = self.app.literature
+        original_source = controls.source.get()
+        original_model = controls.profiles["translator"].model.get()
+        try:
+            for locale in ("zh", "en"):
+                self.app.change_ui_language(locale)
+                for width, height in ((1100, 780), (540, 420)):
+                    self.root.geometry(f"{width}x{height}")
+                    self.app.notebook.select(1)
+                    self.root.update()
+                    form = controls.language_form
+                    font = application.tkfont.nametofont("TkDefaultFont", root=self.root)
+                    for label, field in form.rows:
+                        self.assertGreaterEqual(label.winfo_width(), font.measure(label.cget("text")))
+                        self.assertLessEqual(field.winfo_rootx() + field.winfo_width(), self.root.winfo_rootx() + width)
+                    controls.source.set("An unusually long source language designation that needs the complete available row")
+                    self.root.update()
+                    self.assertTrue(form.stacked)
+                    label, field = form.rows[0]
+                    self.assertEqual(label.grid_info()["column"], field.grid_info()["column"])
+                    self.assertGreater(int(field.grid_info()["row"]), int(label.grid_info()["row"]))
+                    self.assertGreaterEqual(field.winfo_width(), form.winfo_width() - 10)
+                    self.assertGreaterEqual(self.app.log_text.winfo_height(), 40)
+                    controls.source.set(original_source)
+            controls.profiles["translator"].model.set("research-model-with-a-long-identifier-" * 5)
+            self.app.workspace_layout.show_settings(1)
+            self.root.update()
+            model = controls.profiles["translator"]
+            self.assertTrue(model.form.stacked)
+            self.assertGreaterEqual(model.combo.winfo_width(), model.form.winfo_width() - 10)
+        finally:
+            controls.source.set(original_source)
+            controls.profiles["translator"].model.set(original_model)
+            self.app.workspace_layout.settings.withdraw()
+            self.app.change_ui_language("zh")
+
     def test_original_icon_stays_visible_when_switching_window_sizes(self):
         shell = self.app.workspace_layout
         for width, height, icon_size in ((1100, 780, 48), (640, 480, 32), (540, 420, 32), (1100, 780, 48)):
@@ -336,6 +373,21 @@ class DesktopLayoutTests(unittest.TestCase):
         self.app.save_current_config()
         self.assertNotIn("session-only-token", repr(self.app.config))
         controls.github_token.set("")
+
+    def test_missing_github_credentials_point_to_the_setup_wizard(self):
+        controls = self.app.literature
+        upload, token = controls.upload.get(), controls.github_token.get()
+        try:
+            controls.upload.set(True)
+            controls.github_token.set("")
+            for locale, message in (("zh", "向导"), ("en", "wizard")):
+                self.app.change_ui_language(locale)
+                with self.assertRaisesRegex(ValueError, message):
+                    controls.make_snapshot(False)
+        finally:
+            controls.upload.set(upload)
+            controls.github_token.set(token)
+            self.app.change_ui_language("zh")
 
     def test_model_presets_and_editable_model_selection(self):
         model = self.app.literature.profiles["translator"]
