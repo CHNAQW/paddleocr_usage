@@ -11,6 +11,26 @@ from unittest.mock import Mock, patch
 import literature_processing as lp
 from literature_ui import LiteratureControls
 import paddleocr_pdf_to_md_gui as application
+from ui_i18n import language, set_language, tr
+
+
+def assert_english_captions(test, widget, language_selector):
+    """Check owned UI text; document content and user-entered values stay untouched."""
+    if widget is language_selector:
+        return  # Keep the native names of both UI languages in this one selector.
+    for option in ("text", "values"):
+        if option in widget.keys():
+            test.assertNotRegex(str(widget.cget(option)), r"[\u4e00-\u9fff]", str(widget))
+    if isinstance(widget, application.ttk.Notebook):
+        for tab in widget.tabs():
+            test.assertNotRegex(widget.tab(tab, "text"), r"[\u4e00-\u9fff]")
+    if isinstance(widget, tk.Menu):
+        end = widget.index("end")
+        for index in range(end + 1 if end is not None else 0):
+            if widget.type(index) not in {"separator", "tearoff"}:
+                test.assertNotRegex(widget.entrycget(index, "label"), r"[\u4e00-\u9fff]")
+    for child in widget.winfo_children():
+        assert_english_captions(test, child, language_selector)
 
 
 class OCRIntegrationTests(unittest.TestCase):
@@ -83,6 +103,8 @@ class DesktopLayoutTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        for timer in cls.root.tk.call("after", "info"):
+            cls.root.after_cancel(timer)
         cls.root.destroy()
         cls.config_patch.stop()
         cls.save_patch.stop()
@@ -124,6 +146,121 @@ class DesktopLayoutTests(unittest.TestCase):
                 self.assertTrue(shell.mark.winfo_viewable())
                 self.assertEqual(shell.mark.cget("text"), "")
                 self.assertLessEqual(shell.mark.winfo_rooty() + shell.mark.winfo_height(), self.root.winfo_rooty() + height)
+
+    def test_same_folder_locks_and_tracks_both_typed_and_selected_source_paths(self):
+        controls = self.app.literature
+        previous = controls.config_data()
+        try:
+            controls.same_folder.set(True)
+            controls.input.set("/tmp/原文")
+            self.assertEqual(controls.output.get(), controls.input.get())
+            self.assertEqual(str(controls.output_entry.cget("state")), "disabled")
+            self.assertEqual(str(controls.output_button.cget("state")), "normal")
+            controls.output.set("/tmp/forbidden")
+            self.assertEqual(controls.output.get(), controls.input.get())
+            with patch("literature_ui.filedialog.askdirectory", return_value="/tmp/new-source"):
+                controls.choose_dir(controls.input)
+            self.assertEqual(controls.output.get(), "/tmp/new-source")
+            controls.same_folder.set(False)
+            self.assertEqual(str(controls.output_entry.cget("state")), "normal")
+            controls.output.set("/tmp/independent")
+            controls.input.set("/tmp/another-source")
+            self.assertEqual(controls.output.get(), "/tmp/independent")
+            controls.same_folder.set(True)
+            self.assertEqual(controls.output.get(), controls.input.get())
+        finally:
+            controls.same_folder.set(False)
+            controls.input.set(previous["input"])
+            controls.output.set(previous["output"])
+            controls.same_folder.set(previous["same_folder"])
+
+    def test_output_picker_requires_override_and_keeps_lock_on_either_cancel(self):
+        controls = self.app.literature
+        previous = controls.config_data()
+        try:
+            for locale in ("zh", "en"):
+                self.app.change_ui_language(locale)
+                controls.input.set("/tmp/source")
+                controls.same_folder.set(True)
+                for confirmed, selection in ((False, "/tmp/new"), (True, ""), (True, "/tmp/new")):
+                    controls.same_folder.set(True)
+                    with patch("literature_ui.messagebox.askyesno", return_value=confirmed) as confirm, \
+                            patch("literature_ui.filedialog.askdirectory", return_value=selection) as picker:
+                        controls.output_button.invoke()
+                    confirm.assert_called_once()
+                    self.assertEqual(confirm.call_args.args[1], tr("您已选择“译文保存在原文文件夹”，是否需要强制覆盖设置？"))
+                    self.assertEqual(picker.call_count, int(confirmed))
+                    overridden = confirmed and bool(selection)
+                    self.assertEqual(controls.same_folder.get(), not overridden)
+                    self.assertEqual(controls.output.get(), selection if overridden else controls.input.get())
+                    self.assertEqual(str(controls.output_entry.cget("state")), "normal" if overridden else "disabled")
+        finally:
+            self.app.change_ui_language("zh")
+            controls.same_folder.set(False)
+            controls.input.set(previous["input"])
+            controls.output.set(previous["output"])
+            controls.same_folder.set(previous["same_folder"])
+
+    def test_language_switch_preserves_paths_credentials_options_and_active_job(self):
+        controls = self.app.literature
+        before = controls.config_data()
+        active = self.app.worker_thread
+        try:
+            controls.input.set("/tmp/中文路径")
+            translator = controls.profiles["translator"]
+            translator.model.set("模型-ID")
+            translator.key.set("session-key")
+            translator.url.set("https://example.invalid/v1")
+            controls.source.set("英语 (en)")
+            controls.target.set("简体中文 (ch)")
+            controls.prefix.set("前缀 TRANSLATED_")
+            controls.arbitration.set("大模型裁决")
+            controls.secondary.set(False)
+            controls.proofreading.set(False)
+            controls.upload.set(False)
+            self.app.worker_thread = Mock(is_alive=Mock(return_value=True))
+            saved = controls.config_data()
+            for locale in ("en", "zh", "en", "zh"):
+                self.app.change_ui_language(locale)
+                self.root.update()
+                self.assertEqual(controls.config_data(), saved)
+                self.assertTrue(self.app.worker_thread.is_alive())
+                self.assertEqual(self.app.config.ui_language, locale)
+                self.assertEqual(controls.make_snapshot()["options"].source, "英语 (en)")
+                self.assertEqual(controls.make_snapshot()["options"].target, "简体中文 (ch)")
+                self.assertTrue(controls.make_snapshot()["prefix"])
+                self.assertEqual(translator.model.get(), "模型-ID")
+        finally:
+            self.app.worker_thread = active
+            controls.same_folder.set(False)
+            for key in ("input", "output", "source", "target", "arbitration"):
+                getattr(controls, key).set(before[key])
+            controls.prefix.set(before["filename_position"])
+            for key in ("same_folder", "secondary", "proofreading", "upload"):
+                getattr(controls, key).set(before[key])
+            for role, profile in controls.profiles.items():
+                profile.url.set(before[role]["base_url"])
+                profile.key.set(before[role]["api_key"])
+                profile.model.set(before[role]["model"])
+            self.app.change_ui_language("zh")
+
+    def test_english_captions_logs_and_actions_survive_navigation_and_small_resizes(self):
+        try:
+            self.app.change_ui_language("en")
+            self.assertIn("Welcome to Literature Workspace", self.app.log_text.get("1.0", "end"))
+            self.assertIn("Literature Workspace", self.root.title())
+            for width, height in ((1100, 780), (640, 480), (540, 420), (1100, 780)):
+                self.root.geometry(f"{width}x{height}")
+                for page in (0, 1):
+                    self.app.notebook.select(page)
+                    self.root.update()
+                    assert_english_captions(self, self.root, self.app.workspace_layout.language_selector)
+                    self.assertGreaterEqual(self.app.log_text.winfo_height(), 40)
+                    action = self.app.literature.start_button if page else self.app.start_btn
+                    self.assertTrue(action.winfo_viewable())
+                    self.assertLessEqual(action.winfo_rootx() + action.winfo_width(), self.root.winfo_rootx() + width)
+        finally:
+            self.app.change_ui_language("zh")
 
     def test_settings_keep_models_off_the_task_page_and_save_on_return(self):
         shell = self.app.workspace_layout
@@ -317,6 +454,43 @@ class DesktopLayoutTests(unittest.TestCase):
             controls.upload.set(False)
             controls.proofreading.set(False)
             controls.github_token.set("")
+
+
+class EnglishStartupTests(unittest.TestCase):
+    def test_saved_english_preference_applies_before_building_the_interface(self):
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            self.skipTest(f"GUI tests need a display: {exc}")
+        try:
+            with patch.object(application, "load_config", return_value=application.AppConfig(ui_language="en")), \
+                    patch.object(application, "save_config"):
+                application.configure_unicode_ui_fonts(root)
+                application.configure_design_language(root)
+                app = application.PaddleOCRBatchGUI(root)
+                root.update()
+                self.assertEqual(language(), "en")
+                assert_english_captions(self, root, app.workspace_layout.language_selector)
+                self.assertEqual(app.status_var.get(), "Ready.")
+                self.assertEqual(app.literature.target.get(), "简体中文 (ch)")
+                app.literature.input.set("/tmp/原文")
+                self.assertEqual(app.literature.output.get(), "/tmp/原文")
+                self.assertEqual(app.literature.source.get(), "自动检测")
+                profile = app.literature.profiles["translator"]
+                profile.provider.set("Doubao / Volcengine Ark")
+                profile.preset()
+                self.assertEqual(profile.url.get(), lp.PROVIDERS["Doubao / 火山方舟"])
+                for selection, locale in (("中文", "zh"), ("English", "en")):
+                    app.ui_language_var.set(selection)
+                    app.workspace_layout.language_selector.event_generate("<<ComboboxSelected>>")
+                    root.update()
+                    self.assertEqual(language(), locale)
+                    self.assertEqual(app.config.ui_language, locale)
+        finally:
+            for timer in root.tk.call("after", "info"):
+                root.after_cancel(timer)
+            root.destroy()
+            set_language("zh")
 
 
 if __name__ == "__main__":

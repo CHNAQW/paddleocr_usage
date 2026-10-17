@@ -10,6 +10,8 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 from urllib.parse import quote, urlparse
 
+from ui_translations import tr
+
 try:
     import requests
 except ImportError:
@@ -51,21 +53,21 @@ class ModelProfile:
     def validate(self) -> None:
         parsed = urlparse(self.base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username:
-            raise ValueError("请填写有效的 OpenAI compatible Base URL。")
+            raise ValueError(tr('请填写有效的 OpenAI compatible Base URL。'))
         if not self.api_key.strip() or not self.model.strip():
-            raise ValueError("请填写 API Key，并拉取或手动输入模型名称。")
+            raise ValueError(tr('请填写 API Key，并拉取或手动输入模型名称。'))
 
 
 def _cancel(stop: Callable[[], bool]) -> None:
     if stop():
-        raise ProcessingCancelled("用户已停止文献处理。")
+        raise ProcessingCancelled(tr('用户已停止文献处理。'))
 
 
 def chat(profile: ModelProfile, instruction: str, data: dict, stop=lambda: False) -> str:
     profile.validate()
     _cancel(stop)
     if requests is None:
-        raise RuntimeError("缺少 requests，请先安装 requirements.txt。")
+        raise RuntimeError(tr('缺少 requests，请先安装 requirements.txt。'))
     response = requests.post(
         profile.base_url.rstrip("/") + "/chat/completions",
         headers={"Authorization": f"Bearer {profile.api_key.strip()}", "Content-Type": "application/json"},
@@ -77,16 +79,16 @@ def chat(profile: ModelProfile, instruction: str, data: dict, stop=lambda: False
     _cancel(stop)
     if not response.ok:
         # Avoid reflecting server bodies that may contain credentials or document contents.
-        raise RuntimeError(f"大模型请求失败：HTTP {response.status_code}。请检查接口、模型、额度和网络。")
+        raise RuntimeError(tr('大模型请求失败：HTTP {arg0}。请检查接口、模型、额度和网络。', arg0=response.status_code))
     try:
         choice = response.json()["choices"][0]
         content = choice["message"]["content"]
     except (KeyError, IndexError, TypeError, ValueError) as exc:
-        raise RuntimeError("大模型响应缺少 choices[0].message.content。") from exc
+        raise RuntimeError(tr('大模型响应缺少 choices[0].message.content。')) from exc
     if choice.get("finish_reason") in {"length", "content_filter"}:
-        raise RuntimeError("大模型输出被截断或过滤，请减小分段长度或更换模型。")
+        raise RuntimeError(tr('大模型输出被截断或过滤，请减小分段长度或更换模型。'))
     if not isinstance(content, str) or not content.strip():
-        raise RuntimeError("大模型返回空文本。")
+        raise RuntimeError(tr('大模型返回空文本。'))
     return content.strip()
 
 
@@ -95,22 +97,22 @@ def json_reply(content: str) -> dict:
     try:
         value = json.loads(cleaned)
     except ValueError as exc:
-        raise RuntimeError("大模型没有返回有效 JSON，请重试或更换模型。") from exc
+        raise RuntimeError(tr('大模型没有返回有效 JSON，请重试或更换模型。')) from exc
     if not isinstance(value, dict):
-        raise RuntimeError("大模型必须返回 JSON 对象。")
+        raise RuntimeError(tr('大模型必须返回 JSON 对象。'))
     return value
 
 
 def review_reply(content: str) -> dict:
     value = json_reply(content)
     if type(value.get("has_problem")) is not bool:
-        raise RuntimeError("核验结果缺少布尔字段 has_problem；不能视为核验通过。")
+        raise RuntimeError(tr('核验结果缺少布尔字段 has_problem；不能视为核验通过。'))
     return value
 
 
 def detect_language(text: str, target: str, profile: ModelProfile, stop=lambda: False) -> dict:
     if not text.strip():
-        raise ValueError("文献为空，无法识别语言。")
+        raise ValueError(tr('文献为空，无法识别语言。'))
     result = json_reply(chat(profile,
         '识别 sample 的主要自然语言，判断是否属于 target_language（区分简繁中文）。'
         '只返回 JSON：{"language":"语言名称或 unknown","is_target_language":true或false}。'
@@ -119,14 +121,14 @@ def detect_language(text: str, target: str, profile: ModelProfile, stop=lambda: 
     if (not isinstance(result.get("language"), str) or not result["language"].strip()
             or result["language"].strip().lower() in {"unknown", "und", "未知"}
             or type(result.get("is_target_language")) is not bool):
-        raise RuntimeError("前 300 字符不足以可靠识别语言；请检查文献开头后重试。")
+        raise RuntimeError(tr('前 300 字符不足以可靠识别语言；请检查文献开头后重试。'))
     return result
 
 
 def markdown_chunks(text: str, limit: int = 4000) -> list[str]:
     """Keep every character; prefer paragraph/line boundaries near the size limit."""
     if limit < 200:
-        raise ValueError("分段长度至少为 200 字符。")
+        raise ValueError(tr('分段长度至少为 200 字符。'))
     chunks = []
     while text:
         end = min(len(text), limit)
@@ -144,7 +146,7 @@ def translated_path(source: Path, input_root: Path, output_root: Path | None, pr
     parent = source.parent if output_root is None else output_root / source.relative_to(input_root).parent
     result = parent / name
     if result.resolve() == source.resolve():
-        raise ValueError("译文路径不能覆盖原文。")
+        raise ValueError(tr('译文路径不能覆盖原文。'))
     return result
 
 
@@ -189,17 +191,17 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
                        decide=None, stop=lambda: False, log=lambda message: None) -> dict:
     """Return an auditable result. Unresolved documents are saved but never approved."""
     if destination.resolve() == source.resolve():
-        raise ValueError("译文不能覆盖原文。")
+        raise ValueError(tr('译文不能覆盖原文。'))
     if destination.exists():
         return {"status": "existing", "path": str(destination), "verified": False}
     if not options.target.strip():
-        raise ValueError("目标语言不能为空。")
+        raise ValueError(tr('目标语言不能为空。'))
     if options.secondary_review and reviewer is None:
-        raise ValueError("二次翻译核对需要指定模型。")
+        raise ValueError(tr('二次翻译核对需要指定模型。'))
     if options.proofreading and proofreader is None:
-        raise ValueError("文本校对需要指定模型。")
+        raise ValueError(tr('文本校对需要指定模型。'))
     if options.secondary_review and options.arbitration == "大模型裁决" and arbiter is None:
-        raise ValueError("请选择裁决模型。")
+        raise ValueError(tr('请选择裁决模型。'))
     source_bytes = source.read_bytes()
     text = source_bytes.decode("utf-8-sig")
     language = detect_language(text, options.target, translator, stop)
@@ -210,13 +212,13 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
     chunks = markdown_chunks(text, options.chunk_size)
     for index, original in enumerate(chunks, 1):
         _cancel(stop)
-        log(f"{source.name}：翻译第 {index}/{len(chunks)} 段")
+        log(tr('{arg0}：翻译第 {arg1}/{arg2} 段', arg0=source.name, arg1=index, arg2=len(chunks)))
         data = {"source": original, "source_language": source_language,
                 "target_language": LANGUAGES.get(options.target, options.target)}
         first = chat(translator, TRANSLATE_PROMPT, data, stop)
         record = {"chunk": index, "verified": True}
         if options.secondary_review:
-            log(f"{source.name}：第 {index} 段二次翻译核对")
+            log(tr('{arg0}：第 {arg1} 段二次翻译核对', arg0=source.name, arg1=index))
             second = chat(reviewer, TRANSLATE_PROMPT, data, stop)
             comparison = review_reply(chat(reviewer, COMPARE_PROMPT,
                 {**data, "first": first, "second": second}, stop))
@@ -240,7 +242,7 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
                 elif choice != "first":
                     record["verified"] = False
         if options.proofreading:
-            log(f"{source.name}：第 {index} 段文本校对")
+            log(tr('{arg0}：第 {arg1} 段文本校对', arg0=source.name, arg1=index))
             proof = review_reply(chat(proofreader,
                 '校对译文，结合 source 检查语句不通、缺字少字、漏译等问题，不改写或润色。'
                 '只返回 JSON：{"has_problem":true或false,"issues":["具体问题"],"summary":"结论"}。',
@@ -305,42 +307,42 @@ class GitHubOptions:
 
     def validate(self):
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.repository):
-            raise ValueError("GitHub 仓库请填写 owner/repository。")
+            raise ValueError(tr('GitHub 仓库请填写 owner/repository。'))
         if not self.token.strip() or not self.branch.strip():
-            raise ValueError("请填写 GitHub Token 和目标分支。")
+            raise ValueError(tr('请填写 GitHub Token 和目标分支。'))
         if "\\" in self.folder or self.folder.startswith("/") or ".." in PurePosixPath(self.folder).parts:
-            raise ValueError("GitHub 目录必须是仓库内的相对路径。")
+            raise ValueError(tr('GitHub 目录必须是仓库内的相对路径。'))
 
 
 def upload_verified_file(path: Path, relative_name: str, verified: bool, options: GitHubOptions,
                          expected_sha256: str, stop=lambda: False) -> str:
     if verified is not True:
-        raise ValueError("文件尚未核验通过，禁止自动上传。")
+        raise ValueError(tr('文件尚未核验通过，禁止自动上传。'))
     options.validate()
     _cancel(stop)
     if requests is None:
-        raise RuntimeError("缺少 requests。")
+        raise RuntimeError(tr('缺少 requests。'))
     if relative_name.startswith("/") or "\\" in relative_name or ".." in PurePosixPath(relative_name).parts:
-        raise ValueError("上传路径必须是相对路径。")
+        raise ValueError(tr('上传路径必须是相对路径。'))
     content = path.read_bytes()
     if hashlib.sha256(content).hexdigest() != expected_sha256:
-        raise ValueError("核验后文件发生变化，请重新核验再上传。")
+        raise ValueError(tr('核验后文件发生变化，请重新核验再上传。'))
     if len(content) > 20 * 1024 * 1024:
-        raise ValueError("自动上传仅支持 20MB 以内的文件。")
+        raise ValueError(tr('自动上传仅支持 20MB 以内的文件。'))
     remote = str(PurePosixPath(options.folder) / relative_name)
     url = f"https://api.github.com/repos/{options.repository}/contents/{quote(remote, safe='/')}"
     headers = {"Authorization": f"Bearer {options.token}", "Accept": "application/vnd.github+json",
                "X-GitHub-Api-Version": "2022-11-28"}
     response = requests.get(url, headers=headers, params={"ref": options.branch}, timeout=(15, 60))
     if response.status_code == 200:
-        raise FileExistsError(f"GitHub 已存在 {remote}；为避免覆盖，未上传。")
+        raise FileExistsError(tr('GitHub 已存在 {arg0}；为避免覆盖，未上传。', arg0=remote))
     if response.status_code != 404:
-        raise RuntimeError(f"读取 GitHub 仓库失败：HTTP {response.status_code}。")
+        raise RuntimeError(tr('读取 GitHub 仓库失败：HTTP {arg0}。', arg0=response.status_code))
     _cancel(stop)
     response = requests.put(url, headers=headers, json={
         "message": f"Add reviewed literature: {remote}", "branch": options.branch,
         "content": base64.b64encode(content).decode("ascii"),
     }, timeout=(15, 60))
     if response.status_code != 201:
-        raise RuntimeError(f"GitHub 上传失败：HTTP {response.status_code}。请检查分支和 Contents 写入权限。")
+        raise RuntimeError(tr('GitHub 上传失败：HTTP {arg0}。请检查分支和 Contents 写入权限。', arg0=response.status_code))
     return remote
