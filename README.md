@@ -6,11 +6,11 @@ For more information, please read the README. Terms And Condition please read be
 
 更多信息请参阅 README，使用条件请见下方条款。
 
-# PaddleOCR PDF to Markdown GUI  
-# PaddleOCR PDF 转 Markdown 图形化工具
+# Literature Processing Software  
+# 文献处理软件
 
-**Version: 26.8.13.04**
-**版本：26.8.13.04**
+**Version: 26.10.17.1**
+**版本：26.10.17.1**
 
 **Primary platform: Windows 10/11**  
 **主要适用平台：Windows 10/11**
@@ -20,6 +20,9 @@ For more information, please read the README. Terms And Condition please read be
 
 A Windows desktop tool for batch-converting PDF files to Markdown through the PaddleOCR online asynchronous API.  
 本工具是一个 Windows 桌面程序，用于通过 PaddleOCR 在线异步 API 批量将 PDF 转换为 Markdown。
+
+Version `26.10.17.1` provides two entries: **PDF OCR 转 MD功能** and **外文文献翻译功能**. The OCR features described below are retained, with optional translation, quality checks, and reviewed-file GitHub uploads.  
+`26.10.17.1` 提供 **PDF OCR 转 MD功能** 和 **外文文献翻译功能** 两个入口，保留下方介绍的 OCR 功能，并增加可选翻译、质量检查和核验后 GitHub 上传。
 
 It supports page-level progress reporting, Markdown word-count quality checks with automatic resubmission, manual status checks, automatic retry when the submission queue is full, automatic splitting of PDFs larger than 50 MB, JSON/JSONL recovery, and one-click EXE packaging.  
 本工具支持页级进度显示、Markdown 字数质量检测与自动重新提交、手动查询任务状态、提交队列已满时自动重试、自动拆分超过 50MB 的 PDF、JSON/JSONL 修复，以及一键打包 EXE。
@@ -82,6 +85,18 @@ It supports page-level progress reporting, Markdown word-count quality checks wi
 - Build a standalone Windows EXE with the included packaging script.
   可通过配套打包脚本生成独立的 Windows EXE。
 
+- Keep runtime logs visible in small windows, with scrollable settings and a draggable divider.
+  小窗口下日志独立可见，设置区可以滚动，并可拖动分隔条调整高度。
+
+- Translate existing foreign-language Markdown files, or optionally translate newly generated OCR results.
+  翻译已有外文 Markdown，或按需在 OCR 完成后自动进行翻译。
+
+- Configure OpenAI-compatible models for translation, independent secondary review, proofreading, and user/model arbitration.
+  分别配置 OpenAI-compatible 模型进行翻译、独立二次核对、文本校对及人工/模型裁决。
+
+- Select translation output folders and filename markers, then optionally upload reviewed Markdown to a chosen GitHub repository.
+  可选择译文目录和文件名标记，并按需将核验通过的 Markdown 上传至指定 GitHub 仓库。
+
 ---
 
 ## 2. Package Contents  文件组成
@@ -89,15 +104,22 @@ It supports page-level progress reporting, Markdown word-count quality checks wi
 The package normally contains the following current-version files.  
 安装包通常包含以下当前版本文件。
 
+All platforms require the three Python modules in the same folder: `paddleocr_pdf_to_md_gui.py`, `literature_processing.py`, and `literature_ui.py`.  
+所有平台均须将三个 Python 模块放在同一文件夹中：`paddleocr_pdf_to_md_gui.py`、`literature_processing.py` 和 `literature_ui.py`。
+
 ```text
 paddleocr_pdf_to_md_gui.py
+literature_processing.py
+literature_ui.py
 start_paddleocr_pdf_to_md_SAFE.bat
 build_paddleocr_pdf_to_md_EXE.bat
 README.md
 app_icon.ico
 app_icon.png
-version_info_26.8.13.04.txt
+version_info_26.10.17.1.txt
 requirements.txt
+使用说明.txt
+tests/
 ```
 
 Old version snapshots such as `paddleocr_pdf_to_md_gui_26.7.12.02.py` and `README_26.7.12.01.txt` are no longer part of the current package.  
@@ -121,8 +143,8 @@ Python 3.9 or later is required.
 Internet access is required.  
 必须能够正常访问互联网。
 
-A valid PaddleOCR official API Access Token/API Key is required.  
-必须具有有效的 PaddleOCR 官方 API Access Token/API Key。
+The PDF OCR workflow requires a valid PaddleOCR official API Access Token/API Key. Translation-only use requires the chosen LLM provider's API access instead.  
+PDF OCR 流程需要有效的 PaddleOCR 官方 API Access Token/API Key。仅使用翻译功能时，需要配置所选大模型服务的 API，而不需要 PaddleOCR Token。
 
 The launcher automatically creates a local virtual environment.  
 启动脚本会自动创建本地虚拟环境。
@@ -154,12 +176,17 @@ ordered-set
 
 ### Option A: Run with the BAT Launcher  方式一：通过 BAT 启动
 
-Place the following two files in the same folder.  
-请将以下两个文件放在同一文件夹中。
+Keep the source modules, launcher, dependency list, and icons together. Do not copy only the main Python file.  
+请将源码模块、启动器、依赖清单及图标放在同一文件夹中，不要只复制主 Python 文件。
 
 ```text
 paddleocr_pdf_to_md_gui.py
+literature_processing.py
+literature_ui.py
 start_paddleocr_pdf_to_md_SAFE.bat
+requirements.txt
+app_icon.ico
+app_icon.png
 ```
 
 Double-click the following file.  
@@ -178,8 +205,8 @@ It then creates a `.venv` virtual environment.
 It installs or updates `requests` and `pypdf`.  
 接着会安装或更新 `requests` 与 `pypdf`。
 
-Finally, it starts the graphical interface.  
-最后会启动图形化界面。
+Finally, it starts the graphical interface. Choose one of the two workflow entries. Translation-only users are not prompted for an OCR token at startup.  
+最后会启动图形化界面，选择两个功能入口之一即可；仅翻译的用户不会在启动时被要求填写 OCR Token。
 
 ### Option B: Run the Python File Directly   方式二：直接运行 Python 文件
 
@@ -333,8 +360,8 @@ Linux 与 macOS 用户应保留 `.py` 文件，并通过上述虚拟环境运行
 
 ## 5. Access Token Setup   Access Token 设置
 
-Open the application.  
-打开程序。
+Open the application and select **PDF OCR 转 MD功能**. These token settings apply to OCR.  
+打开程序并选择 **PDF OCR 转 MD功能**；本节 Token 设置用于 OCR。
 
 Click **Enter/Update Access Token**.  
 点击“输入/更新 Access Token”。
@@ -362,6 +389,9 @@ Do not share it, upload it publicly, or include it in a public repository.
 
 ## 6. Basic Conversion Workflow   基本转换流程
 
+Select **PDF OCR 转 MD功能**.  
+选择 **PDF OCR 转 MD功能** 入口。
+
 Select the PDF input folder.  
 选择 PDF 输入文件夹。
 
@@ -379,6 +409,9 @@ Choose whether to preserve the original subfolder structure.
 
 Choose whether to overwrite existing output files.  
 选择是否覆盖已有输出文件。
+
+Optionally enable **是否自动检测外文文献并提供翻译** after configuring the translation entry (Section 18). Leave it off for OCR alone. Only newly completed OCR files enter this follow-up; existing outputs skipped by OCR can be processed through the translation entry.  
+按需勾选 **是否自动检测外文文献并提供翻译**，并先配置翻译入口（第 18 节）；不勾选时仅进行 OCR。只有本次新完成的 OCR 文件会进入后续翻译；被 OCR 跳过的已有输出可通过翻译入口处理。
 
 Click **Start Batch Conversion**.  
 点击“开始批量转换”。
@@ -402,8 +435,8 @@ It then polls the server until the task is complete.
 The application currently provides the following models.  
 程序当前提供以下模型。
 
-This list is current for version `26.8.13.04`.
-以下列表对应 `26.8.13.04` 当前版本。
+This list is current for version `26.10.17.1`.  
+以下列表对应 `26.10.17.1` 当前版本。
 
 ```text
 PaddleOCR-VL-1.6
@@ -415,8 +448,8 @@ PP-StructureV3
 The default model is `PaddleOCR-VL-1.6`.  
 默认模型为 `PaddleOCR-VL-1.6`。
 
-Version 26.8.13.04 adds a post-OCR word-count quality check and automatic resubmission while keeping `PaddleOCR-VL-1.6` as the default model.
-26.8.13.04 版本新增 OCR 后字数质量检测与自动重新提交功能，同时继续使用 `PaddleOCR-VL-1.6` 作为默认模型。
+Version 26.10.17.1 retains the post-OCR word-count quality check and automatic resubmission, with `PaddleOCR-VL-1.6` as the default OCR model.
+26.10.17.1 版本保留 OCR 后字数质量检测与自动重新提交功能，默认 OCR 模型继续使用 `PaddleOCR-VL-1.6`。
 
 Actual availability depends on the PaddleOCR account and server-side API configuration.  
 模型是否实际可用，取决于 PaddleOCR 账户权限和服务端 API 配置。
@@ -479,6 +512,11 @@ Temporary split PDFs and intermediate results are removed after a successful mer
 
 Job cache files may remain for troubleshooting and task recovery.  
 为便于排错和任务恢复，job 缓存文件可能继续保留。
+
+### Translation Output   翻译输出
+
+Translation creates `example_TRANSLATED.md` or `TRANSLATED_example.md`, plus a `*.translation.json` review report, in the selected output location. Original Markdown files are retained. See Section 18 for naming, review status, and overwrite protection.  
+翻译会在所选位置生成 `example_TRANSLATED.md` 或 `TRANSLATED_example.md`，并生成 `*.translation.json` 检查报告；原 Markdown 会保留。命名、核验状态及覆盖保护见第 18 节。
 
 ### Log File   日志文件
 
@@ -578,6 +616,9 @@ Encrypted or damaged PDFs may also fail to split.
 ---
 
 ## 10. Progress and Manual Query   进度与手动查询
+
+The minimum window size is 540×420. Settings scroll independently above the runtime log; drag the divider to adjust the log height. Both entries share this persistent log panel.  
+最小窗口为 540×420。上方设置区独立滚动，运行日志保持可见；拖动分隔条可以调整日志区高度。两个功能入口共用此日志面板。
 
 The application provides a file-progress indicator.  
 程序提供文件总进度条。
@@ -717,6 +758,11 @@ Keep the following files in the same folder.
 
 ```text
 paddleocr_pdf_to_md_gui.py
+literature_processing.py
+literature_ui.py
+requirements.txt
+app_icon.ico
+app_icon.png
 build_paddleocr_pdf_to_md_EXE.bat
 ```
 
@@ -740,8 +786,8 @@ The EXE and its SHA-256 record are generated at the following locations.
 EXE 及其 SHA-256 校验文件会生成在以下位置。
 
 ```text
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.8.13.04.exe
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.8.13.04.exe.sha256.txt
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.17.1.exe
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.17.1.exe.sha256.txt
 ```
 
 Publish the EXE directly and provide the checksum alongside it. The script opens File Explorer with the generated EXE selected.
@@ -753,8 +799,8 @@ The generated EXE contains the Python runtime and bundled dependencies.
 End users normally do not need to install Python.  
 最终用户通常无需另外安装 Python。
 
-Internet access and a valid PaddleOCR API token are still required.  
-但仍然需要联网并配置有效的 PaddleOCR API Token。
+Internet access and credentials for the selected OCR or LLM service are still required. Updating the source version does not itself build or publish an EXE.  
+仍须联网，并配置所选 OCR 或大模型服务的凭据；更新源码版本本身不代表 EXE 已经构建或发布。
 
 ---
 
@@ -762,8 +808,8 @@ Internet access and a valid PaddleOCR API token are still required.
 
 ### Antivirus Reports AndroidOS/Multiverze or Another Threat   杀毒软件报告 AndroidOS/Multiverze 或其他威胁
 
-The public artifact is now a single `PaddleOCR_PDF_to_MD_26.8.13.04.exe`, compiled with Nuitka rather than bundled with PyInstaller. It uses uncompressed one-file mode to avoid UPX and compressed PyInstaller bootloader patterns; no code-signing certificate is required.
-现在的公开发布物就是单个 `PaddleOCR_PDF_to_MD_26.8.13.04.exe`。它改用 Nuitka 编译，不再使用 PyInstaller 打包，并采用无压缩单文件模式，以避开 UPX 和压缩式 PyInstaller 引导器特征；不要求代码签名证书。
+The public artifact is now a single `PaddleOCR_PDF_to_MD_26.10.17.1.exe`, compiled with Nuitka rather than bundled with PyInstaller. It uses uncompressed one-file mode to avoid UPX and compressed PyInstaller bootloader patterns; no code-signing certificate is required.  
+现在的公开发布物就是单个 `PaddleOCR_PDF_to_MD_26.10.17.1.exe`。它改用 Nuitka 编译，不再使用 PyInstaller 打包，并采用无压缩单文件模式，以避开 UPX 和压缩式 PyInstaller 引导器特征；不要求代码签名证书。
 
 The build no longer waits for an antivirus alert and then deletes the EXE. Instead, Python modules are translated to C, compiled with Nuitka's managed MinGW64 toolchain, linked with LTO, and placed in an uncompressed one-file payload. This targets the packaging characteristics that caused the previous alert while preserving direct EXE distribution.
 构建流程不再等杀毒软件告警后删除 EXE。Python 模块会转换为 C，使用 Nuitka 管理的 MinGW64 工具链编译，以 LTO 链接，并放入无压缩单文件载荷中。这样是在保留单 EXE 直接发布的同时，针对旧版告警涉及的打包特征进行处理。
@@ -772,20 +818,20 @@ No unsigned build system can guarantee acceptance by every antivirus engine beca
 任何无签名构建方式都无法保证被每个杀毒引擎接受，因为云信誉和启发式规则会独立变化。如果 Microsoft 仍把这一份干净的 Nuitka 构建识别为 `AndroidOS/Multiverze`，请将准确的 EXE 提交给 Microsoft Security Intelligence 并选择“错误检测”。不要关闭杀毒保护，也不要让接收者添加排除项。
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\PaddleOCR_PDF_to_MD_26.8.13.04.exe
-Get-Content .\PaddleOCR_PDF_to_MD_26.8.13.04.exe.sha256.txt
+Get-FileHash -Algorithm SHA256 .\PaddleOCR_PDF_to_MD_26.10.17.1.exe
+Get-Content .\PaddleOCR_PDF_to_MD_26.10.17.1.exe.sha256.txt
 ```
 
 ### Bad Image / status 0xc0e90002   DLL 错误 / 状态 0xc0e90002
 
-The release remains one independent EXE. The current one-file build uses a stable per-user cache under `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.04` instead of a random `%TEMP%\onefile_*` directory. This avoids races with Temp cleanup and lets security software inspect the extracted runtime once rather than at every launch.
-发布物仍然是一个独立 EXE。当前单文件构建使用 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.04` 下的固定用户缓存，不再使用随机 `%TEMP%\onefile_*` 目录。这样可避免与临时目录清理发生竞争，也无需安全软件在每次启动时重新检查运行组件。
+The release remains one independent EXE. The current one-file build uses a stable per-user cache under `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.17.1` instead of a random `%TEMP%\onefile_*` directory. This avoids races with Temp cleanup and lets security software inspect the extracted runtime once rather than at every launch.  
+发布物仍然是一个独立 EXE。当前单文件构建使用 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.17.1` 下的固定用户缓存，不再使用随机 `%TEMP%\onefile_*` 目录。这样可避免与临时目录清理发生竞争，也无需安全软件在每次启动时重新检查运行组件。
 
 If an older EXE reports this error, delete that old EXE and its old `%TEMP%\onefile_*` folder, rebuild with the current BAT, and send the newly generated EXE together with its SHA-256 record. The recipient should verify that the downloaded EXE hash matches before running it.
 如果旧 EXE 出现此错误，请删除旧 EXE 及其旧 `%TEMP%\onefile_*` 目录，用当前 BAT 重新构建，并将新 EXE 与 SHA-256 记录一起发送。接收者运行前应确认下载所得 EXE 的哈希一致。
 
-If the current build is interrupted during its first extraction, close the application, delete `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.04`, and launch the same EXE again so it can recreate a clean cache. Do not disable antivirus protection or add an exclusion.
-如果当前构建首次释放组件时被中断，请关闭程序，删除 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.8.13.04`，然后重新启动同一个 EXE，让它重建干净缓存。不要关闭杀毒保护，也不要添加排除项。
+If the current build is interrupted during its first extraction, close the application, delete `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.17.1`, and launch the same EXE again so it can recreate a clean cache. Do not disable antivirus protection or add an exclusion.  
+如果当前构建首次释放组件时被中断，请关闭程序，删除 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.17.1`，然后重新启动同一个 EXE，让它重建干净缓存。不要关闭杀毒保护，也不要添加排除项。
 
 ### The EXE Cannot Be Found   找不到生成的 EXE
 
@@ -800,7 +846,7 @@ Then check the following path.
 随后检查以下路径。
 
 ```text
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.8.13.04.exe
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.17.1.exe
 ```
 
 You can also open the following text file.  
@@ -812,8 +858,8 @@ EXE位置.txt
 
 ### The Model List Still Shows an Older Version  模型列表仍然显示旧版本
 
-Confirm that the application title shows `26.8.13.04`.
-确认程序标题中显示 `26.8.13.04`。
+Confirm that the application title shows `26.10.17.1`.  
+确认程序标题中显示 `26.10.17.1`。
 
 Check the folder from which you launched `paddleocr_pdf_to_md_gui.py` or the versioned EXE.  
 检查你启动 `paddleocr_pdf_to_md_gui.py` 或带版本号 EXE 的所在文件夹。
@@ -896,6 +942,12 @@ Check whether security software blocked Python or pip.
 
 ## 16. Privacy and Security  隐私与安全
 
+Translation, review, proofreading, and arbitration send relevant document text to the configured model providers and may each incur API charges. GitHub uploads publish Markdown to the selected repository. Translation reports may contain document excerpts and both candidate translations.  
+翻译、核对、校对和裁决会向所选模型服务发送相应文献文本，并可能分别产生 API 费用。GitHub 上传会将 Markdown 提交到所选仓库；翻译报告可能包含文献片段及两份候选译文。
+
+Model API Keys are stored in the same plaintext application configuration. The GitHub Token is session-only and is not saved there. Linux/macOS normally use `~/PaddleOCRBatchGUI/config.json`; the existing Windows path below is retained.  
+模型 API Key 同样以明文保存在本机配置中；GitHub Token 仅在本次运行中使用，不写入该文件。Linux/macOS 默认配置路径为 `~/PaddleOCRBatchGUI/config.json`，Windows 继续沿用下方原有路径。
+
 PDF files are uploaded to the PaddleOCR online API for processing.  
 PDF 文件会被上传至 PaddleOCR 在线 API 处理。
 
@@ -939,6 +991,141 @@ An unusually large single page may still remain above the upload threshold.
 
 Markdown quality depends on the selected model, document layout, image quality, language, and server output.  
 Markdown 质量取决于所选模型、文档版式、图像质量、语言和服务端输出。
+
+Language detection uses only the opening sample; model checks can miss errors, and chunked translation can affect cross-chunk context, tables, code, or references. Image attachments are not copied or uploaded. Keep important literature under human review.  
+语言检测仅依据开头样本；模型检查可能漏检，分段翻译也可能影响跨段上下文、表格、代码或引用。程序不复制或上传图片附件，重要文献仍需人工复核。
+
+---
+
+## 18. Foreign-Language Literature Translation   外文文献翻译
+
+### Entry and Language Detection   入口与语言检测
+
+Open **外文文献翻译功能**, select a folder containing existing UTF-8 Markdown files, and optionally include subfolders. The default target language is Simplified Chinese; select another language or enter its name when needed. The source language can be detected automatically, selected from the common PaddleOCR language-code choices, or entered manually. Actual translation coverage depends on the selected LLM.  
+打开 **外文文献翻译功能**，选择包含已有 UTF-8 Markdown 文件的文件夹，可选择递归扫描子文件夹。默认目标语言为简体中文，也可选择或手工输入其他语言。来源语言可自动检测、从常用 PaddleOCR 语言代码选项中选择，或手工输入；实际翻译范围取决于所选大模型。
+
+For every file, the translation model reads the **first 300 characters** to identify its main language and determine whether it already matches the target. Matching files are skipped. A manually selected source language is used for translation without disabling this target-language check. Insufficient language evidence, such as an opening containing only links or code, produces an explicit error rather than an assumed detection result.  
+程序对每份文件读取**前 300 字符**，由翻译模型识别主要语言并判断是否属于目标语言；已经是目标语言则跳过。手工来源语言用于翻译提示，不取消目标语言判断。若开头只有链接、代码等而无法可靠判断，会明确报错，不会假定识别成功。
+
+The scanner excludes `TRANSLATED_*.md`, `*_TRANSLATED.md`, and a distinct output subtree inside the input folder. Click **扫描 .md** to inspect the file count before starting.  
+扫描会排除 `TRANSLATED_*.md`、`*_TRANSLATED.md`，以及输入文件夹内另设的输出子目录。开始前可点击 **扫描 .md** 查看文件数量。
+
+### OpenAI-Compatible Models   OpenAI-compatible 模型设置
+
+Translation/language detection, secondary translation review, proofreading, and arbitration each have their own model settings tab. Enter the Base URL, API Key, and model or inference-endpoint ID. The presets are:  
+翻译/语言识别、二次翻译核对、文本校对和争议裁决分别提供模型设置标签页。填写 Base URL、API Key、模型或推理接入点 ID。提供以下预设：
+
+| Provider 服务商 | Base URL |
+| --- | --- |
+| DeepSeek | `https://api.deepseek.com/v1` |
+| Kimi / Moonshot | `https://api.moonshot.cn/v1` |
+| Doubao / 火山方舟 | `https://ark.cn-beijing.volces.com/api/v3` |
+| Custom OpenAI-compatible service 自定义兼容服务 | Enter the provider's API base address 填写服务商的 API 基础地址 |
+
+The application appends `/models` or `/chat/completions` to the Base URL. Click **拉取模型** to fetch model IDs or **测试接口** to send a small text request. Providers without a `/models` endpoint can be configured manually, including services that require an `ep-…` inference-endpoint ID. Switching provider presets clears the old Key for that model configuration.  
+程序在 Base URL 后追加 `/models` 或 `/chat/completions`。点击 **拉取模型** 获取模型列表，点击 **测试接口** 发送小型文本请求。不支持 `/models` 的服务可以手填模型；要求推理接入点的服务可填写 `ep-…` 等 ID。切换服务商预设时，会清空该模型配置的旧 Key。
+
+The selected model must support Chat Completions text input/output. Long documents are translated in chunks of up to 4,000 characters; prompts request preservation of Markdown structure, citations, numbers, formulas, code, images, and links. Empty or truncated responses and invalid review JSON are treated as failures. Model behavior and cross-chunk context still require inspection.  
+所选模型须支持 Chat Completions 文本输入与输出。长文按最多 4,000 字符分段翻译，提示模型保留 Markdown 结构、引用、数字、公式、代码、图片和链接。空响应、截断响应及无效核验 JSON 均视为失败；模型行为和跨段上下文仍需复核。
+
+### Secondary Translation Review and Arbitration   二次翻译核对与争议裁决
+
+Enable **二次翻译核对** and configure its model to independently translate each original chunk again, then compare both translations against the source for omissions, mistranslations, numbers, and citations. Choose how disagreements are resolved:  
+勾选 **二次翻译核对** 并指定模型后，该模型会独立重译每段原文，再对照原文比较两份译文中的漏译、误译、数字和引文问题。发现问题时可选择以下裁决方式：
+
+- **用户自行裁决 — User decision:** inspect the original, first translation, second translation, and review report in separate tabs; accept either translation or retain the first as needing review.
+  **用户自行裁决：**在不同标签页查看原文、首次译文、二次译文及核对报告，可接受任一译文，或保留首次译文并标记待处理。
+
+- **大模型裁决 — Model decision:** a separately configured arbitration model selects an acceptable translation against the source. An unresolved decision or a finding that both candidates have problems keeps the document pending review.
+  **大模型裁决：**另行指定裁决模型，对照原文选择可接受的译文；未能明确批准或两份均存在问题时，文件保持待处理状态。
+
+### Text Proofreading   文本校对
+
+Enable **文本校对** independently or after secondary review, and configure its model. It checks the final selected translation against the source for awkward or broken sentences, missing characters, and omitted content. It reports problems without silently polishing or rewriting the text. Problematic output is saved with a pending-review status and cannot be uploaded automatically.
+**文本校对** 可单独启用，也可在二次核对后启用，并另行指定模型。模型结合原文检查最终选定译文是否存在语句不通、缺字少字、漏译等问题；只报告问题，不擅自润色或改写。有问题的译文仍会保存，但标记待处理，禁止自动上传。
+
+### Output Location, Names, and Reports   输出位置、命名与报告
+
+Choose **输出到原文所在文件夹**, or clear that option and select a separate output directory. A separate directory preserves the relative subfolder structure. The filename marker can be placed before or after the original name:  
+可选择 **输出到原文所在文件夹**，或取消该选项并指定独立输出目录。独立目录保留原有子目录层级；文件名标记可放在原名称之前或之后：
+
+```text
+TRANSLATED_example.md
+example_TRANSLATED.md
+```
+
+Original files are retained and existing translations are not overwritten. Each new translation has a sibling `*.translation.json` report recording languages, input/output SHA-256, model IDs, chunk checks, and arbitration. Disputed chunks also retain both candidates in the report. API keys are not included.  
+原文件会保留，已有同名译文不会覆盖。每份新译文旁会生成 `*.translation.json` 报告，记录语言、输入/输出 SHA-256、模型 ID、分段检查及裁决；有争议的分段还会保留两份候选译文。报告不包含 API Key。
+
+| Status 状态 | Meaning 含义 |
+| --- | --- |
+| `verified` | At least one check enabled and all enabled checks passed 至少启用一项检查，且全部启用检查通过 |
+| `needs_review` | An unresolved review or proofreading problem 仍有未解决的核对或校对问题 |
+| `unverified` | No quality checks enabled 未启用质量检查 |
+| `target_language` | Already in the target language; skipped 已是目标语言，跳过 |
+| `existing` | Translation already exists; skipped 已有译文，跳过 |
+
+These statuses record the current model checks or user decision, not a guarantee of correctness. To retry a pending document, first preserve and move the existing translation and report so the overwrite protection does not skip it. **停止文献处理** exits after the current API request returns; files already completed remain available.  
+这些状态记录本次模型检查或用户裁决，不保证内容绝对正确。重新处理待处理文献前，请先另存并移走已有译文和报告，以免覆盖保护将其跳过。点击 **停止文献处理** 后，会在当前 API 请求返回后退出；已经完成的文件会保留。
+
+---
+
+## 19. Upload Reviewed Files to GitHub   核验后上传 GitHub
+
+The GitHub settings in the translation entry are shared by both workflows. Enable **自动上传核验无误的 Markdown**, then enter `owner/repository`, an existing branch, an optional repository-relative folder, and a Token with **Contents read/write** permission for that repository. The Token is held only for the current session; existing `GITHUB_TOKEN` or `GH_TOKEN` process bindings can also be used.  
+翻译入口中的 GitHub 设置由两个入口共用。勾选 **自动上传核验无误的 Markdown**，填写 `owner/repository`、已有分支、可选的仓库内相对目录，以及对目标仓库具有 **Contents 读写权限**的 Token。Token 仅保留在本次运行内存中，也可使用进程已有的 `GITHUB_TOKEN` 或 `GH_TOKEN`。
+
+The upload applies to files produced in the current OCR/translation workflow, with the following requirements:  
+上传适用于本次 OCR/翻译流程生成的文件，并要求：
+
+- OCR Markdown must have positive LLM-review evidence and no failed word-count check, quality warning, or review error; every automatically split part must pass.
+  OCR Markdown 须有通过的 LLM 核验结果，不得存在字数检查失败、质量警告或核验错误；自动拆分的全部分段均须通过。
+
+- Translations must have at least one quality check enabled and pass every enabled check. An upstream OCR quality warning blocks upload even when translation checks pass.
+  译文须至少启用一项质量检查，且全部启用检查通过；上游 OCR 存在质量警告时，即使译文检查通过也不会上传。
+
+- File content must still match the reviewed output. Unverified, unresolved, already-existing, or target-language-skipped translation results are not uploaded.
+  文件内容须与核验时一致；未核验、问题未解决、已有译文跳过或目标语言跳过的结果不会上传。
+
+Only Markdown is uploaded, preserving relative directories. PDFs, reports, configuration files, tokens, and image attachments are not uploaded. The limit is 20MB per file; existing remote files are never overwritten. Upload errors are logged and local output is retained.  
+仅上传 Markdown，并保留相对目录；不上传 PDF、报告、配置、Token 或图片附件。每文件限制为 20MB，远端同名文件不覆盖。上传失败会记录日志，本地文件会保留。
+
+The GitHub Contents API creates commits on the selected existing branch. It does not create a branch or a PR. For a review workflow, select an existing dedicated branch and open a PR separately. Repository permissions, branch protection, network policy, and API limits still apply.  
+程序通过 GitHub Contents API 在所选已有分支创建提交，不自动创建分支或 PR。需要审阅时，可选用已有专用分支，再另外创建 PR；仓库权限、分支保护、网络策略和 API 限额仍会影响结果。
+
+---
+
+## 20. Development and Tests   开发与测试
+
+Install dependencies and run the full suite from the source directory:  
+在源码目录安装依赖并运行完整测试：
+
+```bash
+python -m pip install -r requirements.txt pytest
+python -m pytest -v tests
+```
+
+The standard-library runner is also available, but does not collect the pytest functions in `test_build_script.py`:  
+也可使用标准库测试运行器，但该命令不收集 `test_build_script.py` 中的 pytest 测试函数：
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+GUI tests require a graphical display and explicitly skip when none is available. API tests use simulated responses rather than real model requests or GitHub uploads. Tests cover translation, arbitration, proofreading, output protection, OCR handoff, upload conditions, small-window layout, and release-version consistency. Windows EXE construction still requires a Windows build environment.
+GUI 测试需要图形显示，无显示时会明确跳过。API 测试使用模拟响应，不调用真实模型或上传到真实 GitHub 仓库。测试覆盖翻译、裁决、校对、输出保护、OCR 衔接、上传条件、小窗口布局和发布版本一致性；Windows EXE 构建仍须在 Windows 环境验证。
+
+---
+
+## 21. Version 26.10.17.1 Changes   26.10.17.1 更新说明
+
+This release introduces the literature-processing entry with separate OCR/translation workflows, independent scrollable settings and a persistent log panel, optional translation after OCR, model-configurable translation/review/proofreading/arbitration, translation output naming and folder choices, and reviewed-file GitHub uploads. Application, launcher, EXE metadata, filename, and version cache now use `26.10.17.1`.  
+本版将入口升级为文献处理软件，提供 OCR/翻译双入口、可滚动设置与独立日志区、OCR 后可选自动翻译、分别配置模型的翻译/核对/校对/裁决、译文命名与目录选择，以及核验后 GitHub 上传。程序、启动器、EXE 元数据、文件名和版本缓存统一使用 `26.10.17.1`。
+
+Updating the source version or opening a PR does not mean that a new Windows EXE has been built or published. Use the build instructions above to create that artifact.  
+更新源码版本或创建 PR 不代表新版 Windows EXE 已构建或发布；生成该产物请按照前面的打包说明操作。
+
+---
 
 # License   许可证
 
@@ -1032,9 +1219,9 @@ For commercial licensing or permissions beyond those stated above, please contac
 
 ## Optional OpenAI-compatible LLM review  可选 LLM 核验
 
-Version `26.8.13.04` can optionally send each generated Markdown file to an OpenAI-compatible Chat Completions API (for example DeepSeek). Each chunk's raw LLM answer is immediately shown in the runtime log. A fresh OCR job is submitted only when the answer confirms missing pages or a severe logic-breaking error; ordinary OCR, layout, table, formula, ordering, or duplication defects do not trigger reconversion. Before resubmission, the app verifies deletion of the current `.md`, result JSON, review report, and jobId cache and logs the deleted paths. An LLM request failure is logged without deleting a successful OCR result.
+Version `26.10.17.1` can optionally send each generated Markdown file to an OpenAI-compatible Chat Completions API (for example DeepSeek). Each chunk's raw LLM answer is immediately shown in the runtime log. A fresh OCR job is submitted only when the answer confirms missing pages or a severe logic-breaking error; ordinary OCR, layout, table, formula, ordering, or duplication defects do not trigger reconversion. Before resubmission, the app verifies deletion of the current `.md`, result JSON, review report, and jobId cache and logs the deleted paths. An LLM request failure is logged without deleting a successful OCR result.
 
-`26.8.13.04` 可选接入 OpenAI-compatible Chat Completions API（例如 DeepSeek），并在运行日志中逐段即时显示 LLM 原始回答。只有确认缺页、少页、漏页或足以破坏原意的严重逻辑错误时，才会重新转换；普通 OCR、排版、表格、公式、顺序或重复问题不触发重转。重新提交前，程序会核实删除本次 `.md`、结果 JSON、核验报告和 jobId 缓存，并在日志列出已删除路径；LLM 请求失败只记录警告，不删除已成功生成的 OCR 结果。
+`26.10.17.1` 可选接入 OpenAI-compatible Chat Completions API（例如 DeepSeek），并在运行日志中逐段即时显示 LLM 原始回答。只有确认缺页、少页、漏页或足以破坏原意的严重逻辑错误时，才会重新转换；普通 OCR、排版、表格、公式、顺序或重复问题不触发重转。重新提交前，程序会核实删除本次 `.md`、结果 JSON、核验报告和 jobId 缓存，并在日志列出已删除路径；LLM 请求失败只记录警告，不删除已成功生成的 OCR 结果。
 
 1. Enable **使用 LLM 核验 .md 转换质量** in Settings.
 2. Enter the provider Base URL (the default is `https://api.deepseek.com/v1`) and API Key.

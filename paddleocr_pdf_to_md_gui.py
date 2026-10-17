@@ -33,10 +33,13 @@ import sys
 import threading
 import time
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional
+
+from literature_ui import LiteratureControls, scrollable_page
+from literature_processing import ProcessingCancelled
 
 import tkinter as tk
 from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
@@ -52,8 +55,8 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfReader = None  # type: ignore
     PdfWriter = None  # type: ignore
 
-APP_NAME = "PaddleOCR PDF批量转Markdown"
-APP_VERSION = "26.8.13.04"
+APP_NAME = "文献处理软件"
+APP_VERSION = "26.10.17.1"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -551,6 +554,7 @@ class AppConfig:
     llm_base_url: str = DEFAULT_LLM_BASE_URL
     llm_api_key: str = ""
     llm_model: str = ""
+    literature: dict[str, Any] = field(default_factory=dict)
 
 
 class PaddleOCRAPIError(RuntimeError):
@@ -2065,21 +2069,20 @@ class PaddleOCRBatchGUI:
         self._build_ui()
         self.root.after(100, self._poll_log_queue)
 
-        if not self.config.token:
-            self.root.after(300, self.ask_token_if_missing)
+        # Translation-only users do not need an OCR token on application startup.
 
     def _set_adaptive_window_size(self) -> None:
         try:
             sw = self.root.winfo_screenwidth()
             sh = self.root.winfo_screenheight()
-            width = min(max(int(sw * 0.72), 980), 1320)
-            height = min(max(int(sh * 0.76), 720), 920)
+            width = min(max(int(sw * 0.72), 700), 1320, sw - 40)
+            height = min(max(int(sh * 0.76), 520), 920, sh - 60)
             x = max((sw - width) // 2, 0)
             y = max((sh - height) // 2, 0)
             self.root.geometry(f"{width}x{height}+{x}+{y}")
         except Exception:
             self.root.geometry("1080x760")
-        self.root.minsize(900, 650)
+        self.root.minsize(540, 420)
 
     def token_state_text(self) -> str:
         return "已保存 Access Token/API Key" if self.config.token else "尚未保存 Access Token/API Key"
@@ -2087,7 +2090,7 @@ class PaddleOCRBatchGUI:
     def _build_ui(self) -> None:
         pad = {"padx": 10, "pady": 6}
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(4, weight=1)
+        self.root.rowconfigure(1, weight=1)
 
         brand = ttk.Frame(self.root)
         brand.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 0))
@@ -2115,78 +2118,94 @@ class PaddleOCRBatchGUI:
         ).grid(row=0, column=0, sticky="w")
         ttk.Label(
             title_stack,
-            text=f"{APP_VERSION} · 批量 OCR、可恢复、少打扰",
+            text=f"{APP_VERSION} · PDF OCR · 外文翻译 · 文献核验",
             style="HeroSubtitle.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(2, 0))
 
-        top = ttk.LabelFrame(self.root, text="1. 选择项目文件夹")
+        self.workspace_panes = tk.PanedWindow(self.root, orient="vertical", sashwidth=8,
+                                              bg=DESIGN_COLORS["border"], bd=0)
+        self.workspace_panes.grid(row=1, column=0, sticky="nsew", padx=8, pady=6)
+        self.notebook = ttk.Notebook(self.workspace_panes)
+        self.workspace_panes.add(self.notebook, minsize=140, stretch="always")
+        ocr_page = scrollable_page(self.notebook, "PDF OCR 转 MD功能")
+        translation_page = scrollable_page(self.notebook, "外文文献翻译功能")
+        self.literature = LiteratureControls(self, translation_page,
+                                            fetch_openai_compatible_models, check_openai_compatible_api)
+        top = ttk.LabelFrame(ocr_page, text="1. 选择项目文件夹")
         top.grid(row=1, column=0, sticky="ew", **pad)
         top.columnconfigure(1, weight=1)
 
         ttk.Label(top, text="PDF输入文件夹：").grid(row=0, column=0, sticky="w", padx=8, pady=8)
-        ttk.Entry(top, textvariable=self.input_var).grid(row=0, column=1, sticky="ew", padx=8, pady=8)
+        ttk.Entry(top, textvariable=self.input_var, width=12).grid(row=0, column=1, sticky="ew", padx=8, pady=8)
         ttk.Button(top, text="选择…", command=self.choose_input_dir).grid(row=0, column=2, padx=8, pady=8)
 
         ttk.Label(top, text="Markdown输出文件夹：").grid(row=1, column=0, sticky="w", padx=8, pady=8)
-        ttk.Entry(top, textvariable=self.output_var).grid(row=1, column=1, sticky="ew", padx=8, pady=8)
+        ttk.Entry(top, textvariable=self.output_var, width=12).grid(row=1, column=1, sticky="ew", padx=8, pady=8)
         ttk.Button(top, text="选择…", command=self.choose_output_dir).grid(row=1, column=2, padx=8, pady=8)
 
-        opts = ttk.LabelFrame(self.root, text="2. 设置")
+        opts = ttk.LabelFrame(ocr_page, text="2. 设置")
         opts.grid(row=2, column=0, sticky="ew", **pad)
         opts.columnconfigure(0, weight=1)
 
         options_row = ttk.Frame(opts)
         options_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(4, 0))
-        options_row.columnconfigure(5, weight=1)
+        options_row.columnconfigure(1, weight=1)
         ttk.Label(options_row, text="模型：").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.model_combo = ttk.Combobox(
             options_row, textvariable=self.model_var, values=MODEL_CHOICES, state="readonly", width=22
         )
         self.model_combo.grid(row=0, column=1, sticky="w", padx=4, pady=4)
         ttk.Checkbutton(options_row, text="递归处理子文件夹", variable=self.recursive_var).grid(
-            row=0, column=2, sticky="w", padx=10, pady=4
+            row=1, column=0, columnspan=2, sticky="w", padx=4, pady=4
         )
         ttk.Checkbutton(options_row, text="输出时保留子文件夹结构", variable=self.preserve_var).grid(
-            row=0, column=3, sticky="w", padx=10, pady=4
+            row=2, column=0, columnspan=2, sticky="w", padx=4, pady=4
         )
         ttk.Checkbutton(options_row, text="覆盖已存在 .md", variable=self.overwrite_var).grid(
-            row=0, column=4, sticky="w", padx=10, pady=4
+            row=3, column=0, columnspan=2, sticky="w", padx=4, pady=4
         )
 
         token_row = ttk.Frame(opts)
         token_row.grid(row=1, column=0, sticky="ew", padx=6, pady=2)
         token_row.columnconfigure(0, weight=1)
-        ttk.Label(token_row, textvariable=self.token_state_var).grid(row=0, column=0, sticky="w", padx=4, pady=4)
-        ttk.Button(token_row, text="输入/更新 Access Token", command=self.set_token).grid(row=0, column=1, padx=4, pady=4)
-        ttk.Button(token_row, text="检测 API Key 是否有效", command=self.check_api_key).grid(row=0, column=2, padx=4, pady=4)
-        ttk.Button(token_row, text="清除已保存 Token", command=self.clear_token).grid(row=0, column=3, padx=4, pady=4)
+        ttk.Label(token_row, textvariable=self.token_state_var).grid(row=0, column=0, columnspan=3, sticky="w", padx=4, pady=4)
+        ttk.Button(token_row, text="输入/更新 Access Token", command=self.set_token).grid(row=1, column=0, padx=4, pady=4)
+        ttk.Button(token_row, text="检测 API Key 是否有效", command=self.check_api_key).grid(row=1, column=1, padx=4, pady=4)
+        ttk.Button(token_row, text="清除已保存 Token", command=self.clear_token).grid(row=1, column=2, padx=4, pady=4)
 
         utility_row = ttk.Frame(opts)
         utility_row.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
-        ttk.Button(utility_row, text="扫描PDF数量", command=self.scan_pdfs).pack(side="left", padx=4, pady=4)
-        ttk.Button(utility_row, text="修复JSON为MD", command=self.repair_json_to_md).pack(side="left", padx=4, pady=4)
-        ttk.Button(utility_row, text="手动字数检验", command=self.manual_wordcount_check).pack(side="left", padx=4, pady=4)
-        ttk.Button(utility_row, text="手动LLM检验", command=self.manual_llm_check).pack(side="left", padx=4, pady=4)
-        ttk.Button(utility_row, text="打开输出文件夹", command=self.open_output_dir).pack(side="left", padx=4, pady=4)
-        ttk.Button(utility_row, text="显示配置位置", command=self.show_config_path).pack(side="left", padx=4, pady=4)
+        ttk.Button(utility_row, text="扫描PDF数量", command=self.scan_pdfs).grid(row=0, column=0, sticky="ew", padx=4, pady=4)
+        ttk.Button(utility_row, text="修复JSON为MD", command=self.repair_json_to_md).grid(row=0, column=1, sticky="ew", padx=4, pady=4)
+        ttk.Button(utility_row, text="手动字数检验", command=self.manual_wordcount_check).grid(row=0, column=2, sticky="ew", padx=4, pady=4)
+        ttk.Button(utility_row, text="手动LLM检验", command=self.manual_llm_check).grid(row=1, column=0, sticky="ew", padx=4, pady=4)
+        ttk.Button(utility_row, text="打开输出文件夹", command=self.open_output_dir).grid(row=1, column=1, sticky="ew", padx=4, pady=4)
+        ttk.Button(utility_row, text="显示配置位置", command=self.show_config_path).grid(row=1, column=2, sticky="ew", padx=4, pady=4)
 
         llm_row = ttk.Frame(opts)
         llm_row.grid(row=3, column=0, sticky="ew", padx=6, pady=(0, 6))
-        llm_row.columnconfigure(2, weight=1)
-        ttk.Checkbutton(llm_row, text="使用 LLM 核验 .md 转换质量", variable=self.llm_review_var).grid(row=0, column=0, sticky="w", padx=4, pady=4)
-        ttk.Label(llm_row, text="Base URL：").grid(row=0, column=1, sticky="e", padx=(10, 2))
-        ttk.Entry(llm_row, textvariable=self.llm_base_url_var).grid(row=0, column=2, sticky="ew", padx=2)
-        ttk.Label(llm_row, text="API Key：").grid(row=0, column=3, sticky="e", padx=(10, 2))
-        ttk.Entry(llm_row, textvariable=self.llm_api_key_var, show="*", width=22).grid(row=0, column=4, padx=2)
-        ttk.Label(llm_row, text="模型：").grid(row=0, column=5, sticky="e", padx=(10, 2))
-        self.llm_model_combo = ttk.Combobox(llm_row, textvariable=self.llm_model_var, width=20)
-        self.llm_model_combo.grid(row=0, column=6, padx=2)
-        self.fetch_models_btn = ttk.Button(llm_row, text="拉取模型列表", command=self.fetch_llm_models)
-        self.fetch_models_btn.grid(row=0, column=7, padx=4)
-        self.test_llm_api_btn = ttk.Button(llm_row, text="测试LLM API", command=self.test_llm_api)
-        self.test_llm_api_btn.grid(row=0, column=8, padx=4)
+        llm_row.columnconfigure(1, weight=1)
+        ttk.Checkbutton(llm_row, text="使用 LLM 核验 .md 转换质量", variable=self.llm_review_var).grid(row=0, column=0, columnspan=2, sticky="w", padx=4, pady=4)
+        ttk.Label(llm_row, text="Base URL：").grid(row=1, column=0, sticky="w", padx=4)
+        ttk.Entry(llm_row, textvariable=self.llm_base_url_var, width=12).grid(row=1, column=1, sticky="ew", padx=4, pady=4)
+        ttk.Label(llm_row, text="API Key：").grid(row=2, column=0, sticky="w", padx=4)
+        ttk.Entry(llm_row, textvariable=self.llm_api_key_var, show="*", width=12).grid(row=2, column=1, sticky="ew", padx=4, pady=4)
+        ttk.Label(llm_row, text="模型：").grid(row=3, column=0, sticky="w", padx=4)
+        self.llm_model_combo = ttk.Combobox(llm_row, textvariable=self.llm_model_var, width=12)
+        self.llm_model_combo.grid(row=3, column=1, sticky="ew", padx=4, pady=4)
+        model_actions = ttk.Frame(llm_row)
+        model_actions.grid(row=4, column=0, columnspan=2, sticky="w")
+        self.fetch_models_btn = ttk.Button(model_actions, text="拉取模型列表", command=self.fetch_llm_models)
+        self.fetch_models_btn.pack(side="left", padx=4, pady=4)
+        self.test_llm_api_btn = ttk.Button(model_actions, text="测试LLM API", command=self.test_llm_api)
+        self.test_llm_api_btn.pack(side="left", padx=4, pady=4)
 
-        run_box = ttk.LabelFrame(self.root, text="3. 批处理")
+        ttk.Checkbutton(opts, text="是否自动检测外文文献并提供翻译（设置见入口2）",
+                        variable=self.literature.auto_translate).grid(row=4, column=0, sticky="w", padx=10, pady=6)
+        ttk.Label(opts, text="GitHub 上传与翻译输出设置在“外文文献翻译功能”中，两个入口共用。",
+                  wraplength=500).grid(row=5, column=0, sticky="w", padx=10, pady=4)
+
+        run_box = ttk.LabelFrame(ocr_page, text="3. 批处理")
         run_box.grid(row=3, column=0, sticky="ew", **pad)
         run_box.columnconfigure(0, weight=1)
 
@@ -2235,15 +2254,15 @@ class PaddleOCRBatchGUI:
         )
         self.start_btn.grid(row=0, column=3, sticky="e", padx=(4, 0))
 
-        log_frame = ttk.LabelFrame(self.root, text="4. 运行日志")
-        log_frame.grid(row=4, column=0, sticky="nsew", **pad)
+        log_frame = ttk.LabelFrame(self.workspace_panes, text="运行日志（拖动上方分隔条调整高度）")
+        self.workspace_panes.add(log_frame, minsize=110, height=180, stretch="never")
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
         self.log_text = tk.Text(
             log_frame,
             wrap="word",
-            height=18,
+            height=6,
             font="TkTextFont",
             bg=DESIGN_COLORS["log_bg"],
             fg=DESIGN_COLORS["log_fg"],
@@ -2266,7 +2285,7 @@ class PaddleOCRBatchGUI:
         self.log_text.configure(yscrollcommand=yscroll.set)
 
         self.root.bind("<Configure>", self._on_resize)
-        self.log("程序已启动。第一次运行请先输入 Access Token/API Key。")
+        self.log("程序已启动。请选择 PDF OCR 或外文文献翻译入口；仅 OCR 需要 PaddleOCR Token。")
         self.log(f"当前程序版本：{APP_VERSION}")
         self.log(f"配置文件位置：{CONFIG_PATH}")
         self.log("提示：超过 50MB 的 PDF 会自动拆分、逐段 OCR，并合并为一个同名 .md 和 .json。")
@@ -2277,7 +2296,7 @@ class PaddleOCRBatchGUI:
     def _on_resize(self, event: tk.Event) -> None:
         if event.widget == self.root:
             try:
-                wrap = max(int(self.root.winfo_width()) - 240, 500)
+                wrap = max(int(self.root.winfo_width()) - 80, 260)
                 self.status_label.configure(wraplength=wrap)
             except Exception:
                 pass
@@ -2556,6 +2575,7 @@ class PaddleOCRBatchGUI:
         self.config.llm_model = self.llm_model_var.get().strip()
         if not self.config.base_url:
             self.config.base_url = DEFAULT_BASE_URL
+        self.config.literature = self.literature.config_data()
         save_config(self.config)
 
     def validate_paths(self) -> tuple[Path, Path]:
@@ -2563,7 +2583,7 @@ class PaddleOCRBatchGUI:
         output_dir = Path(self.output_var.get().strip())
         if not input_dir.exists() or not input_dir.is_dir():
             raise ValueError("请选择有效的 PDF 输入文件夹。")
-        if not str(output_dir):
+        if not self.output_var.get().strip():
             raise ValueError("请选择 Markdown 输出文件夹。")
         output_dir.mkdir(parents=True, exist_ok=True)
         return input_dir, output_dir
@@ -2586,11 +2606,19 @@ class PaddleOCRBatchGUI:
             messagebox.showerror("扫描失败", str(e), parent=self.root)
 
     def start_batch(self) -> None:
+        if self.literature.busy():
+            messagebox.showwarning("正在运行", "请等待当前翻译任务完成。", parent=self.root)
+            return
         if self.worker_thread and self.worker_thread.is_alive():
             messagebox.showwarning("正在运行", "当前已有批处理任务在运行。", parent=self.root)
             return
 
         self.save_current_config()
+        try:
+            self.literature.snapshot = self.literature.make_snapshot(self.literature.auto_translate.get())
+        except Exception as exc:
+            messagebox.showerror("翻译 / GitHub 配置不完整", str(exc), parent=self.root)
+            return
         if not self.config.token:
             self.set_token()
             if not self.config.token:
@@ -2640,6 +2668,7 @@ class PaddleOCRBatchGUI:
             return
 
         self.stop_requested = False
+        self.literature.cancel_event.clear()
         self.manual_query_event.clear()
         self.start_btn.config(state="disabled")
         self.manual_query_btn.config(state="normal")
@@ -2809,6 +2838,16 @@ class PaddleOCRBatchGUI:
                     for item in iter_dicts(raw_data)
                 ):
                     quality_warning_count += 1
+                try:
+                    self.literature.after_ocr(out_path, output_dir, raw_data, markdown)
+                except ProcessingCancelled as exc:
+                    raise StopRequested(str(exc)) from exc
+                except Exception as exc:
+                    self.log_queue.put(("log", f"OCR 已保存，但后续文献处理失败：{out_path}；{exc}"))
+                    write_log_line(f"POSTPROCESS_FAIL\t{out_path}\t{exc}")
+                    failed += 1
+                    self.log_queue.put(("file_progress", index))
+                    continue
                 ok += 1
                 self.log_queue.put(("log", f"完成：{out_path}"))
             except StopRequested as e:
