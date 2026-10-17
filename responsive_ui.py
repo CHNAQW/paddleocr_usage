@@ -8,6 +8,41 @@ from tkinter import font as tkfont, ttk
 from ui_i18n import LocalizedVar
 
 
+class ButtonToolbar(ttk.Frame):
+    """Keep actions visible and wrap their natural widths without widening a page."""
+    def __init__(self, parent, actions):
+        super().__init__(parent, height=30)
+        self.scheduler, self.pending = self._root(), None
+        self.buttons = [ttk.Button(self, text=caption, command=command, style="Tool.TButton", width=0)
+                        for caption, command in actions]
+        self.bind("<Configure>", self.schedule, add="+")
+        self.bind("<Destroy>", self.cleanup, add="+")
+        for button in self.buttons:
+            button.bind("<Configure>", self.schedule, add="+")
+
+    def schedule(self, *_):
+        if self.pending is None:
+            self.pending = self.scheduler.after_idle(self.reflow)
+
+    def reflow(self):
+        self.pending = None
+        width = max(1, self.winfo_width())
+        x, y, row_height = 0, 0, 0
+        for button in self.buttons:
+            size, height = button.winfo_reqwidth(), button.winfo_reqheight()
+            if x and x + size > width:
+                x, y, row_height = 0, y + row_height + 4, 0
+            button.place(x=x, y=y, width=min(size, width), height=height)
+            x += size + 6
+            row_height = max(row_height, height)
+        self.configure(height=y + row_height)
+
+    def cleanup(self, _event=None):
+        if self.pending is not None:
+            self.scheduler.after_cancel(self.pending)
+            self.pending = None
+
+
 class AdaptiveLabel(ttk.Label):
     def __init__(self, parent, *, text="", textvariable=None, max_lines=None, **kwargs):
         self.source = textvariable if textvariable is not None else LocalizedVar(master=parent, value=text)

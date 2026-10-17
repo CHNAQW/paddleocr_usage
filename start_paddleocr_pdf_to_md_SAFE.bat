@@ -4,7 +4,7 @@ setlocal
 
 REM ============================================================
 REM 文献处理软件 稳定启动脚本
-REM 版本：26.10.18.02
+REM 版本：26.10.18.03
 REM 请把本 bat 与 paddleocr_pdf_to_md_gui.py 放在同一个文件夹后再双击。
 REM 在线异步 API 版：需要 requests；自动拆分大 PDF 需要 pypdf。
 REM ============================================================
@@ -17,7 +17,7 @@ set "PYTHON=%VENV%\Scripts\python.exe"
 pushd "%ROOT%" >nul 2>nul
 
 echo ============================================================
-echo 文献处理软件 启动器 26.10.18.02
+echo 文献处理软件 启动器 26.10.18.03
 echo 当前目录：%ROOT%
 echo ============================================================
 echo.
@@ -31,7 +31,7 @@ if not exist "%SCRIPT%" (
     exit /b 1
 )
 
-for %%F in (literature_processing.py literature_ui.py workspace_ui.py ui_i18n.py ui_translations.py responsive_ui.py github_ui.py) do (
+for %%F in (literature_processing.py literature_ui.py workspace_ui.py ui_i18n.py ui_translations.py responsive_ui.py github_ui.py model_budget.py) do (
     if not exist "%ROOT%%%F" (
         echo [错误] 缺少文献处理模块：%%F，请完整解压源码。
         pause

@@ -16,7 +16,7 @@ from ui_i18n import language, set_language, tr
 
 def assert_english_captions(test, widget, language_selector):
     """Check owned UI text; document content and user-entered values stay untouched."""
-    if widget is language_selector:
+    if widget is language_selector or ("text" in widget.keys() and widget.cget("text") == "文/A"):
         return  # Keep the native names of both UI languages in this one selector.
     for option in ("text", "values"):
         if option in widget.keys():
@@ -108,6 +108,94 @@ class DesktopLayoutTests(unittest.TestCase):
         cls.root.destroy()
         cls.config_patch.stop()
         cls.save_patch.stop()
+
+    def test_language_icon_and_all_tools_are_directly_visible_in_both_languages(self):
+        layout = self.app.workspace_layout
+        try:
+            self.app.change_ui_language("zh")
+            for expected in ("en", "zh"):
+                layout.language_button.invoke()
+                self.assertEqual(language(), expected)
+                self.assertEqual(layout.language_button.cget("text"), "文/A")
+                for size in ("540x420", "1100x780"):
+                    self.root.geometry(size)
+                    self.root.update()
+                    self.assertEqual(len(layout.toolbar.buttons), 7)
+                    for button in layout.toolbar.buttons:
+                        self.assertTrue(button.winfo_viewable())
+                        self.assertLessEqual(button.winfo_x() + button.winfo_width(), layout.toolbar.winfo_width())
+                        self.assertLessEqual(button.winfo_y() + button.winfo_height(), layout.toolbar.winfo_height())
+                    self.assertGreaterEqual(self.app.log_text.winfo_height(), 40)
+            style = application.ttk.Style(self.root)
+            self.assertEqual(style.lookup("Paper.TFrame", "background"), style.lookup("TFrame", "background"))
+            self.assertEqual(style.lookup("TCheckbutton", "background"), style.lookup("TFrame", "background"))
+        finally:
+            self.app.change_ui_language("zh")
+
+    def test_chunk_percentage_validates_and_is_in_saved_settings_and_worker_snapshot(self):
+        controls = self.app.literature
+        before = controls.input_percent.get()
+        try:
+            for value in ("50", "65", "80"):
+                controls.input_percent.set(value)
+                self.assertEqual(controls.config_data()["input_percent"], int(value))
+                self.assertEqual(controls.make_snapshot(False)["options"].input_percent, int(value))
+            for value in ("49", "81", "50.0", "bad"):
+                controls.input_percent.set(value)
+                with self.assertRaises(ValueError):
+                    controls.config_data()
+                with self.assertRaises(ValueError):
+                    controls.make_snapshot(False)
+        finally:
+            controls.input_percent.set(before)
+
+    def test_model_limits_follow_endpoint_model_and_manual_override_round_trips(self):
+        from literature_ui import ModelControls
+        from model_budget import ModelCatalog
+        model = ModelControls(self.root, "model", {"model": "large", "api_key": "secret"},
+                              self.app.literature.events, Mock(), Mock())
+        restored = None
+        try:
+            catalog = ModelCatalog([{"id": "large", "context_length": 128000, "max_output_tokens": 16000},
+                                    {"id": "small", "max_input_tokens": 32000}])
+            self.app.literature.events.put(("profile_result", (model, False, catalog, None, model.profile())))
+            self.app.literature.poll()
+            self.assertEqual(model.profile().context_limit, 128000)
+            self.assertEqual(model.limit_value.get(), "128000")
+            model.manual_limit.set(True)
+            model.refresh_limits()
+            model.limit_value.set("64000")
+            self.assertEqual(model.profile().input_limit, 64000)
+            restored = ModelControls(self.root, "restored", model.config_data(), queue.Queue(), Mock(), Mock())
+            self.assertEqual(restored.profile(), model.profile())
+            model.model.set("small")
+            self.assertFalse(model.manual_limit.get())
+            self.assertEqual(model.profile().input_limit, 32000)
+            model.url.set("https://other.invalid/v1")
+            self.assertEqual(model.profile().input_limit, 0)
+            self.assertEqual(model.limit_value.get(), "1000000")
+            model.manual_limit.set(True)
+            model.limit_value.set("-1")
+            with self.assertRaises(ValueError):
+                model.config_data()
+        finally:
+            model.box.destroy()
+            if restored:
+                restored.box.destroy()
+
+    def test_late_model_metadata_is_ignored_after_changing_endpoint(self):
+        from literature_ui import ModelControls
+        from model_budget import ModelCatalog
+        model = ModelControls(self.root, "model", {"model": "large"}, self.app.literature.events, Mock(), Mock())
+        try:
+            requested = model.profile()
+            model.url.set("https://other.invalid/v1")
+            result = ModelCatalog([{"id": "large", "context_length": 128000}])
+            self.app.literature.events.put(("profile_result", (model, False, result, None, requested)))
+            self.app.literature.poll()
+            self.assertFalse(model.catalog_limits)
+        finally:
+            model.box.destroy()
 
     def test_logs_remain_visible_at_small_window_sizes(self):
         for width, height in ((1100, 780), (640, 480), (540, 420)):

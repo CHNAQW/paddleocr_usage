@@ -479,6 +479,33 @@ EN_MESSAGES.update({
 })
 
 
+EN_MESSAGES.update({
+    '分段比例须为 50%–80% 的整数。': 'Chunk percentage must be an integer from 50% to 80%.',
+    '请求超出模型输入预算，将继续拆分原文。': 'Request exceeds the model input budget; the source will be split further.',
+    '模型输入预算不足以容纳提示词和原文，请检查模型上限设置。': 'The model input budget cannot fit the prompt and source. Check the configured limits.',
+    '模型 token 上限须为正整数。': 'Model token limits must be positive integers.',
+    '接口元数据': 'API metadata',
+    '手动设置': 'Manual override',
+    'DeepSeek-V4.1-Flash 默认值': 'DeepSeek-V4.1-Flash fallback',
+    '{arg0} / {arg1}：输入预算 {arg2} tokens；比例 {arg3}%；来源 {arg4}。': '{arg0} / {arg1}: input budget {arg2} tokens; percentage {arg3}%; source: {arg4}.',
+    '译文扩展或输出截断，已缩小原文分段并重新翻译核对。': 'Translation expansion or output truncation: retrying a smaller source chunk with fresh translation and checks.',
+    '输入上限（tokens）': 'Input limit (tokens)',
+    '手动设置输入上限': 'Override the input limit manually',
+    '上限来源：{arg0}。未返回限制时使用 1,000,000 上下文 / 256,000 输出的默认值；可手动修改。': 'Limit source: {arg0}. If unavailable, use the editable fallback: 1,000,000 context / 256,000 output tokens.',
+    '翻译分段预算': 'Translation chunk budget',
+    '输入上限使用比例（50%–80%）': 'Input limit percentage (50%–80%)',
+    '默认 50%。按模型上限计算整次请求预算，计入提示词与核对所需的译文，并为输出保留空间。': 'Default: 50%. Budget the entire request, including prompts and translations used by checks, and reserve response space.',
+    '兼容接口没有统一 tokenizer；使用 UTF-8 字节数加消息开销保守估算 token，优先保留完整段落。': 'Compatible APIs have no universal tokenizer. Estimate conservatively with UTF-8 bytes plus message overhead, preserving complete paragraphs where possible.',
+})
+
+EN_MESSAGES.update({
+    "修复 JSON": "Repair JSON",
+    "字数检验": "Word-count check",
+    "LLM 检验": "Model check",
+    "OCR 输出目录": "OCR output folder",
+    "配置位置": "Config location",
+})
+
 _language = "zh"
 _sources = {value: key for key, value in EN_MESSAGES.items()}
 

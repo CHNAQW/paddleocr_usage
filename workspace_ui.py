@@ -7,11 +7,11 @@ from tkinter import font as tkfont, ttk
 from literature_processing import LANGUAGES
 from literature_ui import LiteratureControls, ModelControls, scrollable_page
 from ui_i18n import LocalizedVar, language, localize_widgets, messagebox, tr, ui_text
-from responsive_ui import AdaptiveLabel, ResponsiveForm
+from responsive_ui import AdaptiveLabel, ButtonToolbar, ResponsiveForm
 
 
 COLORS = {
-    "canvas": "#f4f3ef", "paper": "#ffffff", "border": "#e1e4de",
+    "canvas": "#f4f3ef", "paper": "#f4f3ef", "border": "#e1e4de",
     "ink": "#25332e", "muted": "#65736a", "accent": "#2c6651",
     "soft": "#eaf1eb", "rail": "#213d34", "rail_muted": "#a2b7ac",
     "selected": "#35574a", "log": "#16251f", "log_text": "#d8e4db",
@@ -38,8 +38,13 @@ def configure_workspace_theme(root):
     style.configure("TEntry", fieldbackground=COLORS["paper"], bordercolor=COLORS["border"], padding=8)
     style.map("TEntry", bordercolor=[("focus", COLORS["accent"])],
               fieldbackground=[("disabled", "#e8eae5")], foreground=[("disabled", COLORS["muted"])])
+    style.configure("TSpinbox", fieldbackground=COLORS["canvas"], bordercolor=COLORS["border"], padding=6)
     style.configure("TCombobox", fieldbackground=COLORS["paper"], arrowsize=12, padding=6)
     style.map("TCombobox", fieldbackground=[("readonly", COLORS["paper"])])
+    root.option_add("*TCombobox*Listbox.background", COLORS["canvas"])
+    root.option_add("*TCombobox*Listbox.foreground", COLORS["ink"])
+    style.configure("Treeview", background=COLORS["canvas"], fieldbackground=COLORS["canvas"],
+                    foreground=COLORS["ink"])
     style.configure("TButton", background=COLORS["paper"], bordercolor=COLORS["border"],
                     relief="flat", padding=(12, 7), focusthickness=1, focuscolor=COLORS["accent"])
     style.map("TButton", background=[("pressed", "#d8e5d9"), ("active", COLORS["soft"])], foreground=[("disabled", COLORS["muted"])])
@@ -48,6 +53,7 @@ def configure_workspace_theme(root):
     style.map("Accent.TButton", background=[("disabled", "#c4cfc6"), ("pressed", "#173f2f"), ("active", "#21533f")],
               foreground=[("disabled", "#f2f5f2"), ("!disabled", "#ffffff")])
     style.configure("Quiet.TButton", background=COLORS["canvas"], bordercolor=COLORS["canvas"], padding=(8, 6))
+    style.configure("Tool.TButton", padding=(8, 3), font=(family, 9))
     style.configure("TMenubutton", background=COLORS["paper"], bordercolor=COLORS["border"], padding=(10, 7))
     style.configure("TCheckbutton", background=COLORS["paper"], padding=(0, 5))
     style.map("TCheckbutton", background=[("active", COLORS["paper"])])
@@ -248,18 +254,16 @@ class WorkspaceLayout:
         self.title.grid(row=0, column=0, sticky="w")
         self.subtitle = ttk.Label(header, text=tr('从扫描文档到可检索的文献。'), style="Subtitle.TLabel")
         self.subtitle.grid(row=1, column=0, sticky="w", pady=(5, 0))
-        tools = ttk.Menubutton(header, text=tr('更多工具'))
-        tools.grid(row=0, column=1, rowspan=2, sticky="e", padx=(8, 0))
-        menu = tk.Menu(tools, tearoff=False)
-        for title, command in ((tr('扫描 PDF'), app.scan_pdfs), (tr('扫描 Markdown'), lambda: app.literature.scan()),
-                               (tr('修复JSON为MD'), app.repair_json_to_md),
-                               (tr('手动字数检验'), app.manual_wordcount_check), (tr('手动LLM检验'), app.manual_llm_check),
-                               (tr('打开 OCR 输出目录'), app.open_output_dir), (tr('显示配置位置'), app.show_config_path)):
-            menu.add_command(label=title, command=command)
-        menu.add_separator()
-        menu.add_command(label=tr('切换为英文界面'), command=lambda: app.change_ui_language("en"))
-        menu.add_command(label=tr('切换为中文界面'), command=lambda: app.change_ui_language("zh"))
-        tools.configure(menu=menu)
+        self.language_button = ttk.Button(header, text="文/A", style="Quiet.TButton",
+            command=lambda: app.change_ui_language("en" if language() == "zh" else "zh"))
+        self.language_button.grid(row=0, column=1, rowspan=2, sticky="e", padx=(8, 0))
+        HoverTip(self.language_button, lambda: "中文 / English")
+        self.toolbar = ButtonToolbar(header, (
+            (tr('扫描 PDF'), app.scan_pdfs), (tr('扫描 Markdown'), lambda: app.literature.scan()),
+            (tr('修复 JSON'), app.repair_json_to_md),
+            (tr('字数检验'), app.manual_wordcount_check), (tr('LLM 检验'), app.manual_llm_check),
+            (tr('OCR 输出目录'), app.open_output_dir), (tr('配置位置'), app.show_config_path)))
+        self.toolbar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
         app.workspace_panes = tk.PanedWindow(self.workspace, orient="vertical", sashwidth=6,
                                             bg=COLORS["canvas"], bd=0, sashrelief="flat")
@@ -347,8 +351,20 @@ class WorkspaceLayout:
         app.test_llm_api_btn = ttk.Button(review, text=tr('测试LLM API'), command=app.test_llm_api)
         app.test_llm_api_btn.grid(row=3, column=1, sticky="w", padx=8)
 
+        budget = ttk.LabelFrame(models, text=tr("翻译分段预算"), padding=12)
+        budget.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
+        budget.columnconfigure(0, weight=1)
+        budget_form = ResponsiveForm(budget, style="TFrame")
+        budget_form.grid(row=0, column=0, sticky="ew")
+        controls.percent_spinbox = ttk.Spinbox(budget_form, from_=50, to=80, increment=1,
+                                               textvariable=controls.input_percent)
+        budget_form.add(tr("输入上限使用比例（50%–80%）"), controls.percent_spinbox)
+        AdaptiveLabel(budget, text=tr("默认 50%。按模型上限计算整次请求预算，计入提示词与核对所需的译文，并为输出保留空间。"),
+                      style="Subtitle.TLabel").grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        AdaptiveLabel(budget, text=tr("兼容接口没有统一 tokenizer；使用 UTF-8 字节数加消息开销保守估算 token，优先保留完整段落。"),
+                      style="Subtitle.TLabel").grid(row=2, column=0, sticky="ew", pady=(6, 0))
         roles = ttk.Notebook(models)
-        roles.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
+        roles.grid(row=1, column=0, sticky="ew", padx=8, pady=8)
         for key, title in (("translator", tr('翻译')), ("reviewer", tr('二次核对')), ("proofreader", tr('校对')), ("arbiter", tr('裁决'))):
             tab = ttk.Frame(roles)
             tab.columnconfigure(0, weight=1)

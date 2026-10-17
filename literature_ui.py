@@ -13,6 +13,7 @@ from tkinter import ttk
 
 from ui_i18n import ChoiceVar, LocalizedVar, filedialog, localize_widgets, messagebox, tr, ui_text
 from responsive_ui import AdaptiveLabel, ResponsiveForm
+from model_budget import DEFAULT_CONTEXT_LIMIT, ModelLimits, positive_integer
 
 from literature_processing import (
     PROVIDERS, LANGUAGES, GitHubOptions, ModelProfile, ProcessingCancelled,
@@ -75,6 +76,13 @@ class ModelControls:
         self.url = tk.StringVar(value=saved.get("base_url", PROVIDERS["DeepSeek"]))
         self.key = tk.StringVar(value=saved.get("api_key", ""))
         self.model = tk.StringVar(value=saved.get("model", ""))
+        self.manual_limit = tk.BooleanVar(value=saved.get("manual_limit", False))
+        self.limit_value = tk.StringVar(value=str(saved.get("input_limit") or DEFAULT_CONTEXT_LIMIT))
+        self.catalog_limits = {}
+        detected = saved.get("detected_limits", {})
+        if isinstance(detected, dict) and (detected.get("input_limit") or detected.get("context_limit")):
+            self.catalog_limits[(self.url.get().strip(), self.model.get().strip())] = ModelLimits(
+                *(positive_integer(detected.get(key)) for key in ("input_limit", "context_limit", "output_limit")))
         self.provider = ChoiceVar(value=next((name for name, url in PROVIDERS.items()
                                                 if url and url == self.url.get()), tr('自定义 OpenAI compatible')))
         selector = ttk.Combobox(self.form, textvariable=self.provider, values=[ui_text(value) for value in PROVIDERS], state="readonly")
@@ -85,12 +93,40 @@ class ModelControls:
             self.form.add(label, ttk.Entry(self.form, textvariable=variable, show="*" if hidden else ""))
         self.combo = ttk.Combobox(self.form, textvariable=self.model)
         self.form.add(tr('模型 / 接入点 ID'), self.combo)
+        self.limit_entry = ttk.Entry(self.form, textvariable=self.limit_value)
+        self.form.add(tr("输入上限（tokens）"), self.limit_entry)
+        self.limit_status = LocalizedVar(master=self.box)
         actions = ttk.Frame(self.box, style="Paper.TFrame")
         actions.grid(row=1, column=0, sticky="w", pady=8)
         ttk.Button(actions, text=tr('拉取模型'), command=lambda: self.request(False)).pack(side="left", padx=3)
         ttk.Button(actions, text=tr('测试接口'), command=lambda: self.request(True)).pack(side="left", padx=3)
         AdaptiveLabel(self.box, text=tr('兼容 /chat/completions；不支持 /models 的服务可手填模型或接入点 ID。'),
                       style="Hint.TLabel").grid(row=2, column=0, sticky="ew", pady=4)
+        ttk.Checkbutton(self.box, text=tr("手动设置输入上限"), variable=self.manual_limit,
+                        command=self.refresh_limits).grid(row=3, column=0, sticky="w")
+        AdaptiveLabel(self.box, textvariable=self.limit_status, style="Hint.TLabel").grid(row=4, column=0, sticky="ew", pady=4)
+        for variable in (self.url, self.model):
+            variable.trace_add("write", self.identity_changed)
+        self.refresh_limits()
+
+    def identity_changed(self, *_):
+        # A manual override belongs to the chosen endpoint/model, never a new one.
+        self.manual_limit.set(False)
+        self.refresh_limits()
+
+    def refresh_limits(self):
+        detected = self.catalog_limits.get((self.url.get().strip(), self.model.get().strip()))
+        if not self.manual_limit.get():
+            self.limit_value.set(str((detected.input_limit or detected.context_limit) if detected else DEFAULT_CONTEXT_LIMIT))
+        self.limit_entry.configure(state="normal" if self.manual_limit.get() else "disabled")
+        source = tr("手动设置") if self.manual_limit.get() else tr("接口元数据") if detected else tr("DeepSeek-V4.1-Flash 默认值")
+        self.limit_status.set(tr("上限来源：{arg0}。未返回限制时使用 1,000,000 上下文 / 256,000 输出的默认值；可手动修改。", arg0=source))
+
+    def config_data(self):
+        data = asdict(self.profile())
+        detected = self.catalog_limits.get((self.url.get().strip(), self.model.get().strip()))
+        data.update(manual_limit=self.manual_limit.get(), detected_limits=asdict(detected) if detected else {})
+        return data
 
     def preset(self, _event=None):
         value = PROVIDERS[self.provider.get()]
@@ -102,10 +138,21 @@ class ModelControls:
             self.combo.configure(values=())
 
     def profile(self):
-        return ModelProfile(self.url.get().strip(), self.key.get().strip(), self.model.get().strip())
+        detected = self.catalog_limits.get((self.url.get().strip(), self.model.get().strip()))
+        limits = detected or ModelLimits(limit_source="fallback")
+        if self.manual_limit.get():
+            value = positive_integer(self.limit_value.get().strip())
+            if not value:
+                raise ValueError(tr("模型 token 上限须为正整数。"))
+            limits = ModelLimits(value, limits.context_limit, limits.output_limit, "manual")
+        return ModelProfile(self.url.get().strip(), self.key.get().strip(), self.model.get().strip(), **asdict(limits))
 
     def request(self, testing):
-        profile = self.profile()
+        try:
+            profile = self.profile()
+        except ValueError as exc:
+            messagebox.showerror(tr('配置不完整'), str(exc), parent=self.box)
+            return
         if not profile.api_key or not profile.base_url:
             messagebox.showerror(tr('配置不完整'), tr('请填写 Base URL 和 API Key。'), parent=self.box)
             return
@@ -137,6 +184,7 @@ class LiteratureControls:
         self.secondary = tk.BooleanVar(value=saved.get("secondary", False))
         self.proofreading = tk.BooleanVar(value=saved.get("proofreading", False))
         self.arbitration = ChoiceVar(value=saved.get("arbitration", "用户自行裁决"))
+        self.input_percent = tk.StringVar(value=str(saved.get("input_percent", 50)))
         self.upload = tk.BooleanVar(value=saved.get("upload", False))
         self.repository = tk.StringVar(value=saved.get("repository", ""))
         self.branch = tk.StringVar(value=saved.get("branch", "main"))
@@ -173,8 +221,15 @@ class LiteratureControls:
                 "source": self.source.get(), "target": self.target.get(), "secondary": self.secondary.get(),
                 "proofreading": self.proofreading.get(), "arbitration": self.arbitration.get(), "upload": self.upload.get(),
                 "repository": self.repository.get(), "branch": self.branch.get(), "folder": self.folder.get()}
-        data.update({key: asdict(value.profile()) for key, value in self.profiles.items()})
+        data["input_percent"] = self.chunk_percent()
+        data.update({key: value.config_data() for key, value in self.profiles.items()})
         return data
+
+    def chunk_percent(self):
+        value = self.input_percent.get().strip()
+        if not value.isascii() or not value.isdecimal() or not 50 <= int(value) <= 80:
+            raise ValueError(tr("分段比例须为 50%–80% 的整数。"))
+        return int(value)
 
     def busy(self):
         return bool(self.thread and self.thread.is_alive())
@@ -204,7 +259,7 @@ class LiteratureControls:
         if translating and not self.same_folder.get() and not self.output.get().strip():
             raise ValueError(tr('请选择译文输出文件夹，或勾选输出到原文文件夹。'))
         return {"profiles": profiles, "options": TranslationOptions(self.target.get().strip(), self.source.get().strip() or "自动检测",
-                    self.secondary.get(), self.proofreading.get(), self.arbitration.get()),
+                    self.secondary.get(), self.proofreading.get(), self.arbitration.get(), self.chunk_percent()),
                 "output": None if self.same_folder.get() else Path(self.output.get()).expanduser().resolve(),
                 "prefix": self.prefix.get().startswith("前缀"), "github": github,
                 "auto_translate": self.auto_translate.get()}
@@ -359,7 +414,8 @@ class LiteratureControls:
             frame = ttk.Frame(notebook)
             frame.rowconfigure(0, weight=1)
             frame.columnconfigure(0, weight=1)
-            body = tk.Text(frame, wrap="word")
+            body = tk.Text(frame, wrap="word", background=ttk.Style(frame).lookup("TFrame", "background"),
+                           foreground=ttk.Style(frame).lookup("TLabel", "foreground"))
             body.insert("1.0", text)
             body.configure(state="disabled")
             body.grid(row=0, column=0, sticky="nsew")
@@ -407,16 +463,25 @@ class LiteratureControls:
                     messagebox.showinfo(tr('文献处理'), payload, parent=self.app.root)
                 elif kind == "profile_result":
                     controls, testing, result, error, requested = payload
-                    if controls.profile() != requested:
+                    try:
+                        unchanged = controls.profile() == requested
+                    except ValueError:
+                        unchanged = False
+                    if not unchanged:
                         continue
                     if error:
                         messagebox.showerror(tr('模型接口'), error, parent=self.app.root)
                     elif testing:
                         messagebox.showinfo(tr('接口测试通过'), result, parent=self.app.root)
                     else:
+                        controls.catalog_limits = {identity: limits for identity, limits in controls.catalog_limits.items()
+                                                   if identity[0] != requested.base_url}
+                        controls.catalog_limits.update({(requested.base_url, name): limits
+                                                        for name, limits in getattr(result, "limits", {}).items()})
                         controls.combo.configure(values=result)
                         if controls.model.get() not in result:
                             controls.model.set(result[0])
+                        controls.refresh_limits()
                         self.log(tr('已拉取 {arg0} 个模型。', arg0=len(result)))
         except queue.Empty:
             pass
