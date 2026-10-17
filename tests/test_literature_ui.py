@@ -1,3 +1,4 @@
+import gc
 import json
 import queue
 import tempfile
@@ -107,6 +108,22 @@ class DesktopLayoutTests(unittest.TestCase):
             self.root.geometry(f"{width}x780")
             self.root.update()
             self.assertTrue(all(value is wide for value in self.app.workspace_layout.form_columns.values()))
+
+    def test_original_icon_stays_visible_when_switching_window_sizes(self):
+        shell = self.app.workspace_layout
+        for width, height, icon_size in ((1100, 780, 48), (640, 480, 32), (540, 420, 32), (1100, 780, 48)):
+            with self.subTest(size=(width, height)):
+                self.root.geometry(f"{width}x{height}")
+                self.root.update()
+                gc.collect()
+                image = shell.mark.cget("image")
+                self.assertEqual(str(image), str(shell.brand_icons[icon_size]))
+                self.assertEqual(self.root.tk.call("image", "type", str(image)), "photo")
+                self.assertGreater(self.root.tk.call("image", "width", str(image)), 0)
+                self.assertLessEqual(self.root.tk.call("image", "width", str(image)), icon_size)
+                self.assertTrue(shell.mark.winfo_viewable())
+                self.assertEqual(shell.mark.cget("text"), "")
+                self.assertLessEqual(shell.mark.winfo_rooty() + shell.mark.winfo_height(), self.root.winfo_rooty() + height)
 
     def test_settings_keep_models_off_the_task_page_and_save_on_return(self):
         shell = self.app.workspace_layout

@@ -182,7 +182,7 @@ def build_translation_page(controls, saved, fetch, test):
 
 
 class WorkspaceLayout:
-    def __init__(self, app, model_choices, fetch, test, version):
+    def __init__(self, app, model_choices, fetch, test, version, icon_path):
         self.app, self.root = app, app.root
         self.family = tkfont.nametofont("TkDefaultFont").actual("family")
         self.compact = None
@@ -192,7 +192,19 @@ class WorkspaceLayout:
         app.workspace_layout = self
         self.rail = tk.Frame(self.root, bg=COLORS["rail"], width=184)
         self.brand = tk.Frame(self.rail, bg=COLORS["rail"])
-        self.mark = tk.Label(self.brand, text="L /", font=(self.family, 23, "bold"), bg=COLORS["rail"], fg="#eff4eb")
+        self.brand_icons = {}
+        try:
+            # Keep the original artwork and strong references through layout changes.
+            self.brand_icon_source = tk.PhotoImage(master=self.root, file=str(icon_path))
+            dimension = max(self.brand_icon_source.width(), self.brand_icon_source.height())
+            self.brand_icons = {
+                size: self.brand_icon_source.subsample(max(1, (dimension + size - 1) // size))
+                for size in (32, 48)
+            }
+        except (tk.TclError, OSError) as exc:
+            app.log_queue.put(("log", f"无法加载应用图标：{exc}"))
+        self.mark = tk.Label(self.brand, text="文献", font=(self.family, 23, "bold"),
+                             bg=COLORS["rail"], fg="#eff4eb", bd=0, padx=0, pady=0)
         self.mark.pack(anchor="w")
         self.brand_name = tk.Label(self.brand, text="文献处理软件", font=(self.family, 11, "bold"), bg=COLORS["rail"], fg="#eff4eb")
         self.brand_name.pack(anchor="w", pady=(8, 0))
@@ -485,7 +497,8 @@ class WorkspaceLayout:
             self.rail.columnconfigure(2, weight=0)
             self.rail.rowconfigure(1, weight=0)
             self.brand_name.pack_forget()
-            self.mark.configure(text="文献", font=(self.family, 11, "bold"))
+            self.mark.configure(image=self.brand_icons.get(32, ""),
+                                text="" if self.brand_icons else "文献", font=(self.family, 11, "bold"))
             self.brand.grid(row=0, column=0, sticky="w", padx=14)
             self.rail_footer.grid(row=0, column=2, sticky="e", padx=8)
             self.version.pack_forget()
@@ -511,7 +524,8 @@ class WorkspaceLayout:
             self.rail.columnconfigure(1, weight=0)
             self.rail.rowconfigure(1, weight=1)
             self.brand_name.pack(anchor="w", pady=(8, 0))
-            self.mark.configure(text="L /", font=(self.family, 23, "bold"))
+            self.mark.configure(image=self.brand_icons.get(48, ""),
+                                text="" if self.brand_icons else "文献", font=(self.family, 23, "bold"))
             self.brand.grid(row=0, column=0, sticky="nw", padx=22, pady=(28, 30))
             self.nav_area.grid(row=1, column=0, sticky="new", padx=10)
             self.nav_area.columnconfigure(0, weight=1)

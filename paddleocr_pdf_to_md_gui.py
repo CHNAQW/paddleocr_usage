@@ -1989,7 +1989,8 @@ class PaddleOCRBatchGUI:
         return "已保存 Access Token/API Key" if self.config.token else "尚未保存 Access Token/API Key"
 
     def _build_ui(self) -> None:
-        WorkspaceLayout(self, MODEL_CHOICES, fetch_openai_compatible_models, check_openai_compatible_api, APP_VERSION)
+        WorkspaceLayout(self, MODEL_CHOICES, fetch_openai_compatible_models, check_openai_compatible_api,
+                        APP_VERSION, resource_path(APP_ICON_PNG_NAME))
         self.log("欢迎使用文献处理软件。选择文件夹即可开始；连接服务请打开偏好设置。")
         self.log(f"当前版本：{APP_VERSION}。OCR、翻译与质量检查的结果将在这里显示。")
 
