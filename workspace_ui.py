@@ -154,6 +154,35 @@ def path_field(parent, row, label, variable, command):
     return entry, button
 
 
+def quality_controls(parent, controls):
+    """Both entry points edit the same quality options and decision mode."""
+    panel = ttk.Frame(parent, style="Paper.TFrame")
+    panel.columnconfigure(0, weight=1)
+    panel.secondary_button = ttk.Checkbutton(panel, text=tr('二次翻译核对'), variable=controls.secondary)
+    panel.secondary_button.grid(row=0, column=0, sticky="w")
+    panel.proofreading_button = ttk.Checkbutton(panel, text=tr('文本校对'), variable=controls.proofreading)
+    panel.proofreading_button.grid(row=1, column=0, sticky="w")
+    form = ResponsiveForm(panel)
+    form.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+    panel.arbitration_combo = ttk.Combobox(form, textvariable=controls.arbitration,
+        values=[tr('用户自行裁决'), tr('大模型裁决')], state="readonly")
+    panel.arbitration_combo.localized_choices = True
+    form.add(tr("发现问题时"), panel.arbitration_combo)
+    AdaptiveLabel(panel, text=tr("勾选检查后选择处理方式。大模型裁决会复核翻译分歧和校对疑点；无法明确批准时保留报告待处理。"),
+                  style="Hint.TLabel").grid(row=3, column=0, sticky="ew", pady=(6, 0))
+
+    def refresh(*_):
+        panel.arbitration_combo.configure(state="readonly" if controls.secondary.get() or controls.proofreading.get() else "disabled")
+    traces = [(variable, variable.trace_add("write", refresh)) for variable in (controls.secondary, controls.proofreading)]
+    def cleanup(event):
+        if event.widget == panel:
+            for variable, trace in traces:
+                variable.trace_remove("write", trace)
+    panel.bind("<Destroy>", cleanup, add="+")
+    refresh()
+    return panel
+
+
 def build_translation_page(controls, saved, fetch, test):
     """Create task options here; advanced service configuration lives in Settings."""
     shell = controls.app.workspace_layout
@@ -178,13 +207,8 @@ def build_translation_page(controls, saved, fetch, test):
         selector.localized_choices = True
         controls.language_form.add(label, selector)
     ttk.Separator(body).grid(row=3, column=0, sticky="ew", pady=12)
-    ttk.Checkbutton(body, text=tr('二次翻译核对'), variable=controls.secondary).grid(row=4, column=0, sticky="w")
-    arbitration = ttk.Combobox(body, textvariable=controls.arbitration,
-                               values=[tr('用户自行裁决'), tr('大模型裁决')], state="readonly", width=18)
-    arbitration.localized_choices = True
-    arbitration.grid(row=5, column=0, sticky="ew", padx=(22, 0), pady=(0, 6))
-    ttk.Checkbutton(body, text=tr('文本校对'), variable=controls.proofreading).grid(row=6, column=0, sticky="w")
-    AdaptiveLabel(body, text=tr('有争议的译文会保留并标记为待处理。'), style="Hint.TLabel").grid(row=7, column=0, sticky="ew", pady=(6, 0))
+    controls.quality_panel = quality_controls(body, controls)
+    controls.quality_panel.grid(row=4, column=0, sticky="ew")
     summary, body = card(page, tr('03   处理服务'))
     summary.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 20))
     controls.model_summary = LocalizedVar(value=tr('尚未设置翻译模型'))
@@ -301,7 +325,21 @@ class WorkspaceLayout:
                                      (3, tr('覆盖已有 Markdown'), app.overwrite_var), (4, tr('使用 LLM 核验 OCR 质量'), app.llm_review_var),
                                      (5, tr('自动检测外文并翻译'), app.literature.auto_translate)):
             ttk.Checkbutton(body, text=text, variable=variable).grid(row=row, column=0, sticky="w")
-        AdaptiveLabel(body, text=tr('大于 50MB 的 PDF 会自动拆分并合并结果。'), style="Hint.TLabel").grid(row=6, column=0, sticky="ew", pady=(8, 0))
+        self.ocr_quality_group = ttk.LabelFrame(body, text=tr("自动翻译核对设置（两入口共用）"), padding=10)
+        self.ocr_quality_group.columnconfigure(0, weight=1)
+        self.ocr_quality_group.grid(row=6, column=0, sticky="ew", pady=(8, 0))
+        self.ocr_quality_panel = quality_controls(self.ocr_quality_group, app.literature)
+        self.ocr_quality_panel.grid(row=0, column=0, sticky="ew")
+        ttk.Button(self.ocr_quality_group, text=tr("配置翻译与裁决模型"),
+                   command=lambda: self.show_settings(1)).grid(row=1, column=0, sticky="w", pady=(6, 0))
+        def sync_quality_options(*_):
+            if app.literature.auto_translate.get():
+                self.ocr_quality_group.grid()
+            else:
+                self.ocr_quality_group.grid_remove()
+        app.literature.auto_translate.trace_add("write", sync_quality_options)
+        sync_quality_options()
+        AdaptiveLabel(body, text=tr('大于 50MB 的 PDF 会自动拆分并合并结果。'), style="Hint.TLabel").grid(row=7, column=0, sticky="ew", pady=(8, 0))
         service, body = card(page, tr('03   处理服务'))
         service.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 20))
         AdaptiveLabel(body, textvariable=app.token_state_var, style="Card.TLabel").grid(row=0, column=0, sticky="ew", pady=5)

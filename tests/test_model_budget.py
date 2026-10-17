@@ -119,6 +119,30 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual("".join(originals), text)
         self.assertGreater(len(report["checks"]), 1)
 
+    def test_proofreading_only_decision_respects_a_smaller_arbiter_budget(self):
+        translator = self.profile(input_limit=80000)
+        proofreader = replace(translator, model="proofreader")
+        arbiter = replace(translator, model="arbiter", input_limit=12000)
+        options = lp.TranslationOptions(proofreading=True, arbitration="大模型裁决")
+        def responder(profile, prompt, data, *args, **kwargs):
+            self.assertLessEqual(request_size(prompt, data), input_budget(profile))
+            if "sample" in data:
+                return '{"language":"English","is_target_language":false}'
+            if prompt == lp.TRANSLATE_PROMPT:
+                return data["source"]
+            if prompt == lp.PROOFREAD_PROMPT:
+                return '{"has_problem":true,"issues":["suspected missing word"]}'
+            self.assertEqual(profile.model, "arbiter")
+            self.assertEqual(prompt, lp.PROOF_ARBITRATE_PROMPT)
+            return '{"decision":"approve","has_problem":false}'
+        text = "Evidence and conclusions.\n\n" * 500
+        report, calls, _ = self.run_document(text, options, dict(translator=translator,
+                                proofreader=proofreader, arbiter=arbiter), responder)
+        self.assertTrue(report["verified"])
+        self.assertGreater(len(report["checks"]), 1)
+        originals = [call.args[2]["source"] for call in calls if call.args[1] == lp.TRANSLATE_PROMPT]
+        self.assertEqual("".join(originals), text)
+
     def test_expanded_translation_is_retranslated_in_smaller_source_chunks(self):
         profile = self.profile(input_limit=20000)
         options = lp.TranslationOptions(proofreading=True)

@@ -84,6 +84,40 @@ class OCRIntegrationTests(unittest.TestCase):
         with self.assertRaises(lp.ProcessingCancelled):
             LiteratureControls.decide(controls, {"chunk": 1})
 
+    def test_post_ocr_translation_uses_model_for_review_and_proofreading_decisions(self):
+        for secondary in (False, True):
+            with self.subTest(secondary=secondary), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "ocr-result.md"
+                source.write_text("# Foreign paper\n\nEvidence and conclusions.", encoding="utf-8")
+                profiles = {role: lp.ModelProfile("https://example.invalid/v1", "test-key", role)
+                            for role in ("translator", "reviewer", "proofreader", "arbiter")}
+                controls = object.__new__(LiteratureControls)
+                controls.snapshot = {"auto_translate": True, "output": None, "prefix": False,
+                    "profiles": profiles, "options": lp.TranslationOptions(secondary_review=secondary,
+                        proofreading=True, arbitration="大模型裁决"), "github": None}
+                controls.stopped = Mock(return_value=False)
+                controls.events = queue.Queue()
+                controls.log = Mock()
+                controls.maybe_upload = Mock()
+                controls.decide = Mock(side_effect=AssertionError("Automatic model decisions must not open a user dialog"))
+                responses = ['{"language":"English","is_target_language":false}', "# 文献\n\n证据与结论。"]
+                if secondary:
+                    responses += ["# 文献\n\n第二版。", '{"has_problem":true}',
+                                  '{"choice":"first","has_problem":false,"reason":"第一版准确"}']
+                responses += ['{"has_problem":true,"issues":["缺字疑点"]}',
+                              '{"decision":"approve","has_problem":false,"reason":"校对误报，译文完整"}']
+                with patch.object(lp, "chat", side_effect=responses) as chat:
+                    controls.after_ocr(source, root, {"llmReview": {"hasProblem": False}}, source.read_text())
+                report = json.loads((root / "ocr-result_TRANSLATED.translation.json").read_text(encoding="utf-8"))
+                self.assertEqual(report["status"], "verified")
+                self.assertEqual(report["arbiter"], "arbiter")
+                decisions = [call for call in chat.call_args_list if call.args[0].model == "arbiter"]
+                self.assertEqual(len(decisions), 2 if secondary else 1)
+                self.assertEqual(decisions[-1].args[1], lp.PROOF_ARBITRATE_PROMPT)
+                self.assertTrue(controls.maybe_upload.call_args.args[2])
+                controls.decide.assert_not_called()
+
 
 class DesktopLayoutTests(unittest.TestCase):
     @classmethod
@@ -532,6 +566,41 @@ class DesktopLayoutTests(unittest.TestCase):
             self.app.start_btn.configure(state="normal")
             self.app.stop_btn.configure(state="disabled")
             self.app.manual_query_btn.configure(state="disabled")
+
+    def test_ocr_and_translation_entries_share_quality_controls_and_validate_proofreading_arbiter(self):
+        controls, layout = self.app.literature, self.app.workspace_layout
+        before = {name: getattr(controls, name).get() for name in ("auto_translate", "secondary", "proofreading", "arbitration")}
+        previous_profiles = {role: (model.key.get(), model.model.get()) for role, model in controls.profiles.items()}
+        try:
+            controls.auto_translate.set(True)
+            controls.secondary.set(False)
+            controls.proofreading.set(False)
+            self.assertTrue(layout.ocr_quality_group.grid_info())
+            self.assertEqual(str(layout.ocr_quality_panel.arbitration_combo.cget("state")), "disabled")
+            layout.ocr_quality_panel.proofreading_button.invoke()
+            self.assertTrue(controls.proofreading.get())
+            self.assertEqual(str(controls.quality_panel.arbitration_combo.cget("state")), "readonly")
+            controls.arbitration.set("大模型裁决")
+            for role, model in controls.profiles.items():
+                model.key.set("test-key")
+                model.model.set(role)
+            snapshot = controls.make_snapshot()
+            self.assertTrue(snapshot["options"].proofreading)
+            self.assertEqual(snapshot["options"].arbitration, "大模型裁决")
+            self.assertEqual(snapshot["profiles"]["arbiter"].model, "arbiter")
+            self.assertEqual(layout.ocr_quality_panel.arbitration_combo.cget("textvariable"),
+                             controls.quality_panel.arbitration_combo.cget("textvariable"))
+            controls.profiles["arbiter"].key.set("")
+            with self.assertRaises(ValueError):
+                controls.make_snapshot()
+            controls.auto_translate.set(False)
+            self.assertFalse(layout.ocr_quality_group.grid_info())
+        finally:
+            for name, value in before.items():
+                getattr(controls, name).set(value)
+            for role, (key, model) in previous_profiles.items():
+                controls.profiles[role].key.set(key)
+                controls.profiles[role].model.set(model)
 
     def test_user_can_inspect_both_versions_and_accept_second(self):
         controls = self.app.literature

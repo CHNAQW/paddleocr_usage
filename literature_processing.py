@@ -187,9 +187,15 @@ COMPARE_PROMPT = ('比较原文 source 与两份译文 first、second，检查�
     '"summary":"结论"}。两份译文均忠实准确时 has_problem=false。')
 ARBITRATE_PROMPT = ('核对原文及两份译文并裁决。只返回 JSON：'
     '{"choice":"first|second|unresolved","has_problem":true或false,"reason":"理由"}。'
+    'has_problem 表示所选译文是否仍有问题，而不是是否存在分歧。'
     '只有所选译文完整准确时 has_problem=false；两份都有问题时 choice=unresolved。')
 PROOFREAD_PROMPT = ('校对译文，结合 source 检查语句不通、缺字少字、漏译等问题，不改写或润色。'
     '只返回 JSON：{"has_problem":true或false,"issues":["具体问题"],"summary":"结论"}。')
+PROOF_ARBITRATE_PROMPT = ('对照原文 source、最终译文 translation，独立复核 proofreading 中的疑点。'
+    '判断疑点是否真实存在，不以另一模型的判断为结论，不改写译文。只返回 JSON：'
+    '{"decision":"approve|needs_review|unresolved","has_problem":true或false,"reason":"具体理由"}。'
+    '只有确认最终译文完整准确、校对疑点均不成立时，返回 decision=approve 且 has_problem=false；'
+    '确认仍有问题时 decision=needs_review 且 has_problem=true；证据不足时 decision=unresolved。')
 
 
 def translate_document(source: Path, destination: Path, options: TranslationOptions,
@@ -207,16 +213,22 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
         raise ValueError(tr('二次翻译核对需要指定模型。'))
     if options.proofreading and proofreader is None:
         raise ValueError(tr('文本校对需要指定模型。'))
-    if options.secondary_review and options.arbitration == "大模型裁决" and arbiter is None:
+    model_arbitration = (options.secondary_review or options.proofreading) and options.arbitration == "大模型裁决"
+    if model_arbitration and arbiter is None:
         raise ValueError(tr('请选择裁决模型。'))
     percent = options.input_percent
     active = {"translator": translator}
     if options.secondary_review:
         active["reviewer"] = reviewer
-        if options.arbitration == "大模型裁决":
-            active["arbiter"] = arbiter
     if options.proofreading:
         active["proofreader"] = proofreader
+    if model_arbitration:
+        active["arbiter"] = arbiter
+    log(tr("翻译检查设置：二次核对 {arg0}；文本校对 {arg1}；问题处理 {arg2}；裁决模型 {arg3}。",
+           arg0=tr("启用") if options.secondary_review else tr("未启用"),
+           arg1=tr("启用") if options.proofreading else tr("未启用"),
+           arg2=tr(options.arbitration) if options.secondary_review or options.proofreading else tr("未启用"),
+           arg3=arbiter.model if model_arbitration else tr("未启用")))
     for role, profile in active.items():
         profile.validate()
         log(tr("{arg0} / {arg1}：输入预算 {arg2} tokens；比例 {arg3}%；来源 {arg4}。",
@@ -250,14 +262,18 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
             # Actual responses are checked again; excessive expansion triggers
             # a smaller source chunk and a complete new translation/review.
             candidates = {**data, "first": original * 2, "second": original * 2}
+            report_reserve = " " * min(4096, max(128, input_budget(arbiter, percent) // 8)) if model_arbitration else ""
             if options.secondary_review:
                 check_request(reviewer, TRANSLATE_PROMPT, data, percent)
                 check_request(reviewer, COMPARE_PROMPT, candidates, percent)
                 if options.arbitration == "大模型裁决":
                     check_request(arbiter, ARBITRATE_PROMPT,
-                                  {**candidates, "comparison": " " * 4096}, percent)
+                                  {**candidates, "comparison": report_reserve}, percent)
             if options.proofreading:
                 check_request(proofreader, PROOFREAD_PROMPT, {**data, "translation": original * 2}, percent)
+                if model_arbitration:
+                    check_request(arbiter, PROOF_ARBITRATE_PROMPT,
+                                  {**data, "translation": original * 2, "proofreading": report_reserve}, percent)
             return True
         except BudgetExceeded:
             return False
@@ -266,7 +282,7 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
     def translate_chunk(original, index):
         data = data_for(original)
         first = ask(translator, TRANSLATE_PROMPT, data)
-        record = {"chunk": index, "verified": True}
+        record = {"chunk": index, "verified": True, "pendingReasons": []}
         if options.secondary_review:
             log(tr('{arg0}：第 {arg1} 段二次翻译核对', arg0=source.name, arg1=index))
             second = ask(reviewer, TRANSLATE_PROMPT, data)
@@ -275,11 +291,21 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
             record["comparison"] = comparison
             if comparison["has_problem"]:
                 if options.arbitration == "大模型裁决":
+                    log(tr("{arg0}：第 {arg1} 段开始翻译分歧裁决，模型 {arg2}。",
+                           arg0=source.name, arg1=index, arg2=arbiter.model))
                     verdict = review_reply(ask(arbiter, ARBITRATE_PROMPT,
                         {**data, "first": first, "second": second, "comparison": comparison}))
-                    choice = verdict.get("choice") if not verdict["has_problem"] else "unresolved"
+                    raw_choice = verdict.get("choice")
+                    raw_choice = raw_choice.strip().lower() if isinstance(raw_choice, str) else "unresolved"
+                    choice = raw_choice if raw_choice in {"first", "second"} and not verdict["has_problem"] else "unresolved"
                     record["arbitration"] = verdict
+                    record["arbitrationChoice"] = choice
+                    log(tr("{arg0}：第 {arg1} 段翻译裁决结果：{arg2}；理由：{arg3}",
+                           arg0=source.name, arg1=index,
+                           arg2=tr({"first": "接受首次译文", "second": "接受二次译文", "unresolved": "未能明确批准译文"}[choice]),
+                           arg3=verdict.get("reason") or tr("模型未提供理由")))
                 else:
+                    log(tr("{arg0}：第 {arg1} 段翻译有分歧，等待用户裁决。", arg0=source.name, arg1=index))
                     choice = decide({"filename": source.name, "chunk": index, "source": original,
                                      "first": first, "second": second, "comparison": comparison}) if decide else "unresolved"
                     record["arbitration"] = {"choice": choice, "by": "user"}
@@ -288,11 +314,27 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
                     first = second
                 elif choice != "first":
                     record["verified"] = False
+                    record["pendingReasons"].append("translation_dispute_unresolved")
         if options.proofreading:
             log(tr('{arg0}：第 {arg1} 段文本校对', arg0=source.name, arg1=index))
             proof = review_reply(ask(proofreader, PROOFREAD_PROMPT, {**data, "translation": first}))
             record["proofreading"] = proof
-            record["verified"] = record["verified"] and not proof["has_problem"]
+            proof_passed = not proof["has_problem"]
+            if not proof_passed and model_arbitration:
+                log(tr("{arg0}：第 {arg1} 段开始校对疑点裁决，模型 {arg2}。",
+                       arg0=source.name, arg1=index, arg2=arbiter.model))
+                verdict = review_reply(ask(arbiter, PROOF_ARBITRATE_PROMPT,
+                    {**data, "translation": first, "proofreading": proof}))
+                proof_passed = verdict.get("decision") == "approve" and not verdict["has_problem"]
+                record["proofreadingArbitration"] = verdict
+                log(tr("{arg0}：第 {arg1} 段校对裁决结果：{arg2}；理由：{arg3}",
+                       arg0=source.name, arg1=index,
+                       arg2=tr("校对疑点已排除") if proof_passed else tr("校对疑点尚未解决"),
+                       arg3=verdict.get("reason") or tr("模型未提供理由")))
+            if not proof_passed:
+                record["pendingReasons"].append("proofreading_problem")
+                log(tr("{arg0}：第 {arg1} 段校对疑点尚未解决，本段保持待处理。", arg0=source.name, arg1=index))
+            record["verified"] = record["verified"] and proof_passed
         return first, record
 
     position = 0
@@ -324,7 +366,9 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
               "targetLanguage": options.target, "translator": translator.model,
               "reviewer": reviewer.model if options.secondary_review else None,
               "proofreader": proofreader.model if options.proofreading else None,
-              "arbiter": arbiter.model if arbiter and options.secondary_review and options.arbitration == "大模型裁决" else None,
+              "arbiter": arbiter.model if model_arbitration else None,
+              "arbitrationMode": options.arbitration,
+              "pendingReasons": sorted({reason for record in records for reason in record["pendingReasons"]}),
               "inputPercent": percent, "tokenEstimate": "utf8_bytes_plus_framing",
               "modelLimits": {role: {**effective_limits(profile).__dict__, "input_budget": input_budget(profile, percent)}
                               for role, profile in active.items()}, "checks": records}
