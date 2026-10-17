@@ -118,6 +118,81 @@ class TranslationTests(unittest.TestCase):
             options=lp.TranslationOptions(proofreading=True), proofreader=self.profile)
         self.assertTrue(result["verified"])
 
+    def test_proofreading_findings_use_selected_decision_model_without_secondary_review(self):
+        arbiter = lp.ModelProfile(self.profile.base_url, "arbiter-key", "decision-model")
+        log, decide = Mock(), Mock(side_effect=AssertionError("Model mode must not ask the user"))
+        result, chat = self.translate([self.detect, "译文", '{"has_problem":true,"issues":["缺字疑点"]}',
+                '{"decision":"approve","has_problem":false,"reason":"原文与译文一致"}'],
+            options=lp.TranslationOptions(proofreading=True, arbitration="大模型裁决"),
+            proofreader=self.profile, arbiter=arbiter, log=log, decide=decide)
+        self.assertTrue(result["verified"])
+        self.assertEqual(result["arbiter"], "decision-model")
+        self.assertEqual(chat.call_args_list[-1].args[0], arbiter)
+        self.assertEqual(chat.call_args_list[-1].args[1], lp.PROOF_ARBITRATE_PROMPT)
+        self.assertEqual(chat.call_args_list[-1].args[2]["translation"], "译文")
+        self.assertTrue(result["checks"][0]["proofreading"]["has_problem"])
+        self.assertEqual(result["checks"][0]["proofreadingArbitration"]["decision"], "approve")
+        self.assertEqual(result["pendingReasons"], [])
+        self.assertIn("开始校对疑点裁决，模型 decision-model", "\n".join(str(call.args[0]) for call in log.call_args_list))
+        decide.assert_not_called()
+
+    def test_proofreading_decision_requires_both_explicit_approval_and_no_remaining_problem(self):
+        for verdict in ({"decision": "approve", "has_problem": True},
+                        {"decision": "needs_review", "has_problem": True},
+                        {"decision": "needs_review", "has_problem": False},
+                        {"decision": "unresolved", "has_problem": False},
+                        {"has_problem": False}):
+            with self.subTest(verdict=verdict):
+                self.output.unlink(missing_ok=True)
+                result, _ = self.translate([self.detect, "译文", '{"has_problem":true}', json.dumps(verdict)],
+                    options=lp.TranslationOptions(proofreading=True, arbitration="大模型裁决"),
+                    proofreader=self.profile, arbiter=self.profile)
+                self.assertFalse(result["verified"])
+                self.assertEqual(result["status"], "needs_review")
+                self.assertEqual(result["pendingReasons"], ["proofreading_problem"])
+
+    def test_proofreading_approval_does_not_clear_an_unresolved_translation_dispute(self):
+        result, _ = self.translate([self.detect, "首次", "二次", '{"has_problem":true}',
+                '{"choice":"unresolved","has_problem":true}', '{"has_problem":true}',
+                '{"decision":"approve","has_problem":false}'],
+            options=lp.TranslationOptions(secondary_review=True, proofreading=True, arbitration="大模型裁决"),
+            reviewer=self.profile, proofreader=self.profile, arbiter=self.profile)
+        self.assertFalse(result["verified"])
+        self.assertEqual(result["pendingReasons"], ["translation_dispute_unresolved"])
+
+    def test_model_proofreading_decision_validates_arbiter_before_any_request(self):
+        with patch.object(lp, "chat") as chat, self.assertRaisesRegex(ValueError, "裁决模型"):
+            lp.translate_document(self.source, self.output,
+                lp.TranslationOptions(proofreading=True, arbitration="大模型裁决"), self.profile, proofreader=self.profile)
+        chat.assert_not_called()
+
+    def test_invalid_proofreading_decision_never_creates_an_approved_file(self):
+        with self.assertRaises(RuntimeError):
+            self.translate([self.detect, "译文", '{"has_problem":true}', '{"decision":"approve"}'],
+                options=lp.TranslationOptions(proofreading=True, arbitration="大模型裁决"),
+                proofreader=self.profile, arbiter=self.profile)
+        self.assertFalse(self.output.exists())
+
+    def test_clean_proofreading_does_not_call_the_arbiter(self):
+        result, chat = self.translate([self.detect, "译文", '{"has_problem":false}'],
+            options=lp.TranslationOptions(proofreading=True, arbitration="大模型裁决"),
+            proofreader=self.profile, arbiter=self.profile)
+        self.assertTrue(result["verified"])
+        self.assertEqual(chat.call_count, 3)
+        self.assertNotIn("proofreadingArbitration", result["checks"][0])
+
+    def test_translation_arbitration_logs_the_model_and_effective_decision(self):
+        log = Mock()
+        result, _ = self.translate([self.detect, "首次", "二次", '{"has_problem":true}',
+                '{"choice":"second","has_problem":false,"reason":"二次译文完整"}'],
+            options=lp.TranslationOptions(secondary_review=True, arbitration="大模型裁决"),
+            reviewer=self.profile, arbiter=self.profile, log=log)
+        text = "\n".join(str(call.args[0]) for call in log.call_args_list)
+        self.assertIn("开始翻译分歧裁决，模型 translator", text)
+        self.assertIn("接受二次译文", text)
+        self.assertIn("二次译文完整", text)
+        self.assertTrue(result["verified"])
+
     def test_malformed_review_does_not_produce_approved_output(self):
         with self.assertRaises(RuntimeError):
             self.translate([self.detect, "译文", '{"has_problem":"false"}'],

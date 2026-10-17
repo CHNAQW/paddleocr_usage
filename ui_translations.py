@@ -506,6 +506,31 @@ EN_MESSAGES.update({
     "配置位置": "Config location",
 })
 
+EN_MESSAGES.update({
+    '启用': 'Enabled',
+    '翻译检查设置：二次核对 {arg0}；文本校对 {arg1}；问题处理 {arg2}；裁决模型 {arg3}。': 'Translation checks: independent review {arg0}; proofreading {arg1}; issue handling {arg2}; decision model {arg3}.',
+    '{arg0}：第 {arg1} 段开始翻译分歧裁决，模型 {arg2}。': '{arg0}: deciding the translation dispute in chunk {arg1}, using {arg2}.',
+    '{arg0}：第 {arg1} 段翻译裁决结果：{arg2}；理由：{arg3}': '{arg0}: translation decision for chunk {arg1}: {arg2}; reason: {arg3}',
+    '未能明确批准译文': 'Translation not explicitly approved',
+    '模型未提供理由': 'No reason provided by the model',
+    '{arg0}：第 {arg1} 段翻译有分歧，等待用户裁决。': '{arg0}: translation dispute in chunk {arg1}; waiting for your decision.',
+    '{arg0}：第 {arg1} 段开始校对疑点裁决，模型 {arg2}。': '{arg0}: deciding proofreading findings in chunk {arg1}, using {arg2}.',
+    '{arg0}：第 {arg1} 段校对裁决结果：{arg2}；理由：{arg3}': '{arg0}: proofreading decision for chunk {arg1}: {arg2}; reason: {arg3}',
+    '校对疑点已排除': 'Proofreading findings cleared',
+    '校对疑点尚未解决': 'Proofreading findings remain unresolved',
+    '{arg0}：第 {arg1} 段校对疑点尚未解决，本段保持待处理。': '{arg0}: proofreading findings in chunk {arg1} remain unresolved; the chunk is pending review.',
+    '核验尚未通过，请查看检查报告': 'Checks have not passed; see the review report',
+    '文本校对尚未通过，请查看检查报告': 'Proofreading has not passed; see the review report',
+    '翻译分歧尚未解决，请查看检查报告': 'Translation dispute unresolved; see the review report',
+    'OCR 后自动翻译沿用共用的翻译、核对和裁决设置。': 'Post-OCR translation uses the shared translation, review and decision settings.',
+    '发现问题时': 'When issues are found',
+    '勾选检查后选择处理方式。大模型裁决会复核翻译分歧和校对疑点；无法明确批准时保留报告待处理。': 'Enable a check, then choose how to handle issues. Model decisions review translation disputes and proofreading findings; unresolved cases remain in the report.',
+    '自动翻译核对设置（两入口共用）': 'Translation checks (shared by both entries)',
+    '配置翻译与裁决模型': 'Configure translation and decision models',
+})
+
+EN_MESSAGES.update({"{arg0}模型配置不完整：{arg1}": "Incomplete {arg0} model settings: {arg1}"})
+
 _language = "zh"
 _sources = {value: key for key, value in EN_MESSAGES.items()}
 

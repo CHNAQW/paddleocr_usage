@@ -499,7 +499,8 @@ Choose whether to overwrite existing output files.
 选择是否覆盖已有输出文件。
 
 Optionally enable **Detect foreign languages and translate** after configuring [the translation entry](#translation). Leave it off for OCR alone. Only newly completed OCR files enter this follow-up; existing outputs skipped by OCR can be processed through the translation entry.  
-按需勾选 **自动检测外文并翻译**，并先配置[翻译入口](#translation)（第 7 节）；不勾选时仅进行 OCR。只有本次新完成的 OCR 文件会进入后续翻译；被 OCR 跳过的已有输出可通过翻译入口处理。
+Enabling it expands **Translation checks (shared by both entries)** on the OCR page. Enable independent review and/or proofreading, choose **Model decision** under **When issues are found**, then use **Configure translation and decision models** for the relevant services. Configuring a decision model alone does not enable checks or select that mode. Set these options before starting; changes during a batch apply to the next run.  
+按需勾选 **自动检测外文并翻译**，并先配置[翻译入口](#translation)（第 7 节）；不勾选时仅进行 OCR。只有本次新完成的 OCR 文件会进入后续翻译；被 OCR 跳过的已有输出可通过翻译入口处理。 勾选后，OCR 页会展开 **自动翻译核对设置（两入口共用）**：可直接启用二次核对／文本校对，并在 **发现问题时** 选择 **大模型裁决**。点击 **配置翻译与裁决模型** 填写相应服务。只填写裁决模型不会自动启用检查或切换处理方式；应在开始任务前设置，运行中修改用于下次任务。
 
 Click **Start OCR**.  
 点击“开始 OCR”。
@@ -796,6 +797,7 @@ Complete Markdown paragraphs and code blocks are kept together where the budget 
 ### Secondary Translation Review and Arbitration   二次翻译核对与争议裁决
 
 Enable **Independent translation review** and configure its model to independently translate each original chunk again, then compare both translations against the source for omissions, mistranslations, numbers, and citations. Choose how disagreements are resolved:  
+The OCR and translation entries use the same checkboxes and decision-mode selection. At least one check must be enabled to select an issue-handling mode.  
 勾选 **二次翻译核对** 并指定模型后，该模型会独立重译每段原文，再对照原文比较两份译文中的漏译、误译、数字和引文问题。发现问题时可选择以下裁决方式：
 
 - **用户自行裁决 — User decision:** inspect the original, first translation, second translation, and review report in separate tabs; accept either translation or retain the first as needing review.
@@ -806,8 +808,15 @@ Enable **Independent translation review** and configure its model to independent
 
 ### Text Proofreading   文本校对
 
-Enable **Text proofreading** independently or after secondary review, and configure its model. It checks the final selected translation against the source for awkward or broken sentences, missing characters, and omitted content. It reports problems without silently polishing or rewriting the text. Problematic output is saved with a pending-review status and cannot be uploaded automatically.
-**文本校对** 可单独启用，也可在二次核对后启用，并另行指定模型。模型结合原文检查最终选定译文是否存在语句不通、缺字少字、漏译等问题；只报告问题，不擅自润色或改写。有问题的译文仍会保存，但标记待处理，禁止自动上传。
+Enable **Text proofreading** independently or after secondary review, and configure its model. It checks the final selected translation against the source for awkward or broken sentences, missing characters and omissions, without polishing or rewriting it. With **Model decision** selected, findings go to the configured decision model for an independent check against the source, selected translation and proofreading report. Only explicit approval with no remaining problem clears a finding. Confirmed problems, inconclusive decisions and unresolved translation disputes remain pending and block automatic uploads. In user mode, proofreading findings remain in the report for manual inspection.
+**文本校对** 可单独启用，也可在二次核对后启用，并另行指定模型。模型结合原文检查最终选定译文是否存在语句不通、缺字少字、漏译等问题；不擅自润色或改写。选择 **大模型裁决** 时，校对疑点会进一步交给指定裁决模型，独立对照原文、最终译文及校对报告复核。只有明确返回批准且确认没有遗留问题，才会排除该疑点；真实问题、不能明确批准或尚未解决的翻译分歧仍保留待处理，禁止自动上传。用户模式下，校对问题保留报告供人工复核。
+
+### Decision Logs and Pending Results   裁决日志与待处理原因
+
+Each file logs the actual enabled checks, decision mode and model used by its captured job settings. A dispute logs the start of the model call, its decision and reason. The report preserves original proofreading findings in `checks[].proofreading`, the independent decision in `checks[].proofreadingArbitration`, and unresolved causes in `pendingReasons`. A pending result means a check has not been approved, not necessarily that model arbitration was skipped. If an existing translation is skipped, preserve and move it with its report before retrying.  
+每份文献会按任务开始时固定的设置，记录实际启用的检查、处理方式和裁决模型；有争议时记录模型调用开始、裁决结果及理由。报告通过 `checks[].proofreading` 保留原校对疑点，通过 `checks[].proofreadingArbitration` 保存独立裁决，并用 `pendingReasons` 区分未解决的翻译分歧与校对问题。“尚未通过”表示仍有检查未获批准，不表示一定没调用裁决模型。已有译文被跳过时，须先另存并移走译文及报告再重试。
+
+![Post-OCR translation checks](docs/screenshots/ocr-translation-checks.png)
 
 ### Output Location, Names, and Reports   输出位置、命名与报告
 
@@ -1300,6 +1309,9 @@ Version `26.10.18.03` replaces fixed 4,000-character translation chunks with mod
 
 Tools return as visible wrapping buttons; white card backgrounds are removed, and the upper-right **文/A** icon toggles Chinese/English directly. The original application icon, adaptive captions, same-folder output locking and guided GitHub upload setup remain available.  
 工具恢复为直接可见、自动换行的按钮，去掉白色卡片背景，右上角增加 **文/A** 图标直接切换汉英界面。保留原应用图标、自适应标签、同目录译文位置锁定及 GitHub 上传引导。
+
+Post-OCR translation exposes the shared quality options on the OCR page. Model decisions now also review proofreading findings, including proofreading-only jobs. Logs identify decision calls and their results; pending reports record the unresolved cause while retaining all original findings.  
+OCR 自动翻译在 OCR 页展示共用的核对设置；大模型裁决也会复核校对疑点，支持仅启用文本校对的任务。日志记录裁决调用与结果，待处理报告标明未解决原因，同时保留原始疑点。
 
 Display version, launcher, EXE filename and cache path use `26.10.18.03`; Windows numeric file/product versions use `26.10.18.3`. Version updates do not mean an EXE has already been built or published.  
 程序显示版本、启动器、EXE 文件名与缓存路径使用 `26.10.18.03`；Windows 数字文件/产品版本使用 `26.10.18.3`。版本更新不代表 EXE 已构建或发布。

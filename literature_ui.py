@@ -240,12 +240,16 @@ class LiteratureControls:
             required = ["translator"]
             if self.secondary.get():
                 required.append("reviewer")
-                if self.arbitration.get() == "大模型裁决":
-                    required.append("arbiter")
             if self.proofreading.get():
                 required.append("proofreader")
+            if (self.secondary.get() or self.proofreading.get()) and self.arbitration.get() == "大模型裁决":
+                required.append("arbiter")
             for key in required:
-                profiles[key].validate()
+                try:
+                    profiles[key].validate()
+                except ValueError as exc:
+                    role = tr({"translator": "翻译", "reviewer": "二次核对", "proofreader": "校对", "arbiter": "裁决"}[key])
+                    raise ValueError(tr("{arg0}模型配置不完整：{arg1}", arg0=role, arg1=exc)) from None
             if not self.target.get().strip():
                 raise ValueError(tr('请选择目标语言。'))
         github = None
@@ -341,8 +345,14 @@ class LiteratureControls:
         destination = translated_path(path, root, snapshot["output"], snapshot["prefix"])
         result = translate_document(path, destination, snapshot["options"],
             **snapshot["profiles"], decide=self.decide, stop=self.stopped, log=self.log)
-        labels = {"verified": tr('核验通过'), "needs_review": tr('发现问题，待人工处理'), "unverified": tr('未启用质量检查'),
+        labels = {"verified": tr('核验通过'), "needs_review": tr('核验尚未通过，请查看检查报告'), "unverified": tr('未启用质量检查'),
                   "target_language": tr('已是目标语言，跳过'), "existing": tr('译文已存在，跳过')}
+        if result["status"] == "needs_review":
+            reasons = result.get("pendingReasons", [])
+            if reasons == ["proofreading_problem"]:
+                labels["needs_review"] = tr("文本校对尚未通过，请查看检查报告")
+            elif reasons == ["translation_dispute_unresolved"]:
+                labels["needs_review"] = tr("翻译分歧尚未解决，请查看检查报告")
         self.log(tr('{arg0}：{arg1}', arg0=path.name, arg1=labels[result['status']]))
         self.events.put(("status", tr('{arg0}：{arg1}', arg0=path.name, arg1=labels[result['status']])))
         if result["status"] in {"verified", "needs_review", "unverified"}:
@@ -365,6 +375,7 @@ class LiteratureControls:
             expected = hashlib.sha256(path.read_bytes()).hexdigest()
         self.maybe_upload(path, root, ocr_verified(raw_data), snapshot, expected)
         if snapshot["auto_translate"]:
+            self.log(tr("OCR 后自动翻译沿用共用的翻译、核对和裁决设置。"))
             def warning(value):
                 if isinstance(value, dict):
                     return bool(value.get("qualityWarning")) or any(warning(v) for v in value.values())
