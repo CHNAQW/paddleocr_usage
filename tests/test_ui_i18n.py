@@ -29,7 +29,7 @@ class TranslationTests(unittest.TestCase):
 
     def test_every_literal_ui_message_has_an_english_translation(self):
         root = Path(__file__).resolve().parents[1]
-        for name in ("workspace_ui.py", "literature_ui.py", "literature_processing.py", "paddleocr_pdf_to_md_gui.py", "github_ui.py", "model_budget.py"):
+        for name in ("workspace_ui.py", "literature_ui.py", "literature_processing.py", "paddleocr_pdf_to_md_gui.py", "github_ui.py", "model_budget.py", "app_updater.py", "update_ui.py"):
             for node in ast.walk(ast.parse((root / name).read_text(encoding="utf-8-sig"))):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "tr" and node.args:
                     source = node.args[0]
@@ -85,6 +85,19 @@ class TranslationTests(unittest.TestCase):
         set_language("zh")
         with self.assertRaisesRegex(ValueError, "请填写 API Key"):
             ModelProfile().validate()
+
+    def test_config_keeps_newer_fields_and_credentials_during_fallback(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(application, "CONFIG_DIR", Path(directory)), \
+                patch.object(application, "CONFIG_PATH", Path(directory) / "config.json"):
+            data = {"token": "test-local-token", "llm_api_key": "test-model-key", "future_setting": {"enabled": True}}
+            application.CONFIG_PATH.write_text(json.dumps(data), encoding="utf-8")
+            config = application.load_config()
+            application.save_config(config)
+            saved = json.loads(application.CONFIG_PATH.read_text(encoding="utf-8"))
+            self.assertEqual(saved["token"], data["token"])
+            self.assertEqual(saved["llm_api_key"], data["llm_api_key"])
+            self.assertEqual(saved["future_setting"], data["future_setting"])
 
 
 if __name__ == "__main__":

@@ -531,6 +531,72 @@ EN_MESSAGES.update({
 
 EN_MESSAGES.update({"{arg0}模型配置不完整：{arg1}": "Incomplete {arg0} model settings: {arg1}"})
 
+EN_MESSAGES.update({
+    '软件更新': 'Updates',
+    '上次更新已完成，安装版本：{arg0}。': 'Last update completed. Installed version: {arg0}.',
+    '上次更新未完成。恢复结果：{arg0}；日志：{arg1}': 'Last update did not complete. Recovery: {arg0}; log: {arg1}',
+    '从本地 ZIP 更新软件': 'Update from a local ZIP',
+    '取消读取': 'Cancel import',
+    '只读取本地 ZIP，不联网下载。支持本仓库的 GitHub 源码 ZIP，也支持包含新版 EXE 的完整更新包。': 'Reads local ZIPs only; no online downloads. Supports this repository’s GitHub source ZIP and full updates containing a new EXE.',
+    '安装前保存设置。源码更新使用内置 Python 运行时，新代码保存在用户目录；完整更新包替换 EXE。启动失败时尝试恢复旧版。': 'Settings are saved before installation. Source updates use the bundled Python runtime and stay in your user folder; full updates replace the EXE. A failed startup triggers a recovery attempt.',
+    '安装并重启': 'Install and restart',
+    '安装本地更新': 'Install local update',
+    '导入后检查版本、依赖、源码语法及文件完整性。': 'Checks version, dependencies, source syntax and file integrity after import.',
+    '将安装 {arg0}，保存设置并退出当前程序，然后重新启动。旧版会保留备份，是否继续？': 'Install {arg0}, save settings, close this program and restart? The previous version will be retained for recovery.',
+    '已取消读取更新包。': 'Update package import cancelled.',
+    '已恢复旧版': 'Previous version restored',
+    '当前为源码运行或非 Windows 环境，可校验更新包；安装替换仅在 Windows EXE 中启用。': 'Running from source or outside Windows. You can validate packages; installation is enabled in the Windows EXE.',
+    '当前版本：{arg0}': 'Current version: {arg0}',
+    '新版：{arg0} · {arg1:.1f} MB\n类型：{arg4}\n来源：{arg2}\nSHA-256：{arg3}': 'New version: {arg0} · {arg1:.1f} MB\nType: {arg4}\nSource: {arg2}\nSHA-256: {arg3}',
+    '无法定位正在运行的 EXE，请使用完整的 Windows 程序。': 'Cannot locate the running EXE. Use the complete Windows application.',
+    '无法开始安装：{arg0}': 'Could not start installation: {arg0}',
+    '无法识别源码版本，或源码需要更高版本的 Python。': 'Cannot determine the source version, or the source requires a newer Python runtime.',
+    '无法读取更新清单，请使用重新生成的更新包。': 'Cannot read the update manifest. Generate the update package again.',
+    '暂时无法安装': 'Installation unavailable',
+    '更新 ZIP 已损坏或内容不完整，请重新获取。': 'The update ZIP is damaged or incomplete. Obtain it again.',
+    '更新包不适用于本软件的 Windows 64 位版本。': 'The update package is not for this application’s 64-bit Windows edition.',
+    '更新包中的文件与清单不一致。': 'Package files do not match the update manifest.',
+    '更新包内不是有效的 Windows 64 位程序。': 'The update package does not contain a valid 64-bit Windows executable.',
+    '更新包包含不支持的路径、加密文件或链接。': 'The update package contains unsupported paths, encrypted files or links.',
+    '更新包包含重复文件或多余内容。': 'The update package contains duplicate files or unexpected content.',
+    '更新包校验通过，可安装并重启。': 'Update package validated. Ready to install and restart.',
+    '更新包校验通过；请在 Windows EXE 中安装。': 'Update package validated. Install it from the Windows EXE.',
+    '更新包版本 {arg0} 不高于当前版本 {arg1}。': 'Package version {arg0} is not newer than current version {arg1}.',
+    '更新包版本号超出 Windows 支持范围。': 'The update version exceeds the Windows version range.',
+    '更新包版本号须包含四段数字。': 'The update version must contain four numeric components.',
+    '更新清单中的程序文件名不正确。': 'The executable filename in the update manifest is incorrect.',
+    '更新清单缺少有效的 SHA-256 或文件大小。': 'The update manifest lacks a valid SHA-256 or file size.',
+    '更新清单过大。': 'The update manifest is too large.',
+    '更新程序 SHA-256 不符，请重新获取更新包。': 'Update executable SHA-256 mismatch. Obtain the package again.',
+    '更新程序大小不符或文件已改变，请重新导入更新包。': 'The update executable size differs or the file changed. Import the package again.',
+    '更新程序大小与清单不一致。': 'The update executable size does not match its manifest.',
+    '更新程序大小超出支持范围。': 'The update executable exceeds the supported size range.',
+    '未找到唯一的软件源码入口，请选择本仓库的源码 ZIP 或完整更新包。': 'Cannot find a unique application source entry. Select this repository’s source ZIP or a full update package.',
+    '校验文件与更新清单不一致。': 'The checksum file does not match the update manifest.',
+    '正在解包并校验，请稍候……': 'Unpacking and validating. Please wait...',
+    '正在读取：{arg0}': 'Reading: {arg0}',
+    '源码依赖已改变，需要包含新依赖的完整 EXE 更新包；不会自动联网安装依赖。': 'Source dependencies changed. Use a full EXE update containing the new dependencies; dependencies are never downloaded automatically.',
+    '源码包内容超出支持范围。': 'The source package exceeds the supported size or file count.',
+    '源码包包含不安全或不一致的路径。': 'The source package contains unsafe or inconsistent paths.',
+    '源码包包含重复文件、加密文件或链接。': 'The source package contains duplicates, encrypted files or links.',
+    '源码包文件过多。': 'The source package contains too many files.',
+    '源码包缺少运行所需文件，或入口文件过大。': 'The source package is missing required files or its entry file is too large.',
+    '程序文件或所在目录不可写，请将 EXE 移到可写文件夹后重试。': 'The executable or its folder is not writable. Move the EXE to a writable folder and retry.',
+    '自动安装仅支持 Windows EXE；源码运行可检查更新包。': 'Automatic installation requires the Windows EXE. Source mode can validate packages.',
+    '请检查原程序或备份': 'Check the original program or backup',
+    '请等待 OCR、翻译或检查任务结束，再安装更新。': 'Wait for OCR, translation and check tasks to finish before installing.',
+    '请选择您信任的本地更新 ZIP。': 'Choose a local update ZIP from a publisher you trust.',
+    '读取更新包失败：{arg0}': 'Could not import the update package: {arg0}',
+    '软件更新包': 'Software update ZIP',
+    '选择更新 ZIP': 'Choose update ZIP',
+    '选择本地更新包': 'Choose local update package',
+    '新版源码启动失败，已使用内置版本。请重新导入兼容的更新包。': 'Updated source failed to start; the built-in version is running. Import a compatible update package.',
+})
+
+EN_MESSAGES.update({"源码更新": "Source code update", "完整程序更新": "Full program update"})
+
+EN_MESSAGES.update({"当前运行时未包含模块 {arg0}，请使用完整 EXE 更新包。": "The current runtime does not include module {arg0}. Use a full EXE update."})
+
 _language = "zh"
 _sources = {value: key for key, value in EN_MESSAGES.items()}
 

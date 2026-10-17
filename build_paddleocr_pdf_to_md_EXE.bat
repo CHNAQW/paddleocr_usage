@@ -3,12 +3,12 @@ chcp 65001 >nul
 setlocal EnableExtensions
 
 REM ============================================================
-REM 文献处理软件 26.10.18.03 EXE 打包器
+REM 文献处理软件 26.10.18.04 EXE 打包器
 REM 使用 Nuitka 原生编译为单个、无压缩 EXE，不要求代码签名证书。
 REM ============================================================
 
 set "ROOT=%~dp0"
-set "SCRIPT=%ROOT%paddleocr_pdf_to_md_gui.py"
+set "SCRIPT=%ROOT%app_launcher.py"
 set "ICON_ICO=%ROOT%app_icon.ico"
 set "ICON_PNG=%ROOT%app_icon.png"
 REM Keep the build environment separate from the launcher's .venv. The launcher
@@ -17,14 +17,14 @@ set "VENV=%ROOT%.venv-nuitka-2.7.12"
 set "PYTHON=%VENV%\Scripts\python.exe"
 set "OUTDIR=%ROOT%PaddleOCR_PDF_to_MD_EXE"
 set "WORKDIR=%ROOT%build\nuitka"
-set "EXE_NAME=PaddleOCR_PDF_to_MD_26.10.18.03.exe"
+set "EXE_NAME=PaddleOCR_PDF_to_MD_26.10.18.04.exe"
 set "EXE_PATH=%OUTDIR%\%EXE_NAME%"
 set "HASH_PATH=%OUTDIR%\%EXE_NAME%.sha256.txt"
 
 pushd "%ROOT%" >nul 2>nul
 
 echo ============================================================
-echo 文献处理软件 26.10.18.03 EXE 打包器
+echo 文献处理软件 26.10.18.04 EXE 打包器
 echo 输出形式：可直接对外发布的单个 EXE
 echo 当前目录：%ROOT%
 echo ============================================================
@@ -43,7 +43,7 @@ if not exist "%ICON_PNG%" (
     goto :failed
 )
 
-for %%F in (literature_processing.py literature_ui.py workspace_ui.py ui_i18n.py ui_translations.py responsive_ui.py github_ui.py model_budget.py) do (
+for %%F in (paddleocr_pdf_to_md_gui.py literature_processing.py literature_ui.py workspace_ui.py ui_i18n.py ui_translations.py responsive_ui.py github_ui.py model_budget.py app_launcher.py app_updater.py source_bootstrap.py update_ui.py make_update_package.py update_helper.ps1) do (
     if not exist "%ROOT%%%F" (
         echo [错误] 缺少文献处理模块：%%F，请完整解压源码。
         pause
@@ -113,7 +113,7 @@ echo [提示] 首次打包会自动下载并缓存 MinGW64，无需安装 Visual
 "%PYTHON%" -m nuitka ^
   --mode=onefile ^
   --onefile-no-compression ^
-  --onefile-tempdir-spec="{CACHE_DIR}/PaddleOCR/PDFToMarkdown/26.10.18.03" ^
+  --onefile-tempdir-spec="{CACHE_DIR}/PaddleOCR/PDFToMarkdown/26.10.18.04" ^
   --mingw64 ^
   --assume-yes-for-downloads ^
   --lto=yes ^
@@ -122,11 +122,13 @@ echo [提示] 首次打包会自动下载并缓存 MinGW64，无需安装 Visual
   --windows-icon-from-ico="%ICON_ICO%" ^
   --include-data-files="%ICON_ICO%=app_icon.ico" ^
   --include-data-files="%ICON_PNG%=app_icon.png" ^
+  --include-data-files="%ROOT%requirements.txt=requirements.txt" ^
+  --include-data-files="%ROOT%update_helper.ps1=update_helper.ps1" ^
   --company-name="文献处理软件" ^
   --product-name="文献处理软件" ^
   --file-description="文献处理软件" ^
-  --file-version=26.10.18.3 ^
-  --product-version=26.10.18.3 ^
+  --file-version=26.10.18.4 ^
+  --product-version=26.10.18.4 ^
   --output-dir="%WORKDIR%" ^
   --output-filename="%EXE_NAME%" ^
   --remove-output ^
@@ -146,6 +148,10 @@ REM 同一版本只需安全软件检查一次，且不会与临时目录清理�
 
 REM 不在打包流程中调用 Defender：构建目标是避免产生高风险打包特征，
 REM 而不是在告警发生后删除产物。发布者仍可在上传前自行扫描。
+
+echo [更新包] 正在生成可在软件内导入的完整更新 ZIP...
+"%PYTHON%" "%ROOT%make_update_package.py" "%EXE_PATH%"
+if errorlevel 1 goto :failed
 
 echo [校验] 正在生成 EXE 的 SHA-256...
 powershell.exe -NoLogo -NoProfile -NonInteractive -Command ^

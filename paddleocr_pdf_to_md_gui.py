@@ -58,7 +58,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "文献处理软件"
-APP_VERSION = "26.10.18.03"
+APP_VERSION = "26.10.18.04"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -796,7 +796,9 @@ def load_config() -> AppConfig:
     if CONFIG_PATH.exists():
         try:
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-            cfg = AppConfig(**{**AppConfig().__dict__, **data})
+            defaults = AppConfig().__dict__
+            cfg = AppConfig(**{**defaults, **{key: value for key, value in data.items() if key in defaults}})
+            cfg.__dict__.update({key: value for key, value in data.items() if key not in defaults})
             if cfg.model not in MODEL_CHOICES:
                 cfg.model = DEFAULT_MODEL
             if not cfg.base_url:
@@ -1923,6 +1925,8 @@ class PaddleOCRBatchGUI:
         self.root = root
         self._set_adaptive_window_size()
 
+        self.app_version = APP_VERSION
+        self.compiled_application = "__compiled__" in globals()
         self.config = load_config()
         set_language(self.config.ui_language)
         self.root.tk.call("::msgcat::mclocale", "en" if language() == "en" else "zh_cn")
@@ -2774,6 +2778,8 @@ def main() -> None:
     configure_unicode_ui_fonts(root)
     configure_design_language(root)
     app = PaddleOCRBatchGUI(root)
+    from app_updater import signal_ready
+    root.after(250, lambda: signal_ready(APP_VERSION))
     root.mainloop()
 
 

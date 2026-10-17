@@ -370,6 +370,7 @@ class WorkspaceLayout:
         ocr = scrollable_page(self.settings_tabs, tr('OCR 与核验'))
         models = scrollable_page(self.settings_tabs, tr('翻译模型'))
         github = scrollable_page(self.settings_tabs, tr('GitHub 上传'))
+        updates = scrollable_page(self.settings_tabs, tr('软件更新'))
         token = ttk.LabelFrame(ocr, text="PaddleOCR", padding=12)
         token.grid(row=0, column=0, sticky="ew", padx=10, pady=8)
         ttk.Label(token, textvariable=app.token_state_var).grid(row=0, column=0, columnspan=2, sticky="w", pady=8)
@@ -415,6 +416,8 @@ class WorkspaceLayout:
         self.refresh_model_summary(controls)
         from github_ui import GitHubSetup
         controls.github_setup = GitHubSetup(github, controls)
+        from update_ui import UpdatePanel
+        app.updates = UpdatePanel(updates, app, self.app.app_version, self.app.compiled_application)
         footer = ttk.Frame(self.settings, padding=12)
         footer.grid(row=2, column=0, sticky="ew")
         footer.columnconfigure(0, weight=1)

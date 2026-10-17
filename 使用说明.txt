@@ -1,7 +1,7 @@
-文献处理软件 26.10.18.03
+文献处理软件 26.10.18.04
 
 启动
-1. 完整解压源码，保留九个 Python 模块、requirements.txt 与图标。
+1. 完整解压源码，保留十四个 Python 模块及 update_helper.ps1、requirements.txt 与图标。
 2. Windows 双击 start_paddleocr_pdf_to_md_SAFE.bat。
 3. 首次使用需要 Python 3.9+ 和网络；Linux/macOS 使用带 Tkinter 的 Python 运行主入口。
 
@@ -47,12 +47,22 @@ Token 仅保留本次运行；模型 Key 与 PaddleOCR Token 按原方式明文�
 在“偏好设置 → 界面语言”中选择 English / 中文，即时生效并记忆到下次启动。
 也可点击主界面右上角“文/A”图标直接切换。界面语言不改变文献的来源/目标语言、模型或文件路径。
 
+本地 ZIP 更新
+偏好设置 → 软件更新 → 选择更新 ZIP → 确认版本／类型／来源 → 安装并重启。
+支持直接导入本仓库的 GitHub 源码 ZIP；不需要重新打包。更新功能不会联网下载代码或依赖。
+首次须手动换成带固定启动器的新 EXE；以后用内置 Python 运行时加载用户目录中的更新源码。
+源码 APP_VERSION 须更高，依赖须匹配内置运行时。新增未打包依赖或更换启动器时需完整程序更新包。
+完整程序 ZIP 由打包脚本自动生成，含新版 EXE、update.json 和 SHA-256；也可用 make_update_package.py 生成。
+安装前须结束 OCR／翻译／检查任务，保存设置后退出。新版启动失败时尝试恢复旧版，并保留日志。
+源码安装于 %LOCALAPPDATA%\PaddleOCR\updates。界面显示源码版本，启动器文件名／属性不因此改变；单独复制 EXE 不会携带用户目录里的源码更新。
+只导入可信来源；文件哈希校验不是数字签名。源码运行可校验，自动安装限 Windows EXE。
+
 构建 Windows EXE
 双击 build_paddleocr_pdf_to_md_EXE.bat，需 Python 3.9–3.13。
-输出：PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.18.03.exe
+输出：PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.18.04.exe
 校验：同目录下的 .exe.sha256.txt。
-固定运行缓存：%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.18.03
-界面与文件名版本：26.10.18.03；Windows 数字文件/产品版本：26.10.18.3。
+固定运行缓存：%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.18.04
+界面与文件名版本：26.10.18.04；Windows 数字文件/产品版本：26.10.18.4。
 版本更新不代表 EXE 已编译发布；不要关闭安全防护或添加排除项。
 
 详细操作、限制、费用、隐私和使用条件请阅读 README.md 与 License。
