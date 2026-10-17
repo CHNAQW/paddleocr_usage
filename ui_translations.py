@@ -597,6 +597,8 @@ EN_MESSAGES.update({"源码更新": "Source code update", "完整程序更新": 
 
 EN_MESSAGES.update({"当前运行时未包含模块 {arg0}，请使用完整 EXE 更新包。": "The current runtime does not include module {arg0}. Use a full EXE update."})
 
+EN_MESSAGES.update({"更新助手未能启动，当前程序保持运行。请查看日志：{arg0}": "The update helper did not start. This program remains open. See the log: {arg0}"})
+
 _language = "zh"
 _sources = {value: key for key, value in EN_MESSAGES.items()}
 

@@ -183,7 +183,11 @@ class UpdateTests(unittest.TestCase):
         for source in (False, True):
             with self.subTest(source=source):
                 package = updates.import_package(self.source_zip() if source else self.package(), self.current, cache=self.cache)
-                with patch.object(updates.sys, "platform", "win32"), patch.object(updates.subprocess, "Popen") as popen:
+                def helper_ready(*args, **kwargs):
+                    install_plan = json.loads(Path(kwargs["env"]["PADDLEOCR_UPDATE_PLAN"]).read_text())
+                    Path(install_plan["handshake"]).write_text("ready")
+                    return Mock(poll=Mock(return_value=None))
+                with patch.object(updates.sys, "platform", "win32"), patch.object(updates.subprocess, "Popen", side_effect=helper_ready) as popen:
                     plan = updates.launch_install(package, current, self.current, cache=self.cache)
                 self.assertEqual(plan["kind"], "source" if source else "exe")
                 self.assertEqual(plan["target"], str(current))
@@ -205,6 +209,17 @@ class UpdateTests(unittest.TestCase):
         with patch.dict(os.environ, {"LOCALAPPDATA": str(local), "PADDLEOCR_UPDATE_HEALTH": str(outside)}):
             updates.signal_ready(self.version)
         self.assertFalse(outside.exists())
+
+    def test_helper_startup_failure_keeps_existing_program_unchanged(self):
+        package = updates.import_package(self.package(), self.current, cache=self.cache)
+        original = self.exe.read_bytes()
+        process = Mock(poll=Mock(return_value=1))
+        with patch.object(sys, "platform", "win32"), patch.object(updates.subprocess, "Popen", return_value=process):
+            with self.assertRaisesRegex(RuntimeError, "更新助手"):
+                updates.launch_install(package, self.exe, self.current, cache=self.cache)
+        self.assertEqual(self.exe.read_bytes(), original)
+        self.assertFalse((package.directory / "install.json").exists())
+        self.assertTrue(package.payload.is_file())
 
     def test_last_result_handles_powershell_bom_and_invalid_json(self):
         self.cache.mkdir()

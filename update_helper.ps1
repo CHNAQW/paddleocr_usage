@@ -47,6 +47,7 @@ if (-not $ownsMutex) {
 }
 
 try {
+    [System.IO.File]::WriteAllText($plan.handshake, 'ready')
     Write-Log 'Waiting for the current application to exit.'
     $oldProcess = Get-Process -Id $plan.pid -ErrorAction SilentlyContinue
     if ($null -ne $oldProcess) { Wait-Process -Id $plan.pid -Timeout 120 }

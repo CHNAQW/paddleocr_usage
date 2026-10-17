@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 import zipfile
 from dataclasses import dataclass
@@ -271,7 +272,8 @@ def launch_install(package, current_exe, current_version, cache=None):
             "health": str(package.directory / "ready"), "result": str(cache / "last-update.json"),
             "log": str(package.directory / "install.log"), "version": package.version,
             "previous_version": current_version, "sha256": package.sha256, "size": package.size,
-            "health_timeout": 120, "cwd": str(Path.cwd())}
+            "health_timeout": 120, "cwd": str(Path.cwd()),
+            "handshake": str(package.directory / ("helper-ready-" + stamp))}
     plan.update(kind="source" if source_update else "exe", active=str(cache / "active-source.json"),
                 source_record=package.record if source_update else None,
                 source_backup=str(package.directory / "previous-source.json"))
@@ -283,10 +285,17 @@ def launch_install(package, current_exe, current_version, cache=None):
     # Paths and package data are passed as JSON, never interpolated into shell code.
     powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
     try:
-        subprocess.Popen([str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+        process = subprocess.Popen([str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
                          env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, close_fds=True, creationflags=0x08000008)
-    except OSError:
+        deadline = time.monotonic() + 5
+        while not Path(plan["handshake"]).is_file():
+            if process.poll() is not None or time.monotonic() >= deadline:
+                if process.poll() is None:
+                    process.terminate()
+                raise RuntimeError(tr("更新助手未能启动，当前程序保持运行。请查看日志：{arg0}", arg0=plan["log"]))
+            time.sleep(.05)
+    except (OSError, RuntimeError):
         plan_path.unlink(missing_ok=True)
         raise
     return plan
