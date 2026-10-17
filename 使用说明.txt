@@ -1,14 +1,14 @@
-文献处理软件 26.10.17.1
+文献处理软件 26.10.18.01
 
 启动
-1. 完整解压源码，保留三个 Python 模块、requirements.txt 与图标。
+1. 完整解压源码，保留六个 Python 模块、requirements.txt 与图标。
 2. Windows 双击 start_paddleocr_pdf_to_md_SAFE.bat。
 3. 首次使用需要 Python 3.9+ 和网络；Linux/macOS 使用带 Tkinter 的 Python 运行主入口。
 
 入口1：PDF OCR 转 MD功能
 选择输入/输出文件夹，配置 PaddleOCR Token 后开始。
 可选启用 LLM 质量核验；超过 50MB 的 PDF 会自动拆分再合并。
-勾选“是否自动检测外文文献并提供翻译”时，使用入口2设置处理新完成的 OCR 输出。
+勾选“自动检测外文并翻译”时，使用入口2设置处理新完成的 OCR 输出。
 
 入口2：外文文献翻译功能
 扫描已有 MD，使用前 300 字符判断语言；已是目标语言则跳过。
@@ -16,21 +16,29 @@
 支持 DeepSeek、Kimi/Moonshot、Doubao/火山方舟等 OpenAI compatible 服务。
 译文可输出到原文件夹或指定目录，文件名可加 TRANSLATED_ 前缀或 _TRANSLATED 后缀。
 保留原文，已有译文不会覆盖；每份新译文另存 translation.json 检查报告。
+勾选同目录保存时，译文位置灰色锁定并跟随原文位置。选择新目录须先确认覆盖；取消任一步均保留原设置。
 
 GitHub 上传
-在翻译入口配置 owner/repository、已有分支、可选目录和有 Contents 写入权限的 Token。
+在“偏好设置 → GitHub 上传”配置 owner/repository、已有分支、可选目录和有 Contents 写入权限的 Token。
 上传选项由两个入口共用，只上传本次核验通过的 Markdown，不覆盖远端同名文件。
 Token 仅保留本次运行；模型 Key 与 PaddleOCR Token 按原方式明文保存在本机配置，请勿共享。
 上传会创建提交，不会自动创建 PR。
 
 小窗口
-上方设置可滚动，下方日志独立显示；拖动分隔条可调整日志区高度。
+宽窗口使用侧栏和并排选项，窄窗口使用顶部导航。
+开始/停止与日志固定可见；服务和模型配置收纳在独立的“偏好设置”窗口。
+拖动分隔条可调整日志区高度。
+
+汉英界面切换
+在“偏好设置 → 界面语言”中选择 English / 中文，即时生效并记忆到下次启动。
+也可从“更多工具”直接切换。界面语言不改变文献的来源/目标语言、模型或文件路径。
 
 构建 Windows EXE
 双击 build_paddleocr_pdf_to_md_EXE.bat，需 Python 3.9–3.13。
-输出：PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.17.1.exe
+输出：PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.18.01.exe
 校验：同目录下的 .exe.sha256.txt。
-固定运行缓存：%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.17.1
+固定运行缓存：%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.18.01
+界面与文件名版本：26.10.18.01；Windows 数字文件/产品版本：26.10.18.1。
 版本更新不代表 EXE 已编译发布；不要关闭安全防护或添加排除项。
 
 详细操作、限制、费用、隐私和使用条件请阅读 README.md 与 License。

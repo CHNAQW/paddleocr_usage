@@ -38,11 +38,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-from literature_ui import LiteratureControls, scrollable_page
+from workspace_ui import WorkspaceLayout, configure_workspace_theme
 from literature_processing import ProcessingCancelled
 
 import tkinter as tk
-from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
+from tkinter import font as tkfont, ttk
+from ui_i18n import LocalizedVar, filedialog, join_text, language, messagebox, set_language, simpledialog, tr
 
 try:
     import requests
@@ -56,7 +57,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "文献处理软件"
-APP_VERSION = "26.10.17.1"
+APP_VERSION = "26.10.18.01"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -124,107 +125,8 @@ DESIGN_COLORS = {
 
 
 def configure_design_language(root: tk.Tk) -> None:
-    """Apply a crisp, calm design language inspired by design-engineering rules.
-
-    Tkinter does not support the full motion system of web UI, so this function
-    focuses on the transferable pieces: quiet surfaces, strong hierarchy, exact
-    states, and responsive controls that avoid ornamental animation.
-    """
-    colors = DESIGN_COLORS
-    root.configure(bg=colors["canvas"])
-
-    style = ttk.Style(root)
-    try:
-        style.theme_use("clam")
-    except Exception:
-        pass
-
-    style.configure(".", background=colors["canvas"], foreground=colors["text"])
-    style.configure("TFrame", background=colors["canvas"])
-    style.configure(
-        "TLabelframe",
-        background=colors["surface"],
-        bordercolor=colors["border"],
-        relief="solid",
-        padding=12,
-    )
-    style.configure(
-        "TLabelframe.Label",
-        background=colors["canvas"],
-        foreground=colors["muted"],
-        font=("TkDefaultFont", 10, "bold"),
-    )
-    style.configure("TLabel", background=colors["surface"], foreground=colors["text"])
-    style.configure(
-        "HeroTitle.TLabel",
-        background=colors["canvas"],
-        foreground=colors["text"],
-        font=("TkDefaultFont", 16, "bold"),
-    )
-    style.configure(
-        "HeroSubtitle.TLabel",
-        background=colors["canvas"],
-        foreground=colors["muted"],
-        font=("TkDefaultFont", 10),
-    )
-    style.configure(
-        "TEntry",
-        fieldbackground=colors["surface"],
-        foreground=colors["text"],
-        bordercolor=colors["border"],
-        lightcolor=colors["border"],
-        darkcolor=colors["border"],
-        padding=6,
-    )
-    style.map("TEntry", bordercolor=[("focus", colors["accent"])])
-    style.configure(
-        "TButton",
-        background=colors["surface_muted"],
-        foreground=colors["text"],
-        bordercolor=colors["border"],
-        focusthickness=1,
-        focuscolor=colors["accent_soft"],
-        padding=(12, 7),
-        relief="flat",
-    )
-    style.map(
-        "TButton",
-        background=[("pressed", colors["border"]), ("active", colors["accent_soft"])],
-        foreground=[("disabled", colors["muted"])],
-        relief=[("pressed", "sunken")],
-    )
-    style.configure(
-        "Accent.TButton",
-        background=colors["accent"],
-        foreground="#ffffff",
-        bordercolor=colors["accent"],
-        padding=(16, 8),
-    )
-    style.map(
-        "Accent.TButton",
-        background=[
-            ("pressed", colors["accent_active"]),
-            ("active", colors["accent_active"]),
-            ("disabled", colors["border"]),
-        ],
-        foreground=[("disabled", colors["muted"]), ("!disabled", "#ffffff")],
-    )
-    style.configure(
-        "TCheckbutton",
-        background=colors["surface"],
-        foreground=colors["text"],
-        padding=4,
-    )
-    style.configure("TCombobox", padding=6)
-    style.configure(
-        "Horizontal.TProgressbar",
-        troughcolor=colors["surface_muted"],
-        background=colors["accent"],
-        bordercolor=colors["surface_muted"],
-        lightcolor=colors["accent"],
-        darkcolor=colors["accent"],
-        thickness=10,
-    )
+    """Apply the shared desktop theme before building the workspace."""
+    configure_workspace_theme(root)
 
 
 def resource_path(relative_name: str) -> Path:
@@ -555,6 +457,7 @@ class AppConfig:
     llm_api_key: str = ""
     llm_model: str = ""
     literature: dict[str, Any] = field(default_factory=dict)
+    ui_language: str = "zh"
 
 
 class PaddleOCRAPIError(RuntimeError):
@@ -588,8 +491,7 @@ class SplitPdfPart:
 def require_pypdf() -> None:
     if PdfReader is None or PdfWriter is None:
         raise RuntimeError(
-            "检测到超过 50MB 的 PDF，但当前环境缺少 pypdf，无法自动拆分。"
-            "请运行：python -m pip install --upgrade pypdf"
+            tr('检测到超过 50MB 的 PDF，但当前环境缺少 pypdf，无法自动拆分。请运行：python -m pip install --upgrade pypdf')
         )
 
 
@@ -630,8 +532,7 @@ def _split_range_to_limit(
 
     if page_count <= 1:
         raise RuntimeError(
-            f"原 PDF 第 {start_index + 1} 页单独拆分后仍有 {size_mb:.2f}MB，"
-            f"超过单次上传安全目标 {target_mb:.0f}MB，无法自动拆分。"
+            tr('原 PDF 第 {arg0} 页单独拆分后仍有 {arg1:.2f}MB，超过单次上传安全目标 {arg2:.0f}MB，无法自动拆分。', arg0=start_index + 1, arg1=size_mb, arg2=target_mb)
         )
 
     mid = start_index + page_count // 2
@@ -674,7 +575,7 @@ def split_pdf_for_upload(
                 )
             if parts:
                 total_pages = int(manifest.get("totalPages") or parts[-1].page_end)
-                log_callback(f"复用既有拆分结果：共 {len(parts)} 段，{total_pages} 页。")
+                log_callback(tr('复用既有拆分结果：共 {arg0} 段，{arg1} 页。', arg0=len(parts), arg1=total_pages))
                 return parts, work_dir, total_pages
         except Exception:
             shutil.rmtree(work_dir, ignore_errors=True)
@@ -683,17 +584,17 @@ def split_pdf_for_upload(
     try:
         reader = PdfReader(str(pdf_path))
     except Exception as e:
-        raise RuntimeError(f"无法读取待拆分 PDF：{pdf_path}\n{e}") from e
+        raise RuntimeError(tr('无法读取待拆分 PDF：{arg0}\n{arg1}', arg0=pdf_path, arg1=e)) from e
 
     if getattr(reader, "is_encrypted", False):
         try:
             reader.decrypt("")
         except Exception as e:
-            raise RuntimeError(f"PDF 已加密，无法自动拆分：{pdf_path.name}") from e
+            raise RuntimeError(tr('PDF 已加密，无法自动拆分：{arg0}', arg0=pdf_path.name)) from e
 
     total_pages = len(reader.pages)
     if total_pages <= 0:
-        raise RuntimeError(f"PDF 没有可拆分页面：{pdf_path.name}")
+        raise RuntimeError(tr('PDF 没有可拆分页面：{arg0}', arg0=pdf_path.name))
 
     source_size_mb = get_file_size_mb(pdf_path)
     estimated_pages = max(1, min(MAX_PAGES_PER_SPLIT, int(total_pages * target_mb / max(source_size_mb, 0.01))))
@@ -743,8 +644,7 @@ def split_pdf_for_upload(
     }
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     log_callback(
-        f"自动拆分完成：{pdf_path.name}（{source_size_mb:.2f}MB，{total_pages} 页）"
-        f" -> {len(parts)} 段，每段不超过约 {target_mb:.0f}MB。"
+        tr('自动拆分完成：{arg0}（{arg1:.2f}MB，{arg2} 页） -> {arg3} 段，每段不超过约 {arg4:.0f}MB。', arg0=pdf_path.name, arg1=source_size_mb, arg2=total_pages, arg3=len(parts), arg4=target_mb)
     )
     return parts, work_dir, total_pages
 
@@ -786,10 +686,9 @@ def process_split_pdf_async(
 
     for part in parts:
         if stop_checker():
-            raise StopRequested("用户请求停止，已停止处理拆分文档。")
+            raise StopRequested(tr('用户请求停止，已停止处理拆分文档。'))
         log_callback(
-            f"开始处理拆分段 {part.part_index}/{len(parts)}："
-            f"原文第 {part.page_start}-{part.page_end} 页，{part.size_mb:.2f}MB"
+            tr('开始处理拆分段 {arg0}/{arg1}：原文第 {arg2}-{arg3} 页，{arg4:.2f}MB', arg0=part.part_index, arg1=len(parts), arg2=part.page_start, arg3=part.page_end, arg4=part.size_mb)
         )
         part_md = work_dir / f"part_{part.part_index:03d}.md"
 
@@ -807,7 +706,7 @@ def process_split_pdf_async(
                 global_done,
                 total_pages,
                 global_percent,
-                f"第 {part.part_index}/{len(parts)} 段：{message}",
+                tr('第 {arg0}/{arg1} 段：{arg2}', arg0=part.part_index, arg1=len(parts), arg2=message),
             )
 
         markdown, raw_data = process_one_pdf_async(
@@ -888,7 +787,7 @@ def process_split_pdf_async(
             work_dir.parent.rmdir()
     except Exception:
         pass
-    log_callback(f"拆分结果已合并：{output_md_path}；{merged_json_path}")
+    log_callback(tr('拆分结果已合并：{arg0}；{arg1}', arg0=output_md_path, arg1=merged_json_path))
     return merged_markdown, merged_json
 
 
@@ -946,7 +845,7 @@ def split_oversized_pdfs(pdfs: list[Path], max_mb: float = MAX_LOCAL_UPLOAD_MB) 
 
 def format_oversized_message(oversized: list[tuple[Path, float]]) -> str:
     lines = [
-        "有单一文档超过50MB，请压缩后再行处理。超出限制的文档是：",
+        tr('有单一文档超过50MB，请压缩后再行处理。超出限制的文档是：'),
         "",
     ]
     for pdf, size_mb in oversized:
@@ -1079,7 +978,7 @@ def remove_quality_failed_artifacts(output_md_path: Path, job_cache_path: Path) 
         if existed:
             removed.append(path)
         if path.exists():
-            raise RuntimeError(f"质量重试前无法删除旧文件：{path}")
+            raise RuntimeError(tr('质量重试前无法删除旧文件：{arg0}', arg0=path))
     return removed
 
 
@@ -1094,7 +993,7 @@ def get_job_url(base_url: str) -> str:
 
 def require_requests() -> None:
     if requests is None:
-        raise RuntimeError("缺少 requests，请先运行：python -m pip install --upgrade requests")
+        raise RuntimeError(tr('缺少 requests，请先运行：python -m pip install --upgrade requests'))
 
 
 def auth_headers(token: str, json_content: bool = False) -> dict[str, str]:
@@ -1108,7 +1007,7 @@ def openai_compatible_url(base_url: str, endpoint: str) -> str:
     """Build an OpenAI-compatible endpoint without accidentally duplicating /v1."""
     base = base_url.strip().rstrip("/")
     if not base:
-        raise ValueError("LLM Base URL 不能为空。")
+        raise ValueError(tr('LLM Base URL 不能为空。'))
     return f"{base}/{endpoint.lstrip('/')}"
 
 
@@ -1123,16 +1022,16 @@ def fetch_openai_compatible_models(
         timeout=timeout,
     )
     if not response.ok:
-        raise RuntimeError(f"拉取 LLM 模型列表失败：{api_error_message(parse_response_json(response), response.status_code)}")
+        raise RuntimeError(tr('拉取 LLM 模型列表失败：{arg0}', arg0=api_error_message(parse_response_json(response), response.status_code)))
     payload = parse_response_json(response)
     items = payload.get("data")
     if not isinstance(items, list):
-        raise RuntimeError("LLM /models 响应中没有 data 数组。")
+        raise RuntimeError(tr('LLM /models 响应中没有 data 数组。'))
     models = sorted(
         {str(item.get("id")).strip() for item in items if isinstance(item, dict) and item.get("id")}
     )
     if not models:
-        raise RuntimeError("LLM /models 没有返回可用模型。")
+        raise RuntimeError(tr('LLM /models 没有返回可用模型。'))
     return models
 
 
@@ -1145,7 +1044,7 @@ def check_openai_compatible_api(
     """Send a minimal chat request to verify URL, key, and selected model end to end."""
     require_requests()
     if not api_key.strip() or not model.strip():
-        raise ValueError("测试 LLM API 前必须填写 API Key 并选择或输入模型。")
+        raise ValueError(tr('测试 LLM API 前必须填写 API Key 并选择或输入模型。'))
     response = requests.post(
         openai_compatible_url(base_url, "chat/completions"),
         headers=auth_headers(api_key, json_content=True),
@@ -1158,22 +1057,20 @@ def check_openai_compatible_api(
     )
     if not response.ok:
         raise RuntimeError(
-            f"LLM API 测试失败：{api_error_message(parse_response_json(response), response.status_code)}"
+            tr('LLM API 测试失败：{arg0}', arg0=api_error_message(parse_response_json(response), response.status_code))
         )
     payload = parse_response_json(response)
     try:
         choice = payload["choices"][0]
         content_value = choice["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError("LLM API 已响应，但缺少 choices[0].message.content。") from exc
+        raise RuntimeError(tr('LLM API 已响应，但缺少 choices[0].message.content。')) from exc
     content = content_value.strip() if isinstance(content_value, str) else ""
     if not content:
         finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
         suffix = f"（finish_reason={finish_reason}）" if finish_reason else ""
         raise RuntimeError(
-            "LLM API 已响应，但返回内容为空"
-            f"{suffix}。测试请求已不再限制 max_tokens；如果仍出现此错误，请确认所选模型支持 "
-            "chat/completions 文本输出，而不是仅支持推理、嵌入或图像输出的模型。"
+            tr('LLM API 已响应，但返回内容为空{arg0}。测试请求已不再限制 max_tokens；如果仍出现此错误，请确认所选模型支持 chat/completions 文本输出，而不是仅支持推理、嵌入或图像输出的模型。', arg0=suffix)
         )
     return content
 
@@ -1184,9 +1081,9 @@ def _parse_llm_json(content: str) -> dict[str, Any]:
     try:
         result = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(f"LLM 未返回有效 JSON：{cleaned[:300]}") from exc
+        raise RuntimeError(tr('LLM 未返回有效 JSON：{arg0}', arg0=cleaned[:300])) from exc
     if not isinstance(result, dict) or not isinstance(result.get("has_problem"), bool):
-        raise RuntimeError("LLM 核验结果缺少布尔字段 has_problem。")
+        raise RuntimeError(tr('LLM 核验结果缺少布尔字段 has_problem。'))
     return result
 
 
@@ -1202,7 +1099,7 @@ def review_markdown_with_llm(
     """Ask an OpenAI-compatible chat-completions API to review every Markdown chunk."""
     require_requests()
     if not api_key.strip() or not model.strip():
-        raise ValueError("启用 LLM 核验时必须填写 API Key 并选择模型。")
+        raise ValueError(tr('启用 LLM 核验时必须填写 API Key 并选择模型。'))
     chunks = [markdown[i : i + LLM_REVIEW_CHUNK_CHARS] for i in range(0, len(markdown), LLM_REVIEW_CHUNK_CHARS)] or [""]
     reviews: list[dict[str, Any]] = []
     for index, chunk in enumerate(chunks, start=1):
@@ -1221,12 +1118,12 @@ def review_markdown_with_llm(
             timeout=timeout,
         )
         if not response.ok:
-            raise RuntimeError(f"LLM 核验失败：{api_error_message(parse_response_json(response), response.status_code)}")
+            raise RuntimeError(tr('LLM 核验失败：{arg0}', arg0=api_error_message(parse_response_json(response), response.status_code)))
         payload = parse_response_json(response)
         try:
             content = payload["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise RuntimeError("LLM chat/completions 响应缺少 choices[0].message.content。") from exc
+            raise RuntimeError(tr('LLM chat/completions 响应缺少 choices[0].message.content。')) from exc
         content = str(content)
         if response_callback is not None:
             response_callback(index, len(chunks), content)
@@ -1297,28 +1194,28 @@ def build_optional_payload(model_name: str) -> dict[str, Any]:
 def validate_access_token(token: str, base_url: str = DEFAULT_BASE_URL) -> tuple[bool, str, dict[str, Any]]:
     """轻量检测 token。使用不存在的 jobId 查询：有效 token 通常返回 11001/jobId 不存在；无效 token 返回 401。"""
     if requests is None:
-        return False, "缺少 requests 包。请运行：python -m pip install requests", {}
+        return False, tr('缺少 requests 包。请运行：python -m pip install requests'), {}
     if not token.strip():
-        return False, "Access Token/API Key 为空。", {}
+        return False, tr('Access Token/API Key 为空。'), {}
 
     url = f"{get_job_url(base_url)}/ocrjob-token-check-probe"
     try:
         resp = requests.get(url, headers=auth_headers(token, json_content=True), timeout=TOKEN_CHECK_TIMEOUT_SECONDS)
     except Exception as e:
-        return False, f"检测请求失败：{e}", {}
+        return False, tr('检测请求失败：{arg0}', arg0=e), {}
 
     data = parse_response_json(resp)
     code = data.get("code")
     msg = str(data.get("msg") or data.get("message") or "")
 
     if resp.status_code == 401 or code == 401:
-        return False, "Token 无效：接口返回 401。", data
+        return False, tr('Token 无效：接口返回 401。'), data
     if code in {11001, 11002} or resp.status_code == 404:
-        return True, "API Key/Access Token 有效：接口已通过鉴权。", data
+        return True, tr('API Key/Access Token 有效：接口已通过鉴权。'), data
     if resp.status_code in {200, 400} and code not in {401, None}:
         # 只要不是鉴权失败，多数情况下说明 token 已通过鉴权；保守提示具体返回。
-        return True, f"API Key/Access Token 基本有效：接口返回 {api_error_message(data, resp.status_code)}。", data
-    return False, f"无法确认 Token 是否有效：{api_error_message(data, resp.status_code)}。", data
+        return True, tr('API Key/Access Token 基本有效：接口返回 {arg0}。', arg0=api_error_message(data, resp.status_code)), data
+    return False, tr('无法确认 Token 是否有效：{arg0}。', arg0=api_error_message(data, resp.status_code)), data
 
 
 def submit_document_job_once(
@@ -1330,7 +1227,7 @@ def submit_document_job_once(
     request_timeout: float,
 ) -> dict[str, Any]:
     if requests is None:
-        raise RuntimeError("缺少 requests 包。请运行：python -m pip install requests")
+        raise RuntimeError(tr('缺少 requests 包。请运行：python -m pip install requests'))
 
     job_url = get_job_url(base_url)
     optional_payload = build_optional_payload(model_name)
@@ -1346,11 +1243,11 @@ def submit_document_job_once(
             files = {"file": f}
             resp = requests.post(job_url, headers=headers, data=data, files=files, timeout=float(request_timeout))
     except Exception as e:
-        raise PaddleOCRAPIError(f"提交任务请求失败：{e}") from e
+        raise PaddleOCRAPIError(tr('提交任务请求失败：{arg0}', arg0=e)) from e
 
     payload = parse_response_json(resp)
     if resp.status_code == 401 or payload.get("code") == 401:
-        raise PaddleOCRAPIError("Token 无效：接口返回 401。", code=401, payload=payload)
+        raise PaddleOCRAPIError(tr('Token 无效：接口返回 401。'), code=401, payload=payload)
     if resp.status_code not in {200, 201} or payload.get("code") not in {0, None}:
         code = payload.get("code")
         raise PaddleOCRAPIError(api_error_message(payload, resp.status_code), code=code, payload=payload)
@@ -1359,7 +1256,7 @@ def submit_document_job_once(
     if isinstance(payload.get("data"), dict):
         job_id = payload["data"].get("jobId")
     if not job_id:
-        raise PaddleOCRAPIError(f"提交成功但没有返回 jobId：{payload}", payload=payload)
+        raise PaddleOCRAPIError(tr('提交成功但没有返回 jobId：{arg0}', arg0=payload), payload=payload)
     return payload
 
 
@@ -1376,7 +1273,7 @@ def submit_document_job_with_retry(
     attempt = 0
     while True:
         if stop_checker():
-            raise StopRequested("用户请求停止，已取消提交任务。")
+            raise StopRequested(tr('用户请求停止，已取消提交任务。'))
         attempt += 1
         try:
             return submit_document_job_once(
@@ -1392,17 +1289,16 @@ def submit_document_job_with_retry(
             if is_queue_full_error(payload):
                 if attempt >= QUEUE_FULL_MAX_ATTEMPTS:
                     raise QueueFullSkipped(
-                        f"任务提交队列已满，请稍后重试。已尝试 {QUEUE_FULL_MAX_ATTEMPTS} 次提交，跳过该文件：{pdf_path.name}"
+                        tr('任务提交队列已满，请稍后重试。已尝试 {arg0} 次提交，跳过该文件：{arg1}', arg0=QUEUE_FULL_MAX_ATTEMPTS, arg1=pdf_path.name)
                     ) from e
                 log_callback(
-                    f"任务提交队列已满，请稍后重试。第 {attempt}/{QUEUE_FULL_MAX_ATTEMPTS} 次提交未成功，"
-                    f"{QUEUE_FULL_RETRY_SECONDS:.0f} 秒后自动重新提交：{pdf_path.name}"
+                    tr('任务提交队列已满，请稍后重试。第 {arg0}/{arg1} 次提交未成功，{arg2:.0f} 秒后自动重新提交：{arg3}', arg0=attempt, arg1=QUEUE_FULL_MAX_ATTEMPTS, arg2=QUEUE_FULL_RETRY_SECONDS, arg3=pdf_path.name)
                 )
                 wait_with_stop(QUEUE_FULL_RETRY_SECONDS, stop_checker)
                 continue
             if is_rate_limit_error(payload):
                 log_callback(
-                    f"请求频率过高，{RATE_LIMIT_RETRY_SECONDS:.0f} 秒后自动重试提交：{pdf_path.name}"
+                    tr('请求频率过高，{arg0:.0f} 秒后自动重试提交：{arg1}', arg0=RATE_LIMIT_RETRY_SECONDS, arg1=pdf_path.name)
                 )
                 wait_with_stop(RATE_LIMIT_RETRY_SECONDS, stop_checker)
                 continue
@@ -1413,7 +1309,7 @@ def wait_with_stop(seconds: float, stop_checker) -> None:
     end = time.time() + max(0.0, seconds)
     while time.time() < end:
         if stop_checker():
-            raise StopRequested("用户请求停止。")
+            raise StopRequested(tr('用户请求停止。'))
         time.sleep(min(0.5, end - time.time()))
 
 
@@ -1422,7 +1318,7 @@ def wait_for_poll_interval(seconds: float, stop_checker, manual_query_event: Opt
     end = time.time() + max(0.0, seconds)
     while time.time() < end:
         if stop_checker():
-            raise StopRequested("用户请求停止。")
+            raise StopRequested(tr('用户请求停止。'))
         if manual_query_event is not None and manual_query_event.is_set():
             manual_query_event.clear()
             return True
@@ -1432,15 +1328,15 @@ def wait_for_poll_interval(seconds: float, stop_checker, manual_query_event: Opt
 
 def get_job_status(job_id: str, token: str, base_url: str, request_timeout: float) -> dict[str, Any]:
     if requests is None:
-        raise RuntimeError("缺少 requests 包。请运行：python -m pip install requests")
+        raise RuntimeError(tr('缺少 requests 包。请运行：python -m pip install requests'))
     url = f"{get_job_url(base_url)}/{job_id}"
     try:
         resp = requests.get(url, headers=auth_headers(token, json_content=True), timeout=float(request_timeout))
     except Exception as e:
-        raise PaddleOCRAPIError(f"查询任务状态失败：{e}") from e
+        raise PaddleOCRAPIError(tr('查询任务状态失败：{arg0}', arg0=e)) from e
     payload = parse_response_json(resp)
     if resp.status_code == 401 or payload.get("code") == 401:
-        raise PaddleOCRAPIError("Token 无效：接口返回 401。", code=401, payload=payload)
+        raise PaddleOCRAPIError(tr('Token 无效：接口返回 401。'), code=401, payload=payload)
     if payload.get("code") not in {0, None} or resp.status_code not in {200, 201}:
         code = payload.get("code")
         raise PaddleOCRAPIError(api_error_message(payload, resp.status_code), code=code, payload=payload)
@@ -1471,47 +1367,47 @@ def poll_job_until_done(
     last_total = 0
     while True:
         if stop_checker():
-            raise StopRequested("用户请求停止，已停止轮询当前任务。")
+            raise StopRequested(tr('用户请求停止，已停止轮询当前任务。'))
         if poll_timeout and time.time() - start > float(poll_timeout):
-            raise TimeoutError(f"任务 {job_id} 查询超时，超过 {poll_timeout:.0f} 秒。")
+            raise TimeoutError(tr('任务 {arg0} 查询超时，超过 {arg1:.0f} 秒。', arg0=job_id, arg1=poll_timeout))
 
         payload = get_job_status(job_id, token, base_url, request_timeout)
         job = payload.get("data") if isinstance(payload.get("data"), dict) else {}
         state = str(job.get("state") or "").lower()
 
         if state == "pending":
-            progress_callback("pending", 0, 0, 0.0, "排队中")
+            progress_callback("pending", 0, 0, 0.0, tr('排队中'))
         elif state == "running":
             progress = job.get("extractProgress") if isinstance(job.get("extractProgress"), dict) else {}
             total_pages = int_or_zero(progress.get("totalPages"))
             done_pages = int_or_zero(progress.get("extractedPages"))
             percent = done_pages / total_pages * 100 if total_pages else 0.0
             if total_pages and (done_pages != last_done or total_pages != last_total):
-                log_callback(f"页数进度：{done_pages}/{total_pages} 页（{percent:.2f}%）")
+                log_callback(tr('页数进度：{arg0}/{arg1} 页（{arg2:.2f}%）', arg0=done_pages, arg1=total_pages, arg2=percent))
                 last_done = done_pages
                 last_total = total_pages
-            progress_callback("running", done_pages, total_pages, percent, f"正在解析：{done_pages}/{total_pages} 页")
+            progress_callback("running", done_pages, total_pages, percent, tr('正在解析：{arg0}/{arg1} 页', arg0=done_pages, arg1=total_pages))
         elif state == "done":
             progress = job.get("extractProgress") if isinstance(job.get("extractProgress"), dict) else {}
             total_pages = int_or_zero(progress.get("totalPages"))
             done_pages = int_or_zero(progress.get("extractedPages")) or total_pages
-            progress_callback("done", done_pages or 1, total_pages or 1, 100.0, "解析完成")
+            progress_callback("done", done_pages or 1, total_pages or 1, 100.0, tr('解析完成'))
             return payload
         elif state == "failed":
             err = job.get("errorMsg") or payload.get("msg") or payload
-            raise PaddleOCRAPIError(f"任务解析失败：{err}", code=11003, payload=payload)
+            raise PaddleOCRAPIError(tr('任务解析失败：{arg0}', arg0=err), code=11003, payload=payload)
         else:
-            log_callback(f"当前任务状态：{state or '未知'}")
-            progress_callback(state or "unknown", 0, 0, 0.0, f"状态：{state or '未知'}")
+            log_callback(tr('当前任务状态：{arg0}', arg0=state or tr('未知')))
+            progress_callback(state or "unknown", 0, 0, 0.0, tr('状态：{arg0}', arg0=state or tr('未知')))
 
         interrupted = wait_for_poll_interval(max(1.0, float(poll_interval)), stop_checker, manual_query_event)
         if interrupted:
-            log_callback("收到手动查询请求，立即查询当前任务状态。")
+            log_callback(tr('收到手动查询请求，立即查询当前任务状态。'))
 
 
 def download_text_url(url: str, timeout: float) -> str:
     if requests is None:
-        raise RuntimeError("缺少 requests 包。请运行：python -m pip install requests")
+        raise RuntimeError(tr('缺少 requests 包。请运行：python -m pip install requests'))
     resp = requests.get(url, timeout=float(timeout))
     resp.raise_for_status()
     if resp.encoding is None:
@@ -1521,7 +1417,7 @@ def download_text_url(url: str, timeout: float) -> str:
 
 def download_binary_url(url: str, timeout: float) -> bytes:
     if requests is None:
-        raise RuntimeError("缺少 requests 包。请运行：python -m pip install requests")
+        raise RuntimeError(tr('缺少 requests 包。请运行：python -m pip install requests'))
     resp = requests.get(url, timeout=float(timeout))
     resp.raise_for_status()
     return resp.content
@@ -1739,8 +1635,7 @@ def repair_json_file_to_markdown(json_path: Path, output_dir: Path) -> Path:
     markdown = extract_markdown_from_json_data(payload)
     if not markdown:
         raise RuntimeError(
-            "没有从该 JSON/JSONL 中提取到 Markdown。"
-            "请确认它是 PaddleOCR 返回的 jsonUrl 文件，或程序生成的 .raw.json 文件。"
+            tr('没有从该 JSON/JSONL 中提取到 Markdown。请确认它是 PaddleOCR 返回的 jsonUrl 文件，或程序生成的 .raw.json 文件。')
         )
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / output_md_name_for_json(json_path)
@@ -1847,7 +1742,7 @@ def process_one_pdf_async(
             cached = json.loads(job_cache_path.read_text(encoding="utf-8"))
             job_id = str(cached.get("jobId") or "")
             if job_id:
-                log_callback(f"发现已保存 jobId，继续查询：{job_id}")
+                log_callback(tr('发现已保存 jobId，继续查询：{arg0}', arg0=job_id))
         except Exception:
             job_id = ""
 
@@ -1865,7 +1760,7 @@ def process_one_pdf_async(
         data = submitted.get("data") if isinstance(submitted.get("data"), dict) else {}
         job_id = str(data.get("jobId") or "")
         if not job_id:
-            raise PaddleOCRAPIError(f"提交任务后未返回 jobId：{submitted}", payload=submitted)
+            raise PaddleOCRAPIError(tr('提交任务后未返回 jobId：{arg0}', arg0=submitted), payload=submitted)
         job_cache_path.write_text(
             json.dumps(
                 {
@@ -1882,7 +1777,7 @@ def process_one_pdf_async(
             ),
             encoding="utf-8",
         )
-        log_callback(f"任务提交成功，jobId：{job_id}")
+        log_callback(tr('任务提交成功，jobId：{arg0}', arg0=job_id))
 
     try:
         done_payload = poll_job_until_done(
@@ -1900,7 +1795,7 @@ def process_one_pdf_async(
     except PaddleOCRAPIError as e:
         # job 过期或不存在时，删除缓存重新提交一次。
         if e.code in {11001, 11002} and job_cache_path.exists():
-            log_callback(f"旧 jobId 已失效，删除缓存并重新提交：{job_id}")
+            log_callback(tr('旧 jobId 已失效，删除缓存并重新提交：{arg0}', arg0=job_id))
             try:
                 job_cache_path.unlink()
             except Exception:
@@ -1942,15 +1837,13 @@ def process_one_pdf_async(
     }
     raw_json_path.write_text(json.dumps(raw_data, ensure_ascii=False, indent=2), encoding="utf-8")
     log_callback(
-        f"字数检测（第 {quality_attempt}/{MAX_OCR_QUALITY_ATTEMPTS} 次）："
-        f"{word_count} 词/汉字，{page_count} 页，平均 {word_count / page_count:.1f}/页。"
+        tr('字数检测（第 {arg0}/{arg1} 次）：{arg2} 词/汉字，{arg3} 页，平均 {arg4:.1f}/页。', arg0=quality_attempt, arg1=MAX_OCR_QUALITY_ATTEMPTS, arg2=word_count, arg3=page_count, arg4=word_count / page_count)
     )
     llm_review: Optional[dict[str, Any]] = None
     llm_has_problem = False
     if llm_review_enabled:
         log_callback(
-            f"LLM 转换质量核验（第 {quality_attempt}/{MAX_OCR_QUALITY_ATTEMPTS} 次）："
-            f"正在使用 {llm_model}。"
+            tr('LLM 转换质量核验（第 {arg0}/{arg1} 次）：正在使用 {arg2}。', arg0=quality_attempt, arg1=MAX_OCR_QUALITY_ATTEMPTS, arg2=llm_model)
         )
         try:
             llm_review = review_markdown_with_llm(
@@ -1961,7 +1854,7 @@ def process_one_pdf_async(
                 model=llm_model,
                 timeout=request_timeout,
                 response_callback=lambda index, total, content: log_callback(
-                    f"LLM 回答（分段 {index}/{total}）：\n{content}"
+                    tr('LLM 回答（分段 {arg0}/{arg1}）：\n{arg2}', arg0=index, arg1=total, arg2=content)
                 ),
             )
             llm_review["attempt"] = quality_attempt
@@ -1973,28 +1866,28 @@ def process_one_pdf_async(
             raw_data["llmReview"] = llm_review
         except Exception as exc:
             raw_data["llmReviewError"] = str(exc)
-            log_callback(f"警告：LLM 核验调用失败，保留本次 OCR 结果：{exc}")
+            log_callback(tr('警告：LLM 核验调用失败，保留本次 OCR 结果：{arg0}', arg0=exc))
         raw_json_path.write_text(
             json.dumps(raw_data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         if llm_review is not None:
             log_callback(
-                "LLM 核验结论："
-                + ("发现疑似转换问题。" if llm_has_problem else "未发现明显转换问题。")
+                tr('LLM 核验结论：')
+                + (tr('发现疑似转换问题。') if llm_has_problem else tr('未发现明显转换问题。'))
             )
 
     quality_failed = too_short or llm_has_problem
     if quality_failed and quality_attempt < MAX_OCR_QUALITY_ATTEMPTS:
         reasons = []
         if too_short:
-            reasons.append(f"平均每页少于 {MIN_WORDS_OR_CJK_PER_PAGE} 词/汉字")
+            reasons.append(tr('平均每页少于 {arg0} 词/汉字', arg0=MIN_WORDS_OR_CJK_PER_PAGE))
         if llm_has_problem:
-            reasons.append("LLM 核验发现疑似转换问题")
-        log_callback("、".join(reasons) + "，准备删除旧结果后重新提交。")
+            reasons.append(tr('LLM 核验发现疑似转换问题'))
+        log_callback(join_text(tr("、"), reasons) + tr('，准备删除旧结果后重新提交。'))
         removed = remove_quality_failed_artifacts(output_md_path, job_cache_path)
         log_callback(
-            "已删除旧文件：" + ("、".join(str(path) for path in removed) if removed else "无残留文件")
-            + "；下一次将提交全新 OCR 任务。"
+            tr('已删除旧文件：') + ("、".join(str(path) for path in removed) if removed else tr('无残留文件'))
+            + tr('；下一次将提交全新 OCR 任务。')
         )
         return process_one_pdf_async(
             pdf_path=pdf_path,
@@ -2020,19 +1913,22 @@ def process_one_pdf_async(
     if quality_failed:
         raw_data["qualityWarning"] = OCR_QUALITY_WARNING
         if llm_has_problem:
-            raw_data["llmQualityWarning"] = "LLM 核验连续三次发现疑似转换问题，请人工核验原件。"
+            raw_data["llmQualityWarning"] = tr('LLM 核验连续三次发现疑似转换问题，请人工核验原件。')
         raw_json_path.write_text(json.dumps(raw_data, ensure_ascii=False, indent=2), encoding="utf-8")
-        log_callback(f"警告：{OCR_QUALITY_WARNING}")
+        log_callback(tr('警告：{arg0}', arg0=tr(OCR_QUALITY_WARNING)))
     return markdown, raw_data
 
 
 class PaddleOCRBatchGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title(f"{APP_NAME}｜{APP_VERSION}")
         self._set_adaptive_window_size()
 
         self.config = load_config()
+        set_language(self.config.ui_language)
+        self.root.tk.call("::msgcat::mclocale", "en" if language() == "en" else "zh_cn")
+        self.root.title(f"{tr(APP_NAME)} | {APP_VERSION}")
+        self.log_history = []
         if self.config.model not in MODEL_CHOICES:
             self.config.model = DEFAULT_MODEL
         self.log_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
@@ -2054,13 +1950,13 @@ class PaddleOCRBatchGUI:
         self.llm_base_url_var = tk.StringVar(value=self.config.llm_base_url or DEFAULT_LLM_BASE_URL)
         self.llm_api_key_var = tk.StringVar(value=self.config.llm_api_key)
         self.llm_model_var = tk.StringVar(value=self.config.llm_model)
-        self.token_state_var = tk.StringVar(value=self.token_state_text())
-        self.status_var = tk.StringVar(value="准备就绪。")
+        self.token_state_var = LocalizedVar(value=self.token_state_text())
+        self.status_var = LocalizedVar(value=tr('准备就绪。'))
         self.file_progress_var = tk.DoubleVar(value=0)
-        self.file_progress_text_var = tk.StringVar(value="文件总进度：尚未开始")
+        self.file_progress_text_var = LocalizedVar(value=tr('文件总进度：尚未开始'))
         self.page_progress_var = tk.DoubleVar(value=0)
-        self.page_progress_text_var = tk.StringVar(value="当前文件页数进度：未开始")
-        self.split_progress_text_var = tk.StringVar(value="")
+        self.page_progress_text_var = LocalizedVar(value=tr('当前文件页数进度：未开始'))
+        self.split_progress_text_var = LocalizedVar(value="")
         self.total_files = 0
         self.current_file_index = 0
         self.current_file_percent = 0.0
@@ -2085,213 +1981,13 @@ class PaddleOCRBatchGUI:
         self.root.minsize(540, 420)
 
     def token_state_text(self) -> str:
-        return "已保存 Access Token/API Key" if self.config.token else "尚未保存 Access Token/API Key"
+        return tr('已保存 Access Token/API Key') if self.config.token else tr('尚未保存 Access Token/API Key')
 
     def _build_ui(self) -> None:
-        pad = {"padx": 10, "pady": 6}
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(1, weight=1)
-
-        brand = ttk.Frame(self.root)
-        brand.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 0))
-        brand.columnconfigure(1, weight=1)
-
-        try:
-            brand_icon_source = tk.PhotoImage(
-                file=str(resource_path(APP_ICON_PNG_NAME))
-            )
-            brand_icon = brand_icon_source.subsample(14, 14)
-            self._brand_icon_source = brand_icon_source
-            self._brand_icon = brand_icon
-            ttk.Label(brand, image=brand_icon).grid(
-                row=0, column=0, sticky="w", padx=(0, 8)
-            )
-        except Exception:
-            pass
-
-        title_stack = ttk.Frame(brand)
-        title_stack.grid(row=0, column=1, sticky="w")
-        ttk.Label(
-            title_stack,
-            text=APP_NAME,
-            style="HeroTitle.TLabel",
-        ).grid(row=0, column=0, sticky="w")
-        ttk.Label(
-            title_stack,
-            text=f"{APP_VERSION} · PDF OCR · 外文翻译 · 文献核验",
-            style="HeroSubtitle.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
-
-        self.workspace_panes = tk.PanedWindow(self.root, orient="vertical", sashwidth=8,
-                                              bg=DESIGN_COLORS["border"], bd=0)
-        self.workspace_panes.grid(row=1, column=0, sticky="nsew", padx=8, pady=6)
-        self.notebook = ttk.Notebook(self.workspace_panes)
-        self.workspace_panes.add(self.notebook, minsize=140, stretch="always")
-        ocr_page = scrollable_page(self.notebook, "PDF OCR 转 MD功能")
-        translation_page = scrollable_page(self.notebook, "外文文献翻译功能")
-        self.literature = LiteratureControls(self, translation_page,
-                                            fetch_openai_compatible_models, check_openai_compatible_api)
-        top = ttk.LabelFrame(ocr_page, text="1. 选择项目文件夹")
-        top.grid(row=1, column=0, sticky="ew", **pad)
-        top.columnconfigure(1, weight=1)
-
-        ttk.Label(top, text="PDF输入文件夹：").grid(row=0, column=0, sticky="w", padx=8, pady=8)
-        ttk.Entry(top, textvariable=self.input_var, width=12).grid(row=0, column=1, sticky="ew", padx=8, pady=8)
-        ttk.Button(top, text="选择…", command=self.choose_input_dir).grid(row=0, column=2, padx=8, pady=8)
-
-        ttk.Label(top, text="Markdown输出文件夹：").grid(row=1, column=0, sticky="w", padx=8, pady=8)
-        ttk.Entry(top, textvariable=self.output_var, width=12).grid(row=1, column=1, sticky="ew", padx=8, pady=8)
-        ttk.Button(top, text="选择…", command=self.choose_output_dir).grid(row=1, column=2, padx=8, pady=8)
-
-        opts = ttk.LabelFrame(ocr_page, text="2. 设置")
-        opts.grid(row=2, column=0, sticky="ew", **pad)
-        opts.columnconfigure(0, weight=1)
-
-        options_row = ttk.Frame(opts)
-        options_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(4, 0))
-        options_row.columnconfigure(1, weight=1)
-        ttk.Label(options_row, text="模型：").grid(row=0, column=0, sticky="w", padx=4, pady=4)
-        self.model_combo = ttk.Combobox(
-            options_row, textvariable=self.model_var, values=MODEL_CHOICES, state="readonly", width=22
-        )
-        self.model_combo.grid(row=0, column=1, sticky="w", padx=4, pady=4)
-        ttk.Checkbutton(options_row, text="递归处理子文件夹", variable=self.recursive_var).grid(
-            row=1, column=0, columnspan=2, sticky="w", padx=4, pady=4
-        )
-        ttk.Checkbutton(options_row, text="输出时保留子文件夹结构", variable=self.preserve_var).grid(
-            row=2, column=0, columnspan=2, sticky="w", padx=4, pady=4
-        )
-        ttk.Checkbutton(options_row, text="覆盖已存在 .md", variable=self.overwrite_var).grid(
-            row=3, column=0, columnspan=2, sticky="w", padx=4, pady=4
-        )
-
-        token_row = ttk.Frame(opts)
-        token_row.grid(row=1, column=0, sticky="ew", padx=6, pady=2)
-        token_row.columnconfigure(0, weight=1)
-        ttk.Label(token_row, textvariable=self.token_state_var).grid(row=0, column=0, columnspan=3, sticky="w", padx=4, pady=4)
-        ttk.Button(token_row, text="输入/更新 Access Token", command=self.set_token).grid(row=1, column=0, padx=4, pady=4)
-        ttk.Button(token_row, text="检测 API Key 是否有效", command=self.check_api_key).grid(row=1, column=1, padx=4, pady=4)
-        ttk.Button(token_row, text="清除已保存 Token", command=self.clear_token).grid(row=1, column=2, padx=4, pady=4)
-
-        utility_row = ttk.Frame(opts)
-        utility_row.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
-        ttk.Button(utility_row, text="扫描PDF数量", command=self.scan_pdfs).grid(row=0, column=0, sticky="ew", padx=4, pady=4)
-        ttk.Button(utility_row, text="修复JSON为MD", command=self.repair_json_to_md).grid(row=0, column=1, sticky="ew", padx=4, pady=4)
-        ttk.Button(utility_row, text="手动字数检验", command=self.manual_wordcount_check).grid(row=0, column=2, sticky="ew", padx=4, pady=4)
-        ttk.Button(utility_row, text="手动LLM检验", command=self.manual_llm_check).grid(row=1, column=0, sticky="ew", padx=4, pady=4)
-        ttk.Button(utility_row, text="打开输出文件夹", command=self.open_output_dir).grid(row=1, column=1, sticky="ew", padx=4, pady=4)
-        ttk.Button(utility_row, text="显示配置位置", command=self.show_config_path).grid(row=1, column=2, sticky="ew", padx=4, pady=4)
-
-        llm_row = ttk.Frame(opts)
-        llm_row.grid(row=3, column=0, sticky="ew", padx=6, pady=(0, 6))
-        llm_row.columnconfigure(1, weight=1)
-        ttk.Checkbutton(llm_row, text="使用 LLM 核验 .md 转换质量", variable=self.llm_review_var).grid(row=0, column=0, columnspan=2, sticky="w", padx=4, pady=4)
-        ttk.Label(llm_row, text="Base URL：").grid(row=1, column=0, sticky="w", padx=4)
-        ttk.Entry(llm_row, textvariable=self.llm_base_url_var, width=12).grid(row=1, column=1, sticky="ew", padx=4, pady=4)
-        ttk.Label(llm_row, text="API Key：").grid(row=2, column=0, sticky="w", padx=4)
-        ttk.Entry(llm_row, textvariable=self.llm_api_key_var, show="*", width=12).grid(row=2, column=1, sticky="ew", padx=4, pady=4)
-        ttk.Label(llm_row, text="模型：").grid(row=3, column=0, sticky="w", padx=4)
-        self.llm_model_combo = ttk.Combobox(llm_row, textvariable=self.llm_model_var, width=12)
-        self.llm_model_combo.grid(row=3, column=1, sticky="ew", padx=4, pady=4)
-        model_actions = ttk.Frame(llm_row)
-        model_actions.grid(row=4, column=0, columnspan=2, sticky="w")
-        self.fetch_models_btn = ttk.Button(model_actions, text="拉取模型列表", command=self.fetch_llm_models)
-        self.fetch_models_btn.pack(side="left", padx=4, pady=4)
-        self.test_llm_api_btn = ttk.Button(model_actions, text="测试LLM API", command=self.test_llm_api)
-        self.test_llm_api_btn.pack(side="left", padx=4, pady=4)
-
-        ttk.Checkbutton(opts, text="是否自动检测外文文献并提供翻译（设置见入口2）",
-                        variable=self.literature.auto_translate).grid(row=4, column=0, sticky="w", padx=10, pady=6)
-        ttk.Label(opts, text="GitHub 上传与翻译输出设置在“外文文献翻译功能”中，两个入口共用。",
-                  wraplength=500).grid(row=5, column=0, sticky="w", padx=10, pady=4)
-
-        run_box = ttk.LabelFrame(ocr_page, text="3. 批处理")
-        run_box.grid(row=3, column=0, sticky="ew", **pad)
-        run_box.columnconfigure(0, weight=1)
-
-        ttk.Label(run_box, textvariable=self.file_progress_text_var).grid(
-            row=0, column=0, sticky="w", padx=8, pady=(8, 0)
-        )
-        self.file_progress = ttk.Progressbar(run_box, mode="determinate", maximum=100, variable=self.file_progress_var)
-        self.file_progress.grid(row=1, column=0, sticky="ew", padx=8, pady=6)
-
-        ttk.Label(run_box, textvariable=self.page_progress_text_var).grid(row=2, column=0, sticky="w", padx=8, pady=(8, 0))
-        self.page_progress = ttk.Progressbar(run_box, mode="determinate", maximum=100, variable=self.page_progress_var)
-        self.page_progress.grid(row=3, column=0, sticky="ew", padx=8, pady=6)
-
-        self.split_progress_label = ttk.Label(run_box, textvariable=self.split_progress_text_var)
-        self.split_progress_label.grid(row=4, column=0, sticky="w", padx=8, pady=(2, 0))
-        self.split_progress_label.grid_remove()
-
-        self.status_label = ttk.Label(run_box, textvariable=self.status_var, wraplength=900)
-        self.status_label.grid(row=5, column=0, sticky="ew", padx=8, pady=(8, 2))
-
-        action_row = ttk.Frame(run_box)
-        action_row.grid(row=6, column=0, sticky="ew", padx=8, pady=(2, 8))
-        action_row.columnconfigure(0, weight=1)
-        self.manual_query_btn = ttk.Button(
-            action_row, text="手动查询当前结果", command=self.manual_query_current_result, state="disabled"
-        )
-        self.manual_query_btn.grid(row=0, column=1, sticky="e", padx=(8, 4))
-        self.stop_btn = tk.Button(
-            action_row,
-            text="停止转换",
-            command=self.request_stop,
-            state="disabled",
-            bg=DESIGN_COLORS["danger"],
-            fg="white",
-            activebackground=DESIGN_COLORS["danger_active"],
-            activeforeground="white",
-            disabledforeground="#f4f4f4",
-            relief="raised",
-            padx=14,
-            pady=3,
-            font="TkDefaultFont",
-        )
-        self.stop_btn.grid(row=0, column=2, sticky="e", padx=4)
-        self.start_btn = ttk.Button(
-            action_row, text="开始批量转换", command=self.start_batch, style="Accent.TButton"
-        )
-        self.start_btn.grid(row=0, column=3, sticky="e", padx=(4, 0))
-
-        log_frame = ttk.LabelFrame(self.workspace_panes, text="运行日志（拖动上方分隔条调整高度）")
-        self.workspace_panes.add(log_frame, minsize=110, height=180, stretch="never")
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
-
-        self.log_text = tk.Text(
-            log_frame,
-            wrap="word",
-            height=6,
-            font="TkTextFont",
-            bg=DESIGN_COLORS["log_bg"],
-            fg=DESIGN_COLORS["log_fg"],
-            insertbackground=DESIGN_COLORS["log_fg"],
-            relief="flat",
-            bd=0,
-            highlightthickness=1,
-            highlightbackground=DESIGN_COLORS["log_panel_border"],
-            highlightcolor=DESIGN_COLORS["accent"],
-            padx=14,
-            pady=12,
-            spacing1=2,
-            spacing3=6,
-            state="disabled",
-        )
-        self.log_text.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=8)
-        self._configure_log_tags()
-        yscroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
-        yscroll.grid(row=0, column=1, sticky="ns", padx=(0, 8), pady=8)
-        self.log_text.configure(yscrollcommand=yscroll.set)
-
-        self.root.bind("<Configure>", self._on_resize)
-        self.log("程序已启动。请选择 PDF OCR 或外文文献翻译入口；仅 OCR 需要 PaddleOCR Token。")
-        self.log(f"当前程序版本：{APP_VERSION}")
-        self.log(f"配置文件位置：{CONFIG_PATH}")
-        self.log("提示：超过 50MB 的 PDF 会自动拆分、逐段 OCR，并合并为一个同名 .md 和 .json。")
-        self.log("提示：运行中可点击“手动查询当前结果”，立即查询当前 OCR 任务状态。")
-        self.log("提示：如果已经生成 .raw.json 或下载了 jsonUrl，可用“修复JSON为MD”重新提取 Markdown。")
-        self.log("提示：可选用 OpenAI-compatible LLM（如 DeepSeek）逐段核验生成的 .md，并保存 .llm-review.json 报告。")
+        WorkspaceLayout(self, MODEL_CHOICES, fetch_openai_compatible_models, check_openai_compatible_api,
+                        APP_VERSION, resource_path(APP_ICON_PNG_NAME))
+        self.log(tr('欢迎使用文献处理软件。选择文件夹即可开始；连接服务请打开偏好设置。'))
+        self.log(tr('当前版本：{arg0}。OCR、翻译与质量检查的结果将在这里显示。', arg0=APP_VERSION))
 
     def _on_resize(self, event: tk.Event) -> None:
         if event.widget == self.root:
@@ -2305,7 +2001,7 @@ class PaddleOCRBatchGUI:
         total = max(int(self.total_files), 0)
         if total <= 0:
             self.file_progress_var.set(0)
-            self.file_progress_text_var.set("文件总进度：尚未开始")
+            self.file_progress_text_var.set(tr('文件总进度：尚未开始'))
             return
 
         index = min(max(int(self.current_file_index), 0), total)
@@ -2313,12 +2009,12 @@ class PaddleOCRBatchGUI:
         if index > 0:
             overall_percent = ((index - 1) + file_percent / 100.0) / total * 100.0
             self.file_progress_text_var.set(
-                f"文件总进度：共 {total} 个文件，正在处理第 {index} 个，整体进度 {overall_percent:.2f}%"
+                tr('文件总进度：共 {arg0} 个文件，正在处理第 {arg1} 个，整体进度 {arg2:.2f}%', arg0=total, arg1=index, arg2=overall_percent)
             )
         else:
             overall_percent = min(max(self.completed_files / total * 100.0, 0.0), 100.0)
             self.file_progress_text_var.set(
-                f"文件总进度：共 {total} 个文件，尚未开始处理，整体进度 {overall_percent:.2f}%"
+                tr('文件总进度：共 {arg0} 个文件，尚未开始处理，整体进度 {arg1:.2f}%', arg0=total, arg1=overall_percent)
             )
         self.file_progress.config(mode="determinate", maximum=100)
         self.file_progress_var.set(overall_percent)
@@ -2330,8 +2026,7 @@ class PaddleOCRBatchGUI:
     def set_token(self) -> None:
         value = simpledialog.askstring(
             "Access Token/API Key",
-            "请输入 PaddleOCR official API 的 Access Token/API Key：\n\n"
-            "这里会把它保存到本机用户配置文件，之后不用重复输入。",
+            tr('请输入 PaddleOCR official API 的 Access Token/API Key：\n\n这里会把它保存到本机用户配置文件，之后不用重复输入。'),
             show="*",
             parent=self.root,
         )
@@ -2339,27 +2034,27 @@ class PaddleOCRBatchGUI:
             self.config.token = value.strip()
             self.token_state_var.set(self.token_state_text())
             self.save_current_config()
-            self.log("已保存 Access Token/API Key。")
+            self.log(tr('已保存 Access Token/API Key。'))
 
     def clear_token(self) -> None:
-        if messagebox.askyesno("确认", "确定清除已保存的 Access Token/API Key 吗？", parent=self.root):
+        if messagebox.askyesno(tr('确认'), tr('确定清除已保存的 Access Token/API Key 吗？'), parent=self.root):
             self.config.token = ""
             self.token_state_var.set(self.token_state_text())
             self.save_current_config()
-            self.log("已清除 Access Token/API Key。")
+            self.log(tr('已清除 Access Token/API Key。'))
 
     def check_api_key(self) -> None:
         self.save_current_config()
         if not self.config.token:
             self.set_token()
         if not self.config.token:
-            messagebox.showerror("缺少 Token", "未输入 Access Token/API Key。", parent=self.root)
+            messagebox.showerror(tr('缺少 Token'), tr('未输入 Access Token/API Key。'), parent=self.root)
             return
         if self.check_thread and self.check_thread.is_alive():
-            messagebox.showwarning("正在检测", "当前已经有 API Key 检测任务在运行。", parent=self.root)
+            messagebox.showwarning(tr('正在检测'), tr('当前已经有 API Key 检测任务在运行。'), parent=self.root)
             return
-        self.status_var.set("正在检测 API Key 是否有效……")
-        self.log("开始检测 API Key 是否有效。")
+        self.status_var.set(tr('正在检测 API Key 是否有效……'))
+        self.log(tr('开始检测 API Key 是否有效。'))
         self.check_thread = threading.Thread(target=self._check_api_key_worker, daemon=True)
         self.check_thread.start()
 
@@ -2370,12 +2065,12 @@ class PaddleOCRBatchGUI:
     def fetch_llm_models(self) -> None:
         self.save_current_config()
         if not self.config.llm_api_key:
-            messagebox.showerror("缺少 API Key", "请先填写 LLM API Key。", parent=self.root)
+            messagebox.showerror(tr('缺少 API Key'), tr('请先填写 LLM API Key。'), parent=self.root)
             return
         if self.model_fetch_thread and self.model_fetch_thread.is_alive():
             return
         self.fetch_models_btn.config(state="disabled")
-        self.status_var.set("正在拉取 LLM 模型列表……")
+        self.status_var.set(tr('正在拉取 LLM 模型列表……'))
         self.model_fetch_thread = threading.Thread(target=self._fetch_llm_models_worker, daemon=True)
         self.model_fetch_thread.start()
 
@@ -2392,15 +2087,15 @@ class PaddleOCRBatchGUI:
         self.save_current_config()
         if not self.config.llm_api_key or not self.config.llm_model:
             messagebox.showerror(
-                "LLM 配置不完整", "请先填写 LLM API Key 并选择或输入模型。", parent=self.root
+                tr('LLM 配置不完整'), tr('请先填写 LLM API Key 并选择或输入模型。'), parent=self.root
             )
             return
         if self.check_thread and self.check_thread.is_alive():
-            messagebox.showwarning("正在检测", "已有 API 检测任务正在运行。", parent=self.root)
+            messagebox.showwarning(tr('正在检测'), tr('已有 API 检测任务正在运行。'), parent=self.root)
             return
         self.test_llm_api_btn.config(state="disabled")
-        self.status_var.set("正在测试 LLM API 连通性……")
-        self.log("开始测试 LLM API、API Key 和所选模型。")
+        self.status_var.set(tr('正在测试 LLM API 连通性……'))
+        self.log(tr('开始测试 LLM API、API Key 和所选模型。'))
         self.check_thread = threading.Thread(target=self._test_llm_api_worker, daemon=True)
         self.check_thread.start()
 
@@ -2426,35 +2121,34 @@ class PaddleOCRBatchGUI:
         return [Path(path) for path in paths]
 
     def manual_wordcount_check(self) -> None:
-        paths = self._choose_markdown_files("选择要手动进行字数检验的 Markdown")
+        paths = self._choose_markdown_files(tr('选择要手动进行字数检验的 Markdown'))
         if not paths:
             return
         results = [manually_check_markdown_wordcount(path) for path in paths]
         lines = []
         for result in results:
-            conclusion = "有问题" if result["hasProblem"] else "通过"
+            conclusion = tr('有问题') if result["hasProblem"] else tr('通过')
             lines.append(
-                f"{Path(result['path']).name}：{conclusion}；{result['count']} 词/汉字，"
-                f"{result['pageCount']} 页，最低 {result['minimum']}。"
+                tr('{arg0}：{arg1}；{arg2} 词/汉字，{arg3} 页，最低 {arg4}。', arg0=Path(result['path']).name, arg1=conclusion, arg2=result['count'], arg3=result['pageCount'], arg4=result['minimum'])
             )
-        summary = "\n".join(lines)
-        self.log("手动字数检验完成：\n" + summary)
-        messagebox.showinfo("手动字数检验", summary, parent=self.root)
+        summary = join_text("\n", lines)
+        self.log(tr('手动字数检验完成：\n') + summary)
+        messagebox.showinfo(tr('手动字数检验'), summary, parent=self.root)
 
     def manual_llm_check(self) -> None:
         self.save_current_config()
         if not self.config.llm_api_key or not self.config.llm_model:
             messagebox.showerror(
-                "LLM 配置不完整", "请先填写 LLM API Key 并选择或输入模型。", parent=self.root
+                tr('LLM 配置不完整'), tr('请先填写 LLM API Key 并选择或输入模型。'), parent=self.root
             )
             return
         if self.manual_check_thread and self.manual_check_thread.is_alive():
-            messagebox.showwarning("正在检验", "已有手动 LLM 检验正在运行。", parent=self.root)
+            messagebox.showwarning(tr('正在检验'), tr('已有手动 LLM 检验正在运行。'), parent=self.root)
             return
-        paths = self._choose_markdown_files("选择要手动进行 LLM 检验的 Markdown")
+        paths = self._choose_markdown_files(tr('选择要手动进行 LLM 检验的 Markdown'))
         if not paths:
             return
-        self.status_var.set("正在进行手动 LLM 检验……")
+        self.status_var.set(tr('正在进行手动 LLM 检验……'))
         self.manual_check_thread = threading.Thread(
             target=self._manual_llm_check_worker, args=(paths,), daemon=True
         )
@@ -2469,7 +2163,7 @@ class PaddleOCRBatchGUI:
                     self.config.llm_base_url, self.config.llm_api_key,
                     self.config.llm_model, self.config.request_timeout,
                     response_callback=lambda index, total, content: self.log_queue.put(
-                        ("log", f"LLM 回答（分段 {index}/{total}）：\n{content}")
+                        ("log", tr('LLM 回答（分段 {arg0}/{arg1}）：\n{arg2}', arg0=index, arg1=total, arg2=content))
                     ),
                 )
                 report_path = path.with_suffix(".llm-review.json")
@@ -2481,11 +2175,11 @@ class PaddleOCRBatchGUI:
 
     def repair_json_to_md(self) -> None:
         if self.repair_thread and self.repair_thread.is_alive():
-            messagebox.showwarning("正在修复", "当前已经有 JSON 修复任务在运行。", parent=self.root)
+            messagebox.showwarning(tr('正在修复'), tr('当前已经有 JSON 修复任务在运行。'), parent=self.root)
             return
         initial = self.output_var.get() or self.input_var.get() or str(Path.home() / "Desktop")
         paths = filedialog.askopenfilenames(
-            title="选择要修复的 PaddleOCR JSON/JSONL 文件",
+            title=tr('选择要修复的 PaddleOCR JSON/JSONL 文件'),
             initialdir=initial,
             filetypes=[
                 ("JSON / JSONL", "*.json *.jsonl"),
@@ -2497,14 +2191,14 @@ class PaddleOCRBatchGUI:
         if not paths:
             return
         out_dir = filedialog.askdirectory(
-            title="选择修复后的 Markdown 输出文件夹",
+            title=tr('选择修复后的 Markdown 输出文件夹'),
             initialdir=self.output_var.get() or str(Path(paths[0]).parent),
             parent=self.root,
         )
         if not out_dir:
             return
-        self.status_var.set("正在修复 JSON 为 Markdown……")
-        self.log(f"开始修复 {len(paths)} 个 JSON/JSONL 文件为 Markdown。")
+        self.status_var.set(tr('正在修复 JSON 为 Markdown……'))
+        self.log(tr('开始修复 {arg0} 个 JSON/JSONL 文件为 Markdown。', arg0=len(paths)))
         self.repair_thread = threading.Thread(
             target=self._repair_json_worker,
             args=([Path(p) for p in paths], Path(out_dir)),
@@ -2521,26 +2215,26 @@ class PaddleOCRBatchGUI:
                 out_path = repair_json_file_to_markdown(path, output_dir)
                 ok += 1
                 outputs.append(str(out_path))
-                self.log_queue.put(("log", f"修复完成：{path} -> {out_path}"))
+                self.log_queue.put(("log", tr('修复完成：{arg0} -> {arg1}', arg0=path, arg1=out_path)))
             except Exception as e:
                 failed += 1
-                self.log_queue.put(("log", f"修复失败：{path}\n{e}"))
+                self.log_queue.put(("log", tr('修复失败：{arg0}\n{arg1}', arg0=path, arg1=e)))
                 try:
                     err_path = output_dir / f"{path.stem}.repair_error.txt"
                     err_path.write_text(traceback.format_exc(), encoding="utf-8")
                 except Exception:
                     pass
-        summary = f"JSON修复结束：成功 {ok}，失败 {failed}。输出目录：{output_dir}"
+        summary = tr('JSON修复结束：成功 {arg0}，失败 {arg1}。输出目录：{arg2}', arg0=ok, arg1=failed, arg2=output_dir)
         self.log_queue.put(("repair_done", {"summary": summary, "outputs": outputs}))
 
     def show_config_path(self) -> None:
-        msg = f"配置文件位置：\n{CONFIG_PATH}"
+        msg = tr('配置文件位置：\n{arg0}', arg0=CONFIG_PATH)
         self.log(msg)
-        messagebox.showinfo("配置位置", msg, parent=self.root)
+        messagebox.showinfo(tr('配置位置'), msg, parent=self.root)
 
     def choose_input_dir(self) -> None:
         initial = self.input_var.get() or str(Path.home() / "Desktop")
-        path = filedialog.askdirectory(title="选择PDF输入文件夹", initialdir=initial)
+        path = filedialog.askdirectory(title=tr('选择PDF输入文件夹'), initialdir=initial)
         if path:
             self.input_var.set(path)
             if not self.output_var.get():
@@ -2549,7 +2243,7 @@ class PaddleOCRBatchGUI:
 
     def choose_output_dir(self) -> None:
         initial = self.output_var.get() or self.input_var.get() or str(Path.home() / "Desktop")
-        path = filedialog.askdirectory(title="选择Markdown输出文件夹", initialdir=initial)
+        path = filedialog.askdirectory(title=tr('选择Markdown输出文件夹'), initialdir=initial)
         if path:
             self.output_var.set(path)
             self.save_current_config()
@@ -2560,7 +2254,7 @@ class PaddleOCRBatchGUI:
         try:
             os.startfile(str(path))  # type: ignore[attr-defined]
         except Exception:
-            messagebox.showinfo("输出文件夹", str(path), parent=self.root)
+            messagebox.showinfo(tr('输出文件夹'), str(path), parent=self.root)
 
     def save_current_config(self) -> None:
         self.config.input_dir = self.input_var.get().strip()
@@ -2576,15 +2270,16 @@ class PaddleOCRBatchGUI:
         if not self.config.base_url:
             self.config.base_url = DEFAULT_BASE_URL
         self.config.literature = self.literature.config_data()
+        self.config.ui_language = language()
         save_config(self.config)
 
     def validate_paths(self) -> tuple[Path, Path]:
         input_dir = Path(self.input_var.get().strip())
         output_dir = Path(self.output_var.get().strip())
         if not input_dir.exists() or not input_dir.is_dir():
-            raise ValueError("请选择有效的 PDF 输入文件夹。")
+            raise ValueError(tr('请选择有效的 PDF 输入文件夹。'))
         if not self.output_var.get().strip():
-            raise ValueError("请选择 Markdown 输出文件夹。")
+            raise ValueError(tr('请选择 Markdown 输出文件夹。'))
         output_dir.mkdir(parents=True, exist_ok=True)
         return input_dir, output_dir
 
@@ -2594,42 +2289,42 @@ class PaddleOCRBatchGUI:
             pdfs = find_pdf_files(input_dir, self.recursive_var.get())
             oversized = [(pdf, get_file_size_mb(pdf)) for pdf in pdfs if get_file_size_mb(pdf) > MAX_LOCAL_UPLOAD_MB]
             self.log(
-                f"扫描完成：发现 {len(pdfs)} 个 PDF；其中超过 50MB、将自动拆分 {len(oversized)} 个。"
+                tr('扫描完成：发现 {arg0} 个 PDF；其中超过 50MB、将自动拆分 {arg1} 个。', arg0=len(pdfs), arg1=len(oversized))
             )
             if oversized:
-                lines = ["下列 PDF 将自动拆分后 OCR：", ""]
+                lines = [tr('下列 PDF 将自动拆分后 OCR：'), ""]
                 lines.extend(f"- {pdf}（{size:.2f}MB）" for pdf, size in oversized)
-                messagebox.showinfo("扫描完成", "\n".join(lines), parent=self.root)
+                messagebox.showinfo(tr('扫描完成'), "\n".join(lines), parent=self.root)
             else:
-                messagebox.showinfo("扫描完成", f"发现 {len(pdfs)} 个 PDF，无需拆分。", parent=self.root)
+                messagebox.showinfo(tr('扫描完成'), tr('发现 {arg0} 个 PDF，无需拆分。', arg0=len(pdfs)), parent=self.root)
         except Exception as e:
-            messagebox.showerror("扫描失败", str(e), parent=self.root)
+            messagebox.showerror(tr('扫描失败'), str(e), parent=self.root)
 
     def start_batch(self) -> None:
         if self.literature.busy():
-            messagebox.showwarning("正在运行", "请等待当前翻译任务完成。", parent=self.root)
+            messagebox.showwarning(tr('正在运行'), tr('请等待当前翻译任务完成。'), parent=self.root)
             return
         if self.worker_thread and self.worker_thread.is_alive():
-            messagebox.showwarning("正在运行", "当前已有批处理任务在运行。", parent=self.root)
+            messagebox.showwarning(tr('正在运行'), tr('当前已有批处理任务在运行。'), parent=self.root)
             return
 
         self.save_current_config()
         try:
             self.literature.snapshot = self.literature.make_snapshot(self.literature.auto_translate.get())
         except Exception as exc:
-            messagebox.showerror("翻译 / GitHub 配置不完整", str(exc), parent=self.root)
+            messagebox.showerror(tr('翻译 / GitHub 配置不完整'), str(exc), parent=self.root)
             return
         if not self.config.token:
             self.set_token()
             if not self.config.token:
-                messagebox.showerror("缺少 Token", "未输入 Access Token/API Key，无法调用在线 API。", parent=self.root)
+                messagebox.showerror(tr('缺少 Token'), tr('未输入 Access Token/API Key，无法调用在线 API。'), parent=self.root)
                 return
         if self.config.llm_review_enabled and (
             not self.config.llm_api_key or not self.config.llm_model
         ):
             messagebox.showerror(
-                "LLM 配置不完整",
-                "已启用 LLM 核验，请填写 API Key 并选择或输入模型。",
+                tr('LLM 配置不完整'),
+                tr('已启用 LLM 核验，请填写 API Key 并选择或输入模型。'),
                 parent=self.root,
             )
             return
@@ -2637,40 +2332,34 @@ class PaddleOCRBatchGUI:
         try:
             input_dir, output_dir = self.validate_paths()
         except Exception as e:
-            messagebox.showerror("路径错误", str(e), parent=self.root)
+            messagebox.showerror(tr('路径错误'), str(e), parent=self.root)
             return
 
         pdfs = find_pdf_files(input_dir, self.recursive_var.get())
         if not pdfs:
-            messagebox.showwarning("没有PDF", "输入文件夹中没有找到 PDF 文件。", parent=self.root)
+            messagebox.showwarning(tr('没有PDF'), tr('输入文件夹中没有找到 PDF 文件。'), parent=self.root)
             return
 
         oversized = [(pdf, get_file_size_mb(pdf)) for pdf in pdfs if get_file_size_mb(pdf) > MAX_LOCAL_UPLOAD_MB]
         if oversized and (PdfReader is None or PdfWriter is None):
             messagebox.showerror(
-                "缺少自动拆分组件",
-                "检测到超过 50MB 的 PDF，但环境中没有 pypdf。\n"
-                "请重新运行启动 bat，或执行：python -m pip install --upgrade pypdf",
+                tr('缺少自动拆分组件'),
+                tr('检测到超过 50MB 的 PDF，但环境中没有 pypdf。\n请重新运行启动 bat，或执行：python -m pip install --upgrade pypdf'),
                 parent=self.root,
             )
             return
 
         msg = (
-            f"即将处理 {len(pdfs)} 个 PDF。\n"
-            f"其中超过 50MB、将自动拆分：{len(oversized)} 个。\n\n"
-            f"输入：{input_dir}\n"
-            f"输出：{output_dir}\n"
-            f"模型：{self.model_var.get()}\n\n"
-            f"LLM 核验：{'启用（' + self.config.llm_model + '）' if self.config.llm_review_enabled else '未启用'}\n\n"
-            "大文件将按页拆分为约 45MB 的分段，逐段 OCR 后合并为一个 .md 和一个 .json。是否继续？"
+            tr('即将处理 {arg0} 个 PDF。\n其中超过 50MB、将自动拆分：{arg1} 个。\n\n输入：{arg2}\n输出：{arg3}\n模型：{arg4}\n\nLLM 核验：{arg5}\n\n大文件将按页拆分为约 45MB 的分段，逐段 OCR 后合并为一个 .md 和一个 .json。是否继续？', arg0=len(pdfs), arg1=len(oversized), arg2=input_dir, arg3=output_dir, arg4=self.model_var.get(), arg5=tr('启用（{arg0}）', arg0=self.config.llm_model) if self.config.llm_review_enabled else tr('未启用'))
         )
-        if not messagebox.askyesno("确认开始", msg, parent=self.root):
+        if not messagebox.askyesno(tr('确认开始'), msg, parent=self.root):
             return
 
         self.stop_requested = False
         self.literature.cancel_event.clear()
         self.manual_query_event.clear()
         self.start_btn.config(state="disabled")
+        self.literature.start_button.config(state="disabled")
         self.manual_query_btn.config(state="normal")
         self.stop_btn.config(state="normal")
         self.total_files = len(pdfs)
@@ -2680,13 +2369,13 @@ class PaddleOCRBatchGUI:
         self.file_progress.config(maximum=100, value=0)
         self.file_progress_var.set(0)
         self.file_progress_text_var.set(
-            f"文件总进度：共 {len(pdfs)} 个文件，尚未开始处理，整体进度 0.00%"
+            tr('文件总进度：共 {arg0} 个文件，尚未开始处理，整体进度 0.00%', arg0=len(pdfs))
         )
         self.page_progress_var.set(0)
-        self.page_progress_text_var.set("当前文件页数进度：未开始")
+        self.page_progress_text_var.set(tr('当前文件页数进度：未开始'))
         self.split_progress_text_var.set("")
         self.split_progress_label.grid_remove()
-        self.status_var.set("批处理开始。")
+        self.status_var.set(tr('批处理开始。'))
 
         args = (
             pdfs, input_dir, output_dir, self.config.token, self.model_var.get(),
@@ -2700,29 +2389,27 @@ class PaddleOCRBatchGUI:
 
     def manual_query_current_result(self) -> None:
         if not (self.worker_thread and self.worker_thread.is_alive()):
-            messagebox.showwarning("没有运行中的任务", "当前没有正在运行的 OCR 批处理任务。", parent=self.root)
+            messagebox.showwarning(tr('没有运行中的任务'), tr('当前没有正在运行的 OCR 批处理任务。'), parent=self.root)
             return
         self.manual_query_event.set()
-        self.log("已手动触发一次查询：将跳过等待时间，立即查询当前任务状态。")
-        self.status_var.set("已触发手动查询，等待接口返回。")
+        self.log(tr('已手动触发一次查询：将跳过等待时间，立即查询当前任务状态。'))
+        self.status_var.set(tr('已触发手动查询，等待接口返回。'))
 
     def request_stop(self) -> None:
         if not (self.worker_thread and self.worker_thread.is_alive()):
             return
         confirmed = messagebox.askyesno(
-            "确认停止转换",
-            "确定要停止当前批量转换吗？\n\n"
-            "程序会尽快停止提交和查询；已经提交到 PaddleOCR 服务器的任务无法从本程序中撤销，"
-            "但已保存的 jobId 可供下次继续查询。",
+            tr('确认停止转换'),
+            tr('确定要停止当前批量转换吗？\n\n程序会尽快停止提交和查询；已经提交到 PaddleOCR 服务器的任务无法从本程序中撤销，但已保存的 jobId 可供下次继续查询。'),
             parent=self.root,
             icon="warning",
         )
         if not confirmed:
-            self.log("已取消停止操作，任务继续运行。")
+            self.log(tr('已取消停止操作，任务继续运行。'))
             return
         self.stop_requested = True
-        self.log("已确认停止：正在安全退出当前批处理。")
-        self.status_var.set("已请求停止，正在尝试安全退出。")
+        self.log(tr('已确认停止：正在安全退出当前批处理。'))
+        self.status_var.set(tr('已请求停止，正在尝试安全退出。'))
         try:
             self.manual_query_btn.config(state="disabled")
             self.stop_btn.config(state="disabled")
@@ -2773,26 +2460,26 @@ class PaddleOCRBatchGUI:
             self.log_queue.put(("split_progress", (completed_segments, total_segments)))
 
         write_log_line("=" * 80)
-        write_log_line(f"开始时间：{start_time:%Y-%m-%d %H:%M:%S}")
-        write_log_line(f"程序版本：{APP_VERSION}")
-        write_log_line(f"输入目录：{input_dir}")
-        write_log_line(f"输出目录：{output_dir}")
-        write_log_line(f"模型：{model_name}")
+        write_log_line(tr('开始时间：{arg0:%Y-%m-%d %H:%M:%S}', arg0=start_time))
+        write_log_line(tr('程序版本：{arg0}', arg0=APP_VERSION))
+        write_log_line(tr('输入目录：{arg0}', arg0=input_dir))
+        write_log_line(tr('输出目录：{arg0}', arg0=output_dir))
+        write_log_line(tr('模型：{arg0}', arg0=model_name))
         write_log_line(f"Base URL：{base_url}")
-        write_log_line(f"PDF数量：{len(pdfs)}")
-        write_log_line(f"LLM核验：{'启用，模型=' + llm_model if llm_review_enabled else '未启用'}")
+        write_log_line(tr('PDF数量：{arg0}', arg0=len(pdfs)))
+        write_log_line(tr('LLM核验：{arg0}', arg0=tr('启用，模型=') + llm_model if llm_review_enabled else tr('未启用')))
 
         for index, pdf in enumerate(pdfs, start=1):
             if self.stop_requested:
-                self.log_queue.put(("log", "用户请求停止，批处理已中止。"))
+                self.log_queue.put(("log", tr('用户请求停止，批处理已中止。')))
                 break
 
             out_path = build_output_path(pdf, input_dir, output_dir, preserve_subfolders, existing)
             self.log_queue.put(("file_start", (index, len(pdfs), pdf.name)))
-            self.log_queue.put(("status", f"正在处理 {index}/{len(pdfs)}：{pdf.name}"))
-            self.log_queue.put(("page_progress", ("new", 0, 0, 0.0, "当前文件页数进度：等待提交")))
+            self.log_queue.put(("status", tr('正在处理 {arg0}/{arg1}：{arg2}', arg0=index, arg1=len(pdfs), arg2=pdf.name)))
+            self.log_queue.put(("page_progress", ("new", 0, 0, 0.0, tr('当前文件页数进度：等待提交'))))
             self.log_queue.put(("split_progress", (0, 0)))
-            self.log_queue.put(("log", f"[{index}/{len(pdfs)}] 开始：{pdf}"))
+            self.log_queue.put(("log", tr('[{arg0}/{arg1}] 开始：{arg2}', arg0=index, arg1=len(pdfs), arg2=pdf)))
 
             size_mb = get_file_size_mb(pdf)
             large_final_json = out_path.with_suffix(".json")
@@ -2802,15 +2489,15 @@ class PaddleOCRBatchGUI:
 
             if output_complete and not overwrite:
                 skipped += 1
-                self.log_queue.put(("log", f"跳过：输出已存在且完整 {out_path}"))
-                write_log_line(f"SKIP\t{pdf}\t{out_path}\t输出已存在")
+                self.log_queue.put(("log", tr('跳过：输出已存在且完整 {arg0}', arg0=out_path)))
+                write_log_line(tr('SKIP\t{arg0}\t{arg1}\t输出已存在', arg0=pdf, arg1=out_path))
                 self.log_queue.put(("file_progress", index))
                 continue
 
             try:
                 if size_mb > MAX_LOCAL_UPLOAD_MB:
                     split_count += 1
-                    self.log_queue.put(("log", f"检测到大文件 {size_mb:.2f}MB，开始自动拆分：{pdf.name}"))
+                    self.log_queue.put(("log", tr('检测到大文件 {arg0:.2f}MB，开始自动拆分：{arg1}', arg0=size_mb, arg1=pdf.name)))
                     markdown, raw_data = process_split_pdf_async(
                         pdf_path=pdf, output_md_path=out_path, output_root=output_dir, token=token,
                         model_name=model_name, base_url=base_url, request_timeout=request_timeout,
@@ -2843,25 +2530,25 @@ class PaddleOCRBatchGUI:
                 except ProcessingCancelled as exc:
                     raise StopRequested(str(exc)) from exc
                 except Exception as exc:
-                    self.log_queue.put(("log", f"OCR 已保存，但后续文献处理失败：{out_path}；{exc}"))
+                    self.log_queue.put(("log", tr('OCR 已保存，但后续文献处理失败：{arg0}；{arg1}', arg0=out_path, arg1=exc)))
                     write_log_line(f"POSTPROCESS_FAIL\t{out_path}\t{exc}")
                     failed += 1
                     self.log_queue.put(("file_progress", index))
                     continue
                 ok += 1
-                self.log_queue.put(("log", f"完成：{out_path}"))
+                self.log_queue.put(("log", tr('完成：{arg0}', arg0=out_path)))
             except StopRequested as e:
-                self.log_queue.put(("log", f"已停止：{e}"))
+                self.log_queue.put(("log", tr('已停止：{arg0}', arg0=e)))
                 write_log_line(f"STOP\t{pdf}\t{out_path}\t{e}")
                 break
             except QueueFullSkipped as e:
                 skipped += 1
-                self.log_queue.put(("log", f"跳过：{pdf}\n{e}"))
+                self.log_queue.put(("log", tr('跳过：{arg0}\n{arg1}', arg0=pdf, arg1=e)))
                 write_log_line(f"SKIP_QUEUE_FULL\t{pdf}\t{out_path}\t{e}")
             except Exception as e:
                 failed += 1
                 err = "".join(traceback.format_exception_only(type(e), e)).strip()
-                self.log_queue.put(("log", f"失败：{pdf}\n{err}"))
+                self.log_queue.put(("log", tr('失败：{arg0}\n{arg1}', arg0=pdf, arg1=err)))
                 write_log_line(f"FAIL\t{pdf}\t{out_path}\t{err}")
                 err_path = out_path.with_suffix(".error.txt")
                 try:
@@ -2875,12 +2562,11 @@ class PaddleOCRBatchGUI:
         end_time = datetime.now()
         elapsed = end_time - start_time
         summary = (
-            f"批处理结束：成功 {ok}，跳过 {skipped}，失败 {failed}，"
-            f"自动拆分大文件 {split_count} 个，耗时 {elapsed}。日志：{log_path}"
+            tr('批处理结束：成功 {arg0}，跳过 {arg1}，失败 {arg2}，自动拆分大文件 {arg3} 个，耗时 {arg4}。日志：{arg5}', arg0=ok, arg1=skipped, arg2=failed, arg3=split_count, arg4=elapsed, arg5=log_path)
         )
         if quality_warning_count:
-            summary += f" 警告：{OCR_QUALITY_WARNING}（{quality_warning_count} 个文件）"
-        write_log_line(f"结束时间：{end_time:%Y-%m-%d %H:%M:%S}")
+            summary += tr(' 警告：{arg0}（{arg1} 个文件）', arg0=tr(OCR_QUALITY_WARNING), arg1=quality_warning_count)
+        write_log_line(tr('结束时间：{arg0:%Y-%m-%d %H:%M:%S}', arg0=end_time))
         write_log_line(summary)
         self.log_queue.put(("done", summary))
 
@@ -2889,9 +2575,9 @@ class PaddleOCRBatchGUI:
             while True:
                 typ, payload = self.log_queue.get_nowait()
                 if typ == "log":
-                    self.log(str(payload))
+                    self.log(payload)
                 elif typ == "status":
-                    self.status_var.set(str(payload))
+                    self.status_var.set(payload)
                 elif typ == "file_start":
                     index, total, _filename = payload
                     self.total_files = int(total)
@@ -2910,26 +2596,26 @@ class PaddleOCRBatchGUI:
                     if total_pages and total_pages > 0:
                         self.page_progress.config(mode="determinate", maximum=100)
                         self.page_progress_var.set(float(percent))
-                        self.page_progress_text_var.set(f"当前文件页数进度：{done_pages}/{total_pages} 页，{percent:.2f}%")
+                        self.page_progress_text_var.set(tr('当前文件页数进度：{arg0}/{arg1} 页，{arg2:.2f}%', arg0=done_pages, arg1=total_pages, arg2=percent))
                         self.current_file_percent = float(percent)
                     elif state in {"pending", "new"}:
                         self.page_progress.config(mode="determinate", maximum=100)
                         self.page_progress_var.set(0)
-                        self.page_progress_text_var.set(f"当前文件页数进度：{message}")
+                        self.page_progress_text_var.set(tr('当前文件页数进度：{arg0}', arg0=message))
                         self.current_file_percent = 0.0
                     elif state == "done":
                         self.page_progress.config(mode="determinate", maximum=100)
                         self.page_progress_var.set(100)
-                        self.page_progress_text_var.set("当前文件页数进度：100.00%")
+                        self.page_progress_text_var.set(tr('当前文件页数进度：100.00%'))
                         self.current_file_percent = 100.0
                     else:
-                        self.page_progress_text_var.set(f"当前文件页数进度：{message}")
+                        self.page_progress_text_var.set(tr('当前文件页数进度：{arg0}', arg0=message))
                     self._refresh_file_progress_display()
                 elif typ == "split_progress":
                     completed_segments, total_segments = payload
                     if int(total_segments) > 0:
                         self.split_progress_text_var.set(
-                            f"大文件分段进度：当前文件已处理 {int(completed_segments)}/{int(total_segments)} 段"
+                            tr('大文件分段进度：当前文件已处理 {arg0}/{arg1} 段', arg0=int(completed_segments), arg1=int(total_segments))
                         )
                         self.split_progress_label.grid()
                     else:
@@ -2937,73 +2623,74 @@ class PaddleOCRBatchGUI:
                         self.split_progress_label.grid_remove()
                 elif typ == "keycheck":
                     ok = bool(payload.get("ok"))
-                    msg = str(payload.get("msg"))
+                    msg = payload.get("msg") or ""
                     self.log(msg)
                     self.status_var.set(msg)
                     if ok:
-                        messagebox.showinfo("API Key 检测", msg, parent=self.root)
+                        messagebox.showinfo(tr('API Key 检测'), msg, parent=self.root)
                     else:
-                        messagebox.showerror("API Key 检测", msg, parent=self.root)
+                        messagebox.showerror(tr('API Key 检测'), msg, parent=self.root)
                 elif typ == "llm_models":
                     self.fetch_models_btn.config(state="normal")
                     error = payload.get("error")
                     if error:
-                        self.status_var.set("拉取 LLM 模型列表失败。")
-                        self.log(f"拉取 LLM 模型列表失败：{error}")
-                        messagebox.showerror("拉取模型失败", str(error), parent=self.root)
+                        self.status_var.set(tr('拉取 LLM 模型列表失败。'))
+                        self.log(tr('拉取 LLM 模型列表失败：{arg0}', arg0=error))
+                        messagebox.showerror(tr('拉取模型失败'), str(error), parent=self.root)
                     else:
                         models = list(payload.get("models") or [])
                         self.llm_model_combo.configure(values=models)
                         if models and self.llm_model_var.get() not in models:
                             self.llm_model_var.set(models[0])
                         self.save_current_config()
-                        msg = f"已拉取 {len(models)} 个 LLM 模型。"
+                        msg = tr('已拉取 {arg0} 个 LLM 模型。', arg0=len(models))
                         self.status_var.set(msg)
                         self.log(msg)
                 elif typ == "llm_api_test":
                     self.test_llm_api_btn.config(state="normal")
                     error = payload.get("error")
                     if error:
-                        msg = f"LLM API 测试失败：{error}"
+                        msg = tr('LLM API 测试失败：{arg0}', arg0=error)
                         self.status_var.set(msg)
                         self.log(msg)
-                        messagebox.showerror("LLM API 测试", msg, parent=self.root)
+                        messagebox.showerror(tr('LLM API 测试'), msg, parent=self.root)
                     else:
                         reply = str(payload.get("reply") or "")
-                        msg = f"LLM API 测试成功。模型回复：{reply}"
+                        msg = tr('LLM API 测试成功。模型回复：{arg0}', arg0=reply)
                         self.status_var.set(msg)
                         self.log(msg)
-                        messagebox.showinfo("LLM API 测试", msg, parent=self.root)
+                        messagebox.showinfo(tr('LLM API 测试'), msg, parent=self.root)
                 elif typ == "manual_llm_done":
                     lines = []
                     for item in payload:
                         name = Path(item["path"]).name
                         if item.get("error"):
-                            lines.append(f"{name}：检验失败；{item['error']}")
+                            lines.append(tr('{arg0}：检验失败；{arg1}', arg0=name, arg1=item['error']))
                         else:
-                            conclusion = "发现疑似转换问题" if item["review"]["hasProblem"] else "未发现明显问题"
-                            lines.append(f"{name}：{conclusion}；报告：{item['report']}")
-                    summary = "\n".join(lines)
-                    self.status_var.set("手动 LLM 检验完成。")
-                    self.log("手动 LLM 检验完成：\n" + summary)
-                    messagebox.showinfo("手动 LLM 检验", summary, parent=self.root)
+                            conclusion = tr('发现疑似转换问题') if item["review"]["hasProblem"] else tr('未发现明显问题')
+                            lines.append(tr('{arg0}：{arg1}；报告：{arg2}', arg0=name, arg1=conclusion, arg2=item['report']))
+                    summary = join_text("\n", lines)
+                    self.status_var.set(tr('手动 LLM 检验完成。'))
+                    self.log(tr('手动 LLM 检验完成：\n') + summary)
+                    messagebox.showinfo(tr('手动 LLM 检验'), summary, parent=self.root)
                 elif typ == "repair_done":
-                    summary = str(payload.get("summary"))
+                    summary = payload.get("summary") or ""
                     self.log(summary)
                     self.status_var.set(summary)
-                    messagebox.showinfo("JSON修复完成", summary, parent=self.root)
+                    messagebox.showinfo(tr('JSON修复完成'), summary, parent=self.root)
                 elif typ == "done":
-                    self.log(str(payload))
-                    self.status_var.set(str(payload))
+                    self.log(payload)
+                    self.status_var.set(payload)
                     if self.total_files > 0 and not self.stop_requested:
                         self.completed_files = self.total_files
                         self.current_file_index = self.total_files
                         self.current_file_percent = 100.0
                         self._refresh_file_progress_display()
                     self.start_btn.config(state="normal")
+                    self.literature.start_button.config(state="normal")
                     self.manual_query_btn.config(state="disabled")
                     self.stop_btn.config(state="disabled")
-                    messagebox.showinfo("完成", str(payload), parent=self.root)
+                    messagebox.showinfo(tr('完成'), str(payload), parent=self.root)
         except queue.Empty:
             pass
         self.root.after(100, self._poll_log_queue)
@@ -3028,8 +2715,27 @@ class PaddleOCRBatchGUI:
             return "success"
         return "info"
 
+    def change_ui_language(self, locale: str) -> None:
+        set_language(locale)
+        self.root.tk.call("::msgcat::mclocale", "en" if language() == "en" else "zh_cn")
+        self.root.title(f"{tr(APP_NAME)} | {APP_VERSION}")
+        self.workspace_layout.refresh_language()
+        self.refresh_log_language()
+        self.save_current_config()
+
+    def refresh_log_language(self) -> None:
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        for ts, message in self.log_history:
+            self.log_text.insert("end", f"[{ts}] ", ("timestamp",))
+            self.log_text.insert("end", f"{tr(message)}\n", (self._log_message_tag(str(tr(message))),))
+        self.log_text.configure(state="disabled")
+        self.log_text.see("end")
+
     def log(self, message: str) -> None:
         ts = datetime.now().strftime("%H:%M:%S")
+        self.log_history.append((ts, message))
+        message = tr(message)
         tag = self._log_message_tag(message)
         self.log_text.configure(state="normal")
         self.log_text.insert("end", f"[{ts}] ", ("timestamp",))
