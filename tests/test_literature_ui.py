@@ -75,6 +75,7 @@ class DesktopLayoutTests(unittest.TestCase):
         cls.config_patch.start()
         cls.save_patch = patch.object(application, "save_config")
         cls.save_patch.start()
+        application.configure_unicode_ui_fonts(cls.root)
         application.configure_design_language(cls.root)
         cls.app = application.PaddleOCRBatchGUI(cls.root)
         cls.root.update()
@@ -95,6 +96,73 @@ class DesktopLayoutTests(unittest.TestCase):
                 self.assertGreaterEqual(log.winfo_height(), 40)
                 self.assertLessEqual(log.winfo_rooty() + log.winfo_height(), self.root.winfo_rooty() + height)
                 self.assertLessEqual(log.winfo_rootx() + log.winfo_width(), self.root.winfo_rootx() + width)
+                self.app.notebook.select(0)
+                self.root.update()
+                button = self.app.start_btn
+                self.assertTrue(button.winfo_viewable())
+                self.assertLessEqual(button.winfo_rooty() + button.winfo_height(), self.root.winfo_rooty() + height)
+
+    def test_forms_reflow_after_wide_and_narrow_resizes(self):
+        for width, wide in ((1100, True), (640, False), (1100, True), (540, False)):
+            self.root.geometry(f"{width}x780")
+            self.root.update()
+            self.assertTrue(all(value is wide for value in self.app.workspace_layout.form_columns.values()))
+
+    def test_settings_keep_models_off_the_task_page_and_save_on_return(self):
+        shell = self.app.workspace_layout
+        shell.show_settings(1)
+        self.root.update()
+        self.assertTrue(shell.settings.winfo_viewable())
+        self.assertEqual(shell.settings_tabs.index(shell.settings_tabs.select()), 1)
+        profile = self.app.literature.profiles["translator"]
+        previous = profile.model.get()
+        profile.model.set("saved-model-id")
+        shell.close_settings()
+        self.root.update()
+        self.assertFalse(shell.settings.winfo_viewable())
+        self.assertEqual(self.app.config.literature["translator"]["model"], "saved-model-id")
+        profile.model.set(previous)
+
+    def test_running_page_and_split_progress_do_not_push_logs_out_of_small_window(self):
+        self.root.geometry("540x420")
+        self.app.worker_thread = Mock()
+        self.app.worker_thread.is_alive.return_value = True
+        self.app.page_progress_text_var.set("当前文件页数进度：128/900 页，14.22%")
+        self.app.page_progress_var.set(14.22)
+        self.app.split_progress_text_var.set("大文件分段进度：当前文件已处理 1/12 段")
+        self.app.split_progress_label.grid()
+        self.root.update()
+        self.assertGreaterEqual(self.app.log_text.winfo_height(), 40)
+        self.assertLessEqual(self.app.log_text.winfo_rooty() + self.app.log_text.winfo_height(),
+                             self.root.winfo_rooty() + self.root.winfo_height())
+        self.app.worker_thread = None
+        self.app.page_progress_var.set(0)
+        self.app.split_progress_label.grid_remove()
+
+    def test_keyboard_navigation_and_long_values_keep_actions_reachable(self):
+        self.root.geometry("640x480")
+        self.root.update()
+        self.root.focus_force()
+        self.root.event_generate("<Control-Key-2>")
+        self.root.update()
+        self.assertEqual(self.app.notebook.index(self.app.notebook.select()), 1)
+        long_path = "/home/researcher/Documents/国际关系研究/国际制度演变与区域合作机制/英文原始文献与补充材料/"
+        controls = self.app.literature
+        controls.input.set(long_path)
+        controls.profiles["translator"].model.set("moonshot-v1-128k-research-literature-translation")
+        self.app.status_var.set("正在处理：Regional Institutions and the Transformation of International Order — Supplementary Appendix.md")
+        self.root.update()
+        self.assertTrue(controls.start_button.winfo_viewable())
+        self.assertLessEqual(controls.start_button.winfo_rootx() + controls.start_button.winfo_width(),
+                             self.root.winfo_rootx() + self.root.winfo_width())
+        self.app.workspace_layout.status_tip.show()
+        self.assertTrue(self.app.workspace_layout.status_tip.window.winfo_exists())
+        self.app.workspace_layout.status_tip.close()
+        controls.input.set("")
+        controls.profiles["translator"].model.set("")
+        self.root.event_generate("<Control-Key-1>")
+        self.root.update()
+        self.assertEqual(self.app.notebook.index(self.app.notebook.select()), 0)
 
     def test_both_entries_and_default_translation_settings(self):
         tabs = self.app.notebook.tabs()
@@ -177,7 +245,8 @@ class DesktopLayoutTests(unittest.TestCase):
         controls.decision_dialog({"filename": "paper.md", "chunk": 1, "source": "original",
                                  "first": "first", "second": "second", "comparison": {"has_problem": True}}, result)
         self.root.update()
-        dialog = next(widget for widget in self.root.winfo_children() if isinstance(widget, tk.Toplevel))
+        dialog = next(widget for widget in self.root.winfo_children()
+                      if isinstance(widget, tk.Toplevel) and widget.winfo_viewable())
         notebook = next(widget for widget in dialog.winfo_children() if isinstance(widget, application.ttk.Notebook))
         self.assertEqual(len(notebook.tabs()), 4)
         def buttons(widget):

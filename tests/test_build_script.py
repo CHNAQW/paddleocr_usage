@@ -53,3 +53,10 @@ def test_windows_version_reference_has_matching_fixed_and_display_versions():
     assert fixed_versions == {"filevers": (26, 10, 17, 1), "prodvers": (26, 10, 17, 1)}
     assert display_versions["FileVersion"] == display_versions["ProductVersion"] == "26.10.17.1"
     assert display_versions["OriginalFilename"] == "PaddleOCR_PDF_to_MD_26.10.17.1.exe"
+
+
+def test_source_launchers_check_all_required_workspace_modules():
+    """A partial source download should fail clearly before opening the application."""
+    for name in ("start_paddleocr_pdf_to_md_SAFE.bat", "build_paddleocr_pdf_to_md_EXE.bat"):
+        script = BUILD_SCRIPT.with_name(name).read_text(encoding="utf-8")
+        assert "(literature_processing.py literature_ui.py workspace_ui.py)" in script

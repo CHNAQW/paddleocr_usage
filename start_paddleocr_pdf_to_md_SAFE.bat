@@ -31,7 +31,7 @@ if not exist "%SCRIPT%" (
     exit /b 1
 )
 
-for %%F in (literature_processing.py literature_ui.py) do (
+for %%F in (literature_processing.py literature_ui.py workspace_ui.py) do (
     if not exist "%ROOT%%%F" (
         echo [错误] 缺少文献处理模块：%%F，请完整解压源码。
         pause

@@ -38,7 +38,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-from literature_ui import LiteratureControls, scrollable_page
+from workspace_ui import WorkspaceLayout, configure_workspace_theme
 from literature_processing import ProcessingCancelled
 
 import tkinter as tk
@@ -124,107 +124,8 @@ DESIGN_COLORS = {
 
 
 def configure_design_language(root: tk.Tk) -> None:
-    """Apply a crisp, calm design language inspired by design-engineering rules.
-
-    Tkinter does not support the full motion system of web UI, so this function
-    focuses on the transferable pieces: quiet surfaces, strong hierarchy, exact
-    states, and responsive controls that avoid ornamental animation.
-    """
-    colors = DESIGN_COLORS
-    root.configure(bg=colors["canvas"])
-
-    style = ttk.Style(root)
-    try:
-        style.theme_use("clam")
-    except Exception:
-        pass
-
-    style.configure(".", background=colors["canvas"], foreground=colors["text"])
-    style.configure("TFrame", background=colors["canvas"])
-    style.configure(
-        "TLabelframe",
-        background=colors["surface"],
-        bordercolor=colors["border"],
-        relief="solid",
-        padding=12,
-    )
-    style.configure(
-        "TLabelframe.Label",
-        background=colors["canvas"],
-        foreground=colors["muted"],
-        font=("TkDefaultFont", 10, "bold"),
-    )
-    style.configure("TLabel", background=colors["surface"], foreground=colors["text"])
-    style.configure(
-        "HeroTitle.TLabel",
-        background=colors["canvas"],
-        foreground=colors["text"],
-        font=("TkDefaultFont", 16, "bold"),
-    )
-    style.configure(
-        "HeroSubtitle.TLabel",
-        background=colors["canvas"],
-        foreground=colors["muted"],
-        font=("TkDefaultFont", 10),
-    )
-    style.configure(
-        "TEntry",
-        fieldbackground=colors["surface"],
-        foreground=colors["text"],
-        bordercolor=colors["border"],
-        lightcolor=colors["border"],
-        darkcolor=colors["border"],
-        padding=6,
-    )
-    style.map("TEntry", bordercolor=[("focus", colors["accent"])])
-    style.configure(
-        "TButton",
-        background=colors["surface_muted"],
-        foreground=colors["text"],
-        bordercolor=colors["border"],
-        focusthickness=1,
-        focuscolor=colors["accent_soft"],
-        padding=(12, 7),
-        relief="flat",
-    )
-    style.map(
-        "TButton",
-        background=[("pressed", colors["border"]), ("active", colors["accent_soft"])],
-        foreground=[("disabled", colors["muted"])],
-        relief=[("pressed", "sunken")],
-    )
-    style.configure(
-        "Accent.TButton",
-        background=colors["accent"],
-        foreground="#ffffff",
-        bordercolor=colors["accent"],
-        padding=(16, 8),
-    )
-    style.map(
-        "Accent.TButton",
-        background=[
-            ("pressed", colors["accent_active"]),
-            ("active", colors["accent_active"]),
-            ("disabled", colors["border"]),
-        ],
-        foreground=[("disabled", colors["muted"]), ("!disabled", "#ffffff")],
-    )
-    style.configure(
-        "TCheckbutton",
-        background=colors["surface"],
-        foreground=colors["text"],
-        padding=4,
-    )
-    style.configure("TCombobox", padding=6)
-    style.configure(
-        "Horizontal.TProgressbar",
-        troughcolor=colors["surface_muted"],
-        background=colors["accent"],
-        bordercolor=colors["surface_muted"],
-        lightcolor=colors["accent"],
-        darkcolor=colors["accent"],
-        thickness=10,
-    )
+    """Apply the shared desktop theme before building the workspace."""
+    configure_workspace_theme(root)
 
 
 def resource_path(relative_name: str) -> Path:
@@ -2088,210 +1989,9 @@ class PaddleOCRBatchGUI:
         return "已保存 Access Token/API Key" if self.config.token else "尚未保存 Access Token/API Key"
 
     def _build_ui(self) -> None:
-        pad = {"padx": 10, "pady": 6}
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(1, weight=1)
-
-        brand = ttk.Frame(self.root)
-        brand.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 0))
-        brand.columnconfigure(1, weight=1)
-
-        try:
-            brand_icon_source = tk.PhotoImage(
-                file=str(resource_path(APP_ICON_PNG_NAME))
-            )
-            brand_icon = brand_icon_source.subsample(14, 14)
-            self._brand_icon_source = brand_icon_source
-            self._brand_icon = brand_icon
-            ttk.Label(brand, image=brand_icon).grid(
-                row=0, column=0, sticky="w", padx=(0, 8)
-            )
-        except Exception:
-            pass
-
-        title_stack = ttk.Frame(brand)
-        title_stack.grid(row=0, column=1, sticky="w")
-        ttk.Label(
-            title_stack,
-            text=APP_NAME,
-            style="HeroTitle.TLabel",
-        ).grid(row=0, column=0, sticky="w")
-        ttk.Label(
-            title_stack,
-            text=f"{APP_VERSION} · PDF OCR · 外文翻译 · 文献核验",
-            style="HeroSubtitle.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
-
-        self.workspace_panes = tk.PanedWindow(self.root, orient="vertical", sashwidth=8,
-                                              bg=DESIGN_COLORS["border"], bd=0)
-        self.workspace_panes.grid(row=1, column=0, sticky="nsew", padx=8, pady=6)
-        self.notebook = ttk.Notebook(self.workspace_panes)
-        self.workspace_panes.add(self.notebook, minsize=140, stretch="always")
-        ocr_page = scrollable_page(self.notebook, "PDF OCR 转 MD功能")
-        translation_page = scrollable_page(self.notebook, "外文文献翻译功能")
-        self.literature = LiteratureControls(self, translation_page,
-                                            fetch_openai_compatible_models, check_openai_compatible_api)
-        top = ttk.LabelFrame(ocr_page, text="1. 选择项目文件夹")
-        top.grid(row=1, column=0, sticky="ew", **pad)
-        top.columnconfigure(1, weight=1)
-
-        ttk.Label(top, text="PDF输入文件夹：").grid(row=0, column=0, sticky="w", padx=8, pady=8)
-        ttk.Entry(top, textvariable=self.input_var, width=12).grid(row=0, column=1, sticky="ew", padx=8, pady=8)
-        ttk.Button(top, text="选择…", command=self.choose_input_dir).grid(row=0, column=2, padx=8, pady=8)
-
-        ttk.Label(top, text="Markdown输出文件夹：").grid(row=1, column=0, sticky="w", padx=8, pady=8)
-        ttk.Entry(top, textvariable=self.output_var, width=12).grid(row=1, column=1, sticky="ew", padx=8, pady=8)
-        ttk.Button(top, text="选择…", command=self.choose_output_dir).grid(row=1, column=2, padx=8, pady=8)
-
-        opts = ttk.LabelFrame(ocr_page, text="2. 设置")
-        opts.grid(row=2, column=0, sticky="ew", **pad)
-        opts.columnconfigure(0, weight=1)
-
-        options_row = ttk.Frame(opts)
-        options_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(4, 0))
-        options_row.columnconfigure(1, weight=1)
-        ttk.Label(options_row, text="模型：").grid(row=0, column=0, sticky="w", padx=4, pady=4)
-        self.model_combo = ttk.Combobox(
-            options_row, textvariable=self.model_var, values=MODEL_CHOICES, state="readonly", width=22
-        )
-        self.model_combo.grid(row=0, column=1, sticky="w", padx=4, pady=4)
-        ttk.Checkbutton(options_row, text="递归处理子文件夹", variable=self.recursive_var).grid(
-            row=1, column=0, columnspan=2, sticky="w", padx=4, pady=4
-        )
-        ttk.Checkbutton(options_row, text="输出时保留子文件夹结构", variable=self.preserve_var).grid(
-            row=2, column=0, columnspan=2, sticky="w", padx=4, pady=4
-        )
-        ttk.Checkbutton(options_row, text="覆盖已存在 .md", variable=self.overwrite_var).grid(
-            row=3, column=0, columnspan=2, sticky="w", padx=4, pady=4
-        )
-
-        token_row = ttk.Frame(opts)
-        token_row.grid(row=1, column=0, sticky="ew", padx=6, pady=2)
-        token_row.columnconfigure(0, weight=1)
-        ttk.Label(token_row, textvariable=self.token_state_var).grid(row=0, column=0, columnspan=3, sticky="w", padx=4, pady=4)
-        ttk.Button(token_row, text="输入/更新 Access Token", command=self.set_token).grid(row=1, column=0, padx=4, pady=4)
-        ttk.Button(token_row, text="检测 API Key 是否有效", command=self.check_api_key).grid(row=1, column=1, padx=4, pady=4)
-        ttk.Button(token_row, text="清除已保存 Token", command=self.clear_token).grid(row=1, column=2, padx=4, pady=4)
-
-        utility_row = ttk.Frame(opts)
-        utility_row.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
-        ttk.Button(utility_row, text="扫描PDF数量", command=self.scan_pdfs).grid(row=0, column=0, sticky="ew", padx=4, pady=4)
-        ttk.Button(utility_row, text="修复JSON为MD", command=self.repair_json_to_md).grid(row=0, column=1, sticky="ew", padx=4, pady=4)
-        ttk.Button(utility_row, text="手动字数检验", command=self.manual_wordcount_check).grid(row=0, column=2, sticky="ew", padx=4, pady=4)
-        ttk.Button(utility_row, text="手动LLM检验", command=self.manual_llm_check).grid(row=1, column=0, sticky="ew", padx=4, pady=4)
-        ttk.Button(utility_row, text="打开输出文件夹", command=self.open_output_dir).grid(row=1, column=1, sticky="ew", padx=4, pady=4)
-        ttk.Button(utility_row, text="显示配置位置", command=self.show_config_path).grid(row=1, column=2, sticky="ew", padx=4, pady=4)
-
-        llm_row = ttk.Frame(opts)
-        llm_row.grid(row=3, column=0, sticky="ew", padx=6, pady=(0, 6))
-        llm_row.columnconfigure(1, weight=1)
-        ttk.Checkbutton(llm_row, text="使用 LLM 核验 .md 转换质量", variable=self.llm_review_var).grid(row=0, column=0, columnspan=2, sticky="w", padx=4, pady=4)
-        ttk.Label(llm_row, text="Base URL：").grid(row=1, column=0, sticky="w", padx=4)
-        ttk.Entry(llm_row, textvariable=self.llm_base_url_var, width=12).grid(row=1, column=1, sticky="ew", padx=4, pady=4)
-        ttk.Label(llm_row, text="API Key：").grid(row=2, column=0, sticky="w", padx=4)
-        ttk.Entry(llm_row, textvariable=self.llm_api_key_var, show="*", width=12).grid(row=2, column=1, sticky="ew", padx=4, pady=4)
-        ttk.Label(llm_row, text="模型：").grid(row=3, column=0, sticky="w", padx=4)
-        self.llm_model_combo = ttk.Combobox(llm_row, textvariable=self.llm_model_var, width=12)
-        self.llm_model_combo.grid(row=3, column=1, sticky="ew", padx=4, pady=4)
-        model_actions = ttk.Frame(llm_row)
-        model_actions.grid(row=4, column=0, columnspan=2, sticky="w")
-        self.fetch_models_btn = ttk.Button(model_actions, text="拉取模型列表", command=self.fetch_llm_models)
-        self.fetch_models_btn.pack(side="left", padx=4, pady=4)
-        self.test_llm_api_btn = ttk.Button(model_actions, text="测试LLM API", command=self.test_llm_api)
-        self.test_llm_api_btn.pack(side="left", padx=4, pady=4)
-
-        ttk.Checkbutton(opts, text="是否自动检测外文文献并提供翻译（设置见入口2）",
-                        variable=self.literature.auto_translate).grid(row=4, column=0, sticky="w", padx=10, pady=6)
-        ttk.Label(opts, text="GitHub 上传与翻译输出设置在“外文文献翻译功能”中，两个入口共用。",
-                  wraplength=500).grid(row=5, column=0, sticky="w", padx=10, pady=4)
-
-        run_box = ttk.LabelFrame(ocr_page, text="3. 批处理")
-        run_box.grid(row=3, column=0, sticky="ew", **pad)
-        run_box.columnconfigure(0, weight=1)
-
-        ttk.Label(run_box, textvariable=self.file_progress_text_var).grid(
-            row=0, column=0, sticky="w", padx=8, pady=(8, 0)
-        )
-        self.file_progress = ttk.Progressbar(run_box, mode="determinate", maximum=100, variable=self.file_progress_var)
-        self.file_progress.grid(row=1, column=0, sticky="ew", padx=8, pady=6)
-
-        ttk.Label(run_box, textvariable=self.page_progress_text_var).grid(row=2, column=0, sticky="w", padx=8, pady=(8, 0))
-        self.page_progress = ttk.Progressbar(run_box, mode="determinate", maximum=100, variable=self.page_progress_var)
-        self.page_progress.grid(row=3, column=0, sticky="ew", padx=8, pady=6)
-
-        self.split_progress_label = ttk.Label(run_box, textvariable=self.split_progress_text_var)
-        self.split_progress_label.grid(row=4, column=0, sticky="w", padx=8, pady=(2, 0))
-        self.split_progress_label.grid_remove()
-
-        self.status_label = ttk.Label(run_box, textvariable=self.status_var, wraplength=900)
-        self.status_label.grid(row=5, column=0, sticky="ew", padx=8, pady=(8, 2))
-
-        action_row = ttk.Frame(run_box)
-        action_row.grid(row=6, column=0, sticky="ew", padx=8, pady=(2, 8))
-        action_row.columnconfigure(0, weight=1)
-        self.manual_query_btn = ttk.Button(
-            action_row, text="手动查询当前结果", command=self.manual_query_current_result, state="disabled"
-        )
-        self.manual_query_btn.grid(row=0, column=1, sticky="e", padx=(8, 4))
-        self.stop_btn = tk.Button(
-            action_row,
-            text="停止转换",
-            command=self.request_stop,
-            state="disabled",
-            bg=DESIGN_COLORS["danger"],
-            fg="white",
-            activebackground=DESIGN_COLORS["danger_active"],
-            activeforeground="white",
-            disabledforeground="#f4f4f4",
-            relief="raised",
-            padx=14,
-            pady=3,
-            font="TkDefaultFont",
-        )
-        self.stop_btn.grid(row=0, column=2, sticky="e", padx=4)
-        self.start_btn = ttk.Button(
-            action_row, text="开始批量转换", command=self.start_batch, style="Accent.TButton"
-        )
-        self.start_btn.grid(row=0, column=3, sticky="e", padx=(4, 0))
-
-        log_frame = ttk.LabelFrame(self.workspace_panes, text="运行日志（拖动上方分隔条调整高度）")
-        self.workspace_panes.add(log_frame, minsize=110, height=180, stretch="never")
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
-
-        self.log_text = tk.Text(
-            log_frame,
-            wrap="word",
-            height=6,
-            font="TkTextFont",
-            bg=DESIGN_COLORS["log_bg"],
-            fg=DESIGN_COLORS["log_fg"],
-            insertbackground=DESIGN_COLORS["log_fg"],
-            relief="flat",
-            bd=0,
-            highlightthickness=1,
-            highlightbackground=DESIGN_COLORS["log_panel_border"],
-            highlightcolor=DESIGN_COLORS["accent"],
-            padx=14,
-            pady=12,
-            spacing1=2,
-            spacing3=6,
-            state="disabled",
-        )
-        self.log_text.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=8)
-        self._configure_log_tags()
-        yscroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
-        yscroll.grid(row=0, column=1, sticky="ns", padx=(0, 8), pady=8)
-        self.log_text.configure(yscrollcommand=yscroll.set)
-
-        self.root.bind("<Configure>", self._on_resize)
-        self.log("程序已启动。请选择 PDF OCR 或外文文献翻译入口；仅 OCR 需要 PaddleOCR Token。")
-        self.log(f"当前程序版本：{APP_VERSION}")
-        self.log(f"配置文件位置：{CONFIG_PATH}")
-        self.log("提示：超过 50MB 的 PDF 会自动拆分、逐段 OCR，并合并为一个同名 .md 和 .json。")
-        self.log("提示：运行中可点击“手动查询当前结果”，立即查询当前 OCR 任务状态。")
-        self.log("提示：如果已经生成 .raw.json 或下载了 jsonUrl，可用“修复JSON为MD”重新提取 Markdown。")
-        self.log("提示：可选用 OpenAI-compatible LLM（如 DeepSeek）逐段核验生成的 .md，并保存 .llm-review.json 报告。")
+        WorkspaceLayout(self, MODEL_CHOICES, fetch_openai_compatible_models, check_openai_compatible_api, APP_VERSION)
+        self.log("欢迎使用文献处理软件。选择文件夹即可开始；连接服务请打开偏好设置。")
+        self.log(f"当前版本：{APP_VERSION}。OCR、翻译与质量检查的结果将在这里显示。")
 
     def _on_resize(self, event: tk.Event) -> None:
         if event.widget == self.root:
@@ -2671,6 +2371,7 @@ class PaddleOCRBatchGUI:
         self.literature.cancel_event.clear()
         self.manual_query_event.clear()
         self.start_btn.config(state="disabled")
+        self.literature.start_button.config(state="disabled")
         self.manual_query_btn.config(state="normal")
         self.stop_btn.config(state="normal")
         self.total_files = len(pdfs)
@@ -3001,6 +2702,7 @@ class PaddleOCRBatchGUI:
                         self.current_file_percent = 100.0
                         self._refresh_file_progress_display()
                     self.start_btn.config(state="normal")
+                    self.literature.start_button.config(state="normal")
                     self.manual_query_btn.config(state="disabled")
                     self.stop_btn.config(state="disabled")
                     messagebox.showinfo("完成", str(payload), parent=self.root)

@@ -22,7 +22,8 @@ def scrollable_page(notebook, title):
     outer = ttk.Frame(notebook)
     outer.rowconfigure(0, weight=1)
     outer.columnconfigure(0, weight=1)
-    canvas = tk.Canvas(outer, highlightthickness=0, width=400, height=200)
+    canvas = tk.Canvas(outer, highlightthickness=0, width=400, height=200,
+                       background=ttk.Style().lookup("TFrame", "background"))
     canvas.grid(row=0, column=0, sticky="nsew")
     vertical = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
     vertical.grid(row=0, column=1, sticky="ns")
@@ -36,6 +37,10 @@ def scrollable_page(notebook, title):
     def resize(_event=None):
         canvas.itemconfigure(window, width=max(canvas.winfo_width(), content.winfo_reqwidth()))
         canvas.configure(scrollregion=canvas.bbox("all"))
+        if content.winfo_reqwidth() > canvas.winfo_width():
+            horizontal.grid()
+        else:
+            horizontal.grid_remove()
     content.bind("<Configure>", resize)
     canvas.bind("<Configure>", resize)
 
@@ -59,7 +64,7 @@ def scrollable_page(notebook, title):
 class ModelControls:
     def __init__(self, parent, title, saved, events, fetch, test):
         self.events, self.fetch, self.test = events, fetch, test
-        self.box = ttk.LabelFrame(parent, text=title)
+        self.box = ttk.Frame(parent, style="Paper.TFrame", padding=16)
         self.box.columnconfigure(1, weight=1)
         saved = saved if isinstance(saved, dict) else {}
         self.url = tk.StringVar(value=saved.get("base_url", PROVIDERS["DeepSeek"]))
@@ -69,20 +74,20 @@ class ModelControls:
                                                 if url and url == self.url.get()), "自定义 OpenAI compatible"))
         selector = ttk.Combobox(self.box, textvariable=self.provider, values=list(PROVIDERS), state="readonly")
         selector.grid(row=0, column=1, sticky="ew", padx=6, pady=3)
-        ttk.Label(self.box, text="服务商预设").grid(row=0, column=0, padx=6)
+        ttk.Label(self.box, text="服务商预设", style="Card.TLabel").grid(row=0, column=0, padx=6)
         selector.bind("<<ComboboxSelected>>", self.preset)
         for row, label, variable, hidden in ((1, "Base URL", self.url, False), (2, "API Key", self.key, True)):
-            ttk.Label(self.box, text=label).grid(row=row, column=0, sticky="w", padx=6)
+            ttk.Label(self.box, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", padx=6)
             ttk.Entry(self.box, textvariable=variable, show="*" if hidden else "").grid(row=row, column=1, sticky="ew", padx=6, pady=3)
-        ttk.Label(self.box, text="模型 / 接入点 ID").grid(row=3, column=0, padx=6)
+        ttk.Label(self.box, text="模型 / 接入点 ID", style="Card.TLabel").grid(row=3, column=0, padx=6)
         self.combo = ttk.Combobox(self.box, textvariable=self.model)
         self.combo.grid(row=3, column=1, sticky="ew", padx=6, pady=3)
-        actions = ttk.Frame(self.box)
+        actions = ttk.Frame(self.box, style="Paper.TFrame")
         actions.grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=4)
         ttk.Button(actions, text="拉取模型", command=lambda: self.request(False)).pack(side="left", padx=3)
         ttk.Button(actions, text="测试接口", command=lambda: self.request(True)).pack(side="left", padx=3)
-        ttk.Label(self.box, text="兼容 /chat/completions；不支持 /models 的服务可手填模型或接入点 ID。",
-                  wraplength=480).grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=4)
+        ttk.Label(self.box, text="兼容 /chat/completions；不支持 /models 的服务可手填模型或接入点 ID。", style="Hint.TLabel",
+                  wraplength=360).grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=4)
 
     def preset(self, _event=None):
         value = PROVIDERS[self.provider.get()]
@@ -141,68 +146,16 @@ class LiteratureControls:
         self.app.root.after(100, self.poll)
 
     def _build(self, saved, fetch, test):
-        box = ttk.LabelFrame(self.page, text="1. Markdown 文献与翻译设置")
-        box.grid(row=0, column=0, sticky="ew", padx=10, pady=6)
-        box.columnconfigure(1, weight=1)
-        for row, label, variable in ((0, "MD 输入文件夹", self.input), (1, "译文输出文件夹", self.output)):
-            ttk.Label(box, text=label).grid(row=row, column=0, padx=6)
-            ttk.Entry(box, textvariable=variable).grid(row=row, column=1, sticky="ew", padx=6, pady=4)
-            ttk.Button(box, text="选择…", command=lambda v=variable: self.choose_dir(v)).grid(row=row, column=2, padx=6)
-        ttk.Checkbutton(box, text="输出到原文所在文件夹", variable=self.same_folder).grid(row=2, column=0, columnspan=2, sticky="w", padx=6)
-        ttk.Checkbutton(box, text="递归扫描子文件夹", variable=self.recursive).grid(row=3, column=0, columnspan=2, sticky="w", padx=6)
-        for row, label, variable, values, readonly in (
-            (4, "来源语言", self.source, ["自动检测"] + list(LANGUAGES), False),
-            (5, "目标语言", self.target, list(LANGUAGES), False),
-            (6, "译文文件名标记", self.prefix, ["前缀 TRANSLATED_", "后缀 _TRANSLATED"], True),
-        ):
-            ttk.Label(box, text=label).grid(row=row, column=0, padx=6, pady=4)
-            ttk.Combobox(box, textvariable=variable, values=values, state="readonly" if readonly else "normal").grid(row=row, column=1, columnspan=2, sticky="ew", padx=6)
-        ttk.Label(box, text="每份文献先用前 300 字符判断目标语言；语言框可手填，语言代码参考 PaddleOCR。\n已生成的 TRANSLATED 文件会排除，已有同名译文不会覆盖。",
-                  wraplength=500).grid(row=7, column=0, columnspan=3, sticky="w", padx=6, pady=6)
-        checks = ttk.LabelFrame(self.page, text="2. 可选质量检查")
-        checks.grid(row=1, column=0, sticky="ew", padx=10, pady=6)
-        checks.columnconfigure(0, weight=1)
-        ttk.Checkbutton(checks, text="二次翻译核对（独立重译，再比较两份译文）", variable=self.secondary).grid(row=0, column=0, sticky="w")
-        ttk.Combobox(checks, textvariable=self.arbitration, values=["用户自行裁决", "大模型裁决"], state="readonly").grid(row=1, column=0, sticky="ew", padx=6, pady=4)
-        ttk.Checkbutton(checks, text="文本校对（语句不通、缺字、漏译等）", variable=self.proofreading).grid(row=2, column=0, sticky="w")
-        ttk.Label(checks, text="发现问题的译文与 JSON 检查报告仍会保存；未解决问题时禁止自动上传。", wraplength=500).grid(row=3, column=0, sticky="w", padx=6, pady=4)
-        model_box = ttk.LabelFrame(self.page, text="3. 为各步骤指定模型（按需设置）")
-        model_box.grid(row=2, column=0, sticky="ew", padx=10, pady=6)
-        model_tabs = ttk.Notebook(model_box)
-        model_tabs.pack(fill="both", expand=True)
-        for key, label in (("translator", "翻译 / 语言识别"), ("reviewer", "二次翻译核对"),
-                           ("proofreader", "文本校对"), ("arbiter", "大模型裁决")):
-            tab = ttk.Frame(model_tabs)
-            tab.columnconfigure(0, weight=1)
-            model_tabs.add(tab, text=label)
-            controls = ModelControls(tab, label, saved.get(key, {}), self.events, fetch, test)
-            controls.box.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
-            self.profiles[key] = controls
-        github = ttk.LabelFrame(self.page, text="4. 核验通过后上传 GitHub（两个入口共用）")
-        github.grid(row=3, column=0, sticky="ew", padx=10, pady=6)
-        github.columnconfigure(1, weight=1)
-        ttk.Checkbutton(github, text="自动上传核验无误的 Markdown", variable=self.upload).grid(row=0, column=0, columnspan=2, sticky="w")
-        for row, label, variable in ((1, "仓库 owner/repository", self.repository), (2, "已有目标分支", self.branch),
-                                      (3, "仓库内目录（可空）", self.folder), (4, "GitHub Token（仅本次运行）", self.github_token)):
-            ttk.Label(github, text=label).grid(row=row, column=0, sticky="w", padx=6)
-            ttk.Entry(github, textvariable=variable, show="*" if row == 4 else "").grid(row=row, column=1, sticky="ew", padx=6, pady=4)
-        ttk.Label(github, text="Token 需目标仓库 Contents 写入权限；保留子目录，远端同名文件不覆盖。\nOCR 输出要求启用并通过 LLM 核验；译文至少启用一项检查且全部通过。",
-                  wraplength=500).grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=6)
-        actions = ttk.Frame(self.page)
-        actions.grid(row=4, column=0, sticky="ew", padx=10, pady=6)
-        ttk.Button(actions, text="扫描 .md", command=self.scan).grid(row=0, column=0, padx=4)
-        self.start_button = ttk.Button(actions, text="开始翻译", command=self.start, style="Accent.TButton")
-        self.start_button.grid(row=0, column=1, padx=4)
-        ttk.Button(actions, text="停止文献处理", command=self.stop).grid(row=0, column=2, padx=4)
-        ttk.Button(actions, text="保存设置", command=self.app.save_current_config).grid(row=0, column=3, padx=4)
-        ttk.Label(self.page, textvariable=self.status, wraplength=500).grid(row=5, column=0, sticky="ew", padx=10, pady=6)
-        ttk.Label(self.page, text="模型 API Key 沿用本程序的本机配置保存方式（明文）；勿共享配置文件。",
-                  wraplength=500).grid(row=6, column=0, sticky="w", padx=10, pady=6)
+        from workspace_ui import build_translation_page
+        build_translation_page(self, saved, fetch, test)
 
     def choose_dir(self, variable):
         directory = filedialog.askdirectory(parent=self.app.root)
         if directory:
             variable.set(directory)
+            if variable is self.output:
+                self.same_folder.set(False)
+            self.app.workspace_layout.sync_output()
 
     def config_data(self):
         data = {"auto_translate": self.auto_translate.get(), "input": self.input.get(), "output": self.output.get(),
@@ -272,6 +225,8 @@ class LiteratureControls:
             return
         self.cancel_event.clear()
         self.app.stop_requested = False
+        self.app.file_progress_var.set(0)
+        self.app.workspace_layout.translation_stop.configure(state="normal")
         self.start_button.configure(state="disabled")
         self.app.start_btn.configure(state="disabled")
         self.thread = threading.Thread(target=self.worker, args=(root, paths, snapshot), daemon=True)
@@ -357,6 +312,7 @@ class LiteratureControls:
                     stopped = True
                     break
                 self.events.put(("status", f"正在处理 {index}/{len(paths)}：{path.name}"))
+                self.events.put(("progress", (index - 1, len(paths))))
                 try:
                     result = self.process(path, root, snapshot)
                     counts[result["status"]] += 1
@@ -366,6 +322,7 @@ class LiteratureControls:
                 except Exception as exc:
                     counts["failed"] += 1
                     self.log(f"文献处理失败：{path.name}；{exc}")
+                self.events.put(("progress", (index, len(paths))))
         finally:
             summary = (f"翻译{'已停止' if stopped else '完成'}：核验通过 {counts['verified']}，"
                        f"待处理 {counts['needs_review']}，未核验 {counts['unverified']}，"
@@ -424,11 +381,15 @@ class LiteratureControls:
                 elif kind == "status":
                     self.status.set(payload)
                     self.app.status_var.set(payload)
+                elif kind == "progress":
+                    completed, total = payload
+                    self.app.file_progress_var.set(100 * completed / total if total else 0)
                 elif kind == "done":
                     self.status.set(payload)
                     self.app.status_var.set(payload)
                     self.log(payload)
                     self.start_button.configure(state="normal")
+                    self.app.workspace_layout.translation_stop.configure(state="disabled")
                     self.app.start_btn.configure(state="normal")
                     messagebox.showinfo("文献处理", payload, parent=self.app.root)
                 elif kind == "profile_result":

@@ -104,13 +104,14 @@ It supports page-level progress reporting, Markdown word-count quality checks wi
 The package normally contains the following current-version files.  
 安装包通常包含以下当前版本文件。
 
-All platforms require the three Python modules in the same folder: `paddleocr_pdf_to_md_gui.py`, `literature_processing.py`, and `literature_ui.py`.  
-所有平台均须将三个 Python 模块放在同一文件夹中：`paddleocr_pdf_to_md_gui.py`、`literature_processing.py` 和 `literature_ui.py`。
+All platforms require the four Python modules in the same folder: `paddleocr_pdf_to_md_gui.py`, `literature_processing.py`, `literature_ui.py`, and `workspace_ui.py`.  
+所有平台均须将四个 Python 模块放在同一文件夹中：`paddleocr_pdf_to_md_gui.py`、`literature_processing.py`、`literature_ui.py` 和 `workspace_ui.py`。
 
 ```text
 paddleocr_pdf_to_md_gui.py
 literature_processing.py
 literature_ui.py
+workspace_ui.py
 start_paddleocr_pdf_to_md_SAFE.bat
 build_paddleocr_pdf_to_md_EXE.bat
 README.md
@@ -183,6 +184,7 @@ Keep the source modules, launcher, dependency list, and icons together. Do not c
 paddleocr_pdf_to_md_gui.py
 literature_processing.py
 literature_ui.py
+workspace_ui.py
 start_paddleocr_pdf_to_md_SAFE.bat
 requirements.txt
 app_icon.ico
@@ -360,8 +362,8 @@ Linux 与 macOS 用户应保留 `.py` 文件，并通过上述虚拟环境运行
 
 ## 5. Access Token Setup   Access Token 设置
 
-Open the application and select **PDF OCR 转 MD功能**. These token settings apply to OCR.  
-打开程序并选择 **PDF OCR 转 MD功能**；本节 Token 设置用于 OCR。
+Open **偏好设置 → OCR 与核验** in the application. These token settings apply to the PDF OCR workflow.  
+打开程序中的 **偏好设置 → OCR 与核验**；本节 Token 设置用于 PDF OCR 流程。
 
 Click **Enter/Update Access Token**.  
 点击“输入/更新 Access Token”。
@@ -410,11 +412,11 @@ Choose whether to preserve the original subfolder structure.
 Choose whether to overwrite existing output files.  
 选择是否覆盖已有输出文件。
 
-Optionally enable **是否自动检测外文文献并提供翻译** after configuring the translation entry (Section 18). Leave it off for OCR alone. Only newly completed OCR files enter this follow-up; existing outputs skipped by OCR can be processed through the translation entry.  
-按需勾选 **是否自动检测外文文献并提供翻译**，并先配置翻译入口（第 18 节）；不勾选时仅进行 OCR。只有本次新完成的 OCR 文件会进入后续翻译；被 OCR 跳过的已有输出可通过翻译入口处理。
+Optionally enable **自动检测外文并翻译** after configuring the translation entry (Section 18). Leave it off for OCR alone. Only newly completed OCR files enter this follow-up; existing outputs skipped by OCR can be processed through the translation entry.  
+按需勾选 **自动检测外文并翻译**，并先配置翻译入口（第 18 节）；不勾选时仅进行 OCR。只有本次新完成的 OCR 文件会进入后续翻译；被 OCR 跳过的已有输出可通过翻译入口处理。
 
-Click **Start Batch Conversion**.  
-点击“开始批量转换”。
+Click **Start OCR**.  
+点击“开始 OCR”。
 
 Confirm the task summary.  
 确认任务摘要。
@@ -617,8 +619,15 @@ Encrypted or damaged PDFs may also fail to split.
 
 ## 10. Progress and Manual Query   进度与手动查询
 
-The minimum window size is 540×420. Settings scroll independently above the runtime log; drag the divider to adjust the log height. Both entries share this persistent log panel.  
-最小窗口为 540×420。上方设置区独立滚动，运行日志保持可见；拖动分隔条可以调整日志区高度。两个功能入口共用此日志面板。
+The minimum window size is 540×420. Navigation moves from a sidebar to a compact top bar in narrow windows. Task options scroll independently, with side-by-side groups in wide windows. Start/stop controls and runtime logs remain visible; drag the divider to adjust log height. Service credentials and model configuration live in the separate Preferences window.  
+最小窗口为 540×420。宽窗口使用侧栏导航和并排选项，窄窗口切换为紧凑顶部导航；任务选项可独立滚动，开始/停止按钮和运行日志固定可见，拖动分隔条可调整日志高度。服务凭据与模型配置集中在独立的偏好设置窗口。
+
+The workspace follows [Emil Kowalski’s design-engineering guidance](https://github.com/emilkowalski/skills/tree/main/skills/emil-design-eng): consistent control states, clear task hierarchy, and instant keyboard navigation.
+界面参考 [Emil Kowalski 的设计工程技能](https://github.com/emilkowalski/skills/tree/main/skills/emil-design-eng)，统一控件状态与任务层级，键盘切换直接响应。
+
+![PDF OCR workspace / PDF OCR 工作台](docs/screenshots/workspace-ocr.png)
+
+![Translation workspace / 外文翻译工作台](docs/screenshots/workspace-translation.png)
 
 The application provides a file-progress indicator.  
 程序提供文件总进度条。
@@ -636,7 +645,7 @@ Automatic status polling normally occurs every 3 seconds.
 程序通常每 3 秒自动查询一次任务状态。
 
 Click **Manual Query Current Result** to force an immediate status check.  
-点击“手动查询当前结果”可立即查询任务状态。
+点击“查询”可立即查询任务状态。
 
 This skips the current polling wait.  
 该操作会跳过当前轮询等待。
@@ -683,8 +692,8 @@ Rate-limit responses are also retried after a delay.
 
 ## 12. Stopping a Conversion  停止转换
 
-The **Stop Conversion** button uses a red background and white text.  
-“停止转换”按钮采用红底白字。
+Use the **停止** button in the OCR entry to request cancellation.  
+在 OCR 入口点击 **停止** 按钮，可以请求取消当前任务。
 
 Clicking it opens a second confirmation dialog.  
 点击该按钮后会弹出二次确认窗口。
@@ -760,6 +769,7 @@ Keep the following files in the same folder.
 paddleocr_pdf_to_md_gui.py
 literature_processing.py
 literature_ui.py
+workspace_ui.py
 requirements.txt
 app_icon.ico
 app_icon.png
@@ -884,7 +894,7 @@ Update the token and test again.
 ### A Job Appears Stuck   任务看起来卡住
 
 Click **Manual Query Current Result**.  
-点击“手动查询当前结果”。
+点击“查询”。
 
 Review the page-progress indicator.  
 查看页数进度。
@@ -1012,8 +1022,8 @@ The scanner excludes `TRANSLATED_*.md`, `*_TRANSLATED.md`, and a distinct output
 
 ### OpenAI-Compatible Models   OpenAI-compatible 模型设置
 
-Translation/language detection, secondary translation review, proofreading, and arbitration each have their own model settings tab. Enter the Base URL, API Key, and model or inference-endpoint ID. The presets are:  
-翻译/语言识别、二次翻译核对、文本校对和争议裁决分别提供模型设置标签页。填写 Base URL、API Key、模型或推理接入点 ID。提供以下预设：
+Open **偏好设置 → 翻译模型**. Translation/language detection, secondary translation review, proofreading, and arbitration each have their own model settings tab. Enter the Base URL, API Key, and model or inference-endpoint ID. The presets are:  
+打开 **偏好设置 → 翻译模型**，翻译/语言识别、二次翻译核对、文本校对和争议裁决分别提供模型设置标签页。填写 Base URL、API Key、模型或推理接入点 ID。提供以下预设：
 
 | Provider 服务商 | Base URL |
 | --- | --- |
@@ -1065,15 +1075,15 @@ Original files are retained and existing translations are not overwritten. Each 
 | `target_language` | Already in the target language; skipped 已是目标语言，跳过 |
 | `existing` | Translation already exists; skipped 已有译文，跳过 |
 
-These statuses record the current model checks or user decision, not a guarantee of correctness. To retry a pending document, first preserve and move the existing translation and report so the overwrite protection does not skip it. **停止文献处理** exits after the current API request returns; files already completed remain available.  
-这些状态记录本次模型检查或用户裁决，不保证内容绝对正确。重新处理待处理文献前，请先另存并移走已有译文和报告，以免覆盖保护将其跳过。点击 **停止文献处理** 后，会在当前 API 请求返回后退出；已经完成的文件会保留。
+These statuses record the current model checks or user decision, not a guarantee of correctness. To retry a pending document, first preserve and move the existing translation and report so the overwrite protection does not skip it. **停止**（翻译入口） exits after the current API request returns; files already completed remain available.  
+这些状态记录本次模型检查或用户裁决，不保证内容绝对正确。重新处理待处理文献前，请先另存并移走已有译文和报告，以免覆盖保护将其跳过。点击 **停止**（翻译入口） 后，会在当前 API 请求返回后退出；已经完成的文件会保留。
 
 ---
 
 ## 19. Upload Reviewed Files to GitHub   核验后上传 GitHub
 
-The GitHub settings in the translation entry are shared by both workflows. Enable **自动上传核验无误的 Markdown**, then enter `owner/repository`, an existing branch, an optional repository-relative folder, and a Token with **Contents read/write** permission for that repository. The Token is held only for the current session; existing `GITHUB_TOKEN` or `GH_TOKEN` process bindings can also be used.  
-翻译入口中的 GitHub 设置由两个入口共用。勾选 **自动上传核验无误的 Markdown**，填写 `owner/repository`、已有分支、可选的仓库内相对目录，以及对目标仓库具有 **Contents 读写权限**的 Token。Token 仅保留在本次运行内存中，也可使用进程已有的 `GITHUB_TOKEN` 或 `GH_TOKEN`。
+The GitHub settings under **偏好设置 → GitHub 上传** are shared by both workflows. Enable **自动上传核验通过的 Markdown**, then enter `owner/repository`, an existing branch, an optional repository-relative folder, and a Token with **Contents read/write** permission for that repository. The Token is held only for the current session; existing `GITHUB_TOKEN` or `GH_TOKEN` process bindings can also be used.  
+**偏好设置 → GitHub 上传** 中的 GitHub 设置由两个入口共用。勾选 **自动上传核验通过的 Markdown**，填写 `owner/repository`、已有分支、可选的仓库内相对目录，以及对目标仓库具有 **Contents 读写权限**的 Token。Token 仅保留在本次运行内存中，也可使用进程已有的 `GITHUB_TOKEN` 或 `GH_TOKEN`。
 
 The upload applies to files produced in the current OCR/translation workflow, with the following requirements:  
 上传适用于本次 OCR/翻译流程生成的文件，并要求：
