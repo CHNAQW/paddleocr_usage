@@ -30,9 +30,22 @@ function Retry-FileOperation([scriptblock]$operation) {
     }
 }
 
+function Get-SHA256([string]$path) {
+    # Do not depend on Get-FileHash/module autoloading in the inherited host.
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    $stream = $null
+    try {
+        $stream = [System.IO.File]::OpenRead($path)
+        return [System.BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+        $algorithm.Dispose()
+    }
+}
+
 function Check-File([string]$path) {
     if ((Get-Item -LiteralPath $path).Length -ne [long]$plan.size) { throw 'Update size mismatch.' }
-    if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $plan.sha256) {
+    if ((Get-SHA256 $path) -ne $plan.sha256) {
         throw 'Update SHA-256 mismatch.'
     }
 }
@@ -54,7 +67,7 @@ try {
     if ($plan.kind -eq 'source') {
         foreach ($property in $plan.source_record.files.PSObject.Properties) {
             $path = Join-Path $plan.source_record.directory $property.Name
-            if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $property.Value) {
+            if ((Get-SHA256 $path) -ne $property.Value) {
                 throw 'Source file changed before installation.'
             }
         }

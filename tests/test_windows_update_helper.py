@@ -79,6 +79,12 @@ using System;
 using System.IO;
 public class UpdateProbe {
     public static int Main() {
+        try { return Run(); }
+        catch (Exception error) { Console.Error.WriteLine(error); return 44; }
+    }
+    private static int Run() {
+        File.AppendAllText(Environment.GetEnvironmentVariable("PADDLEOCR_TEST_PIDS"),
+            System.Diagnostics.Process.GetCurrentProcess().Id.ToString() + "\n");
         string active = Environment.GetEnvironmentVariable("PADDLEOCR_TEST_ACTIVE");
         string health = Environment.GetEnvironmentVariable("PADDLEOCR_UPDATE_HEALTH");
         string expected = Environment.GetEnvironmentVariable("PADDLEOCR_TEST_VERSION");
@@ -116,9 +122,11 @@ public class UpdateProbe {
         self.package = self.source_package('26.10.19.07')
         self.active = self.cache / 'active-source.json'
         self.restarted = self.root / 'restarted.txt'
+        self.probe_pids = self.root / 'probe-pids.txt'
         self.processes = []
         self.native_popen = subprocess.Popen
         self.addCleanup(self.stop_helpers)
+        self.addCleanup(self.wait_probes)
 
     stop_helpers = NativeWindowsHelperTests.stop_helpers
     spawn = NativeWindowsHelperTests.spawn
@@ -140,30 +148,53 @@ public class UpdateProbe {
         self.active.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8-sig')
         return self.active.read_bytes()
 
-    def install(self, current='26.10.19.06', fail_health=False):
+    def wait_probes(self):
+        if not self.probe_pids.is_file():
+            return
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        for pid in self.probe_pids.read_text(encoding='utf-8-sig').splitlines():
+            handle = kernel.OpenProcess(0x00100000, False, int(pid))  # SYNCHRONIZE
+            if not handle:  # The probe has already exited and released its handle.
+                continue
+            try:
+                self.assertEqual(kernel.WaitForSingleObject(handle, 5000), 0, 'Startup probe did not exit')
+            finally:
+                kernel.CloseHandle(handle)
+
+    def install(self, current='26.10.19.06', fail_health=False, tamper=False):
         import os
         import time
         old_process = self.native_popen([sys.executable, '-c', 'import time; time.sleep(120)'])
         self.processes.append(old_process)
         environment = {'PADDLEOCR_TEST_ACTIVE': str(self.active), 'PADDLEOCR_TEST_VERSION': self.package.version,
-                       'PADDLEOCR_TEST_RESTARTED': str(self.restarted),
+                       'PADDLEOCR_TEST_RESTARTED': str(self.restarted), 'PADDLEOCR_TEST_PIDS': str(self.probe_pids),
                        'PADDLEOCR_TEST_FAIL_HEALTH': '1' if fail_health else '0'}
         with patch.dict(os.environ, environment), patch.object(updates.os, 'getpid', return_value=old_process.pid), \
                 patch.object(updates.subprocess, 'Popen', side_effect=self.spawn):
             plan = updates.launch_install(self.package, self.exe, current, cache=self.cache)
         helper = self.processes[-1]
         self.assertEqual(Path(plan['handshake']).read_text(), 'ready')
+        if tamper:
+            (Path(self.package.record['directory']) / 'literature_ui.py').write_bytes(b'changed after handoff')
         time.sleep(.2)  # Let Wait-Process subscribe before the old process exits.
         old_process.terminate()
         old_process.wait(timeout=10)
         helper.wait(timeout=30)
         diagnostic = Path(plan['log']).read_text(encoding='utf-8-sig', errors='replace')
         result = json.loads(Path(plan['result']).read_text(encoding='utf-8-sig'))
-        if fail_health:
+        if result['status'] == 'failed':
             deadline = time.monotonic() + 5
             while not self.restarted.is_file() and time.monotonic() < deadline:
                 time.sleep(.05)
             self.assertTrue(self.restarted.is_file(), diagnostic)
+        self.wait_probes()
         self.assertEqual(self.exe.read_bytes(), self.probe.read_bytes())
         return plan, result, diagnostic
 
@@ -202,3 +233,12 @@ public class UpdateProbe {
         self.assertTrue(result['restored'], log)
         self.assertFalse(self.active.exists())
         self.assertEqual(self.restarted.read_text(encoding='utf-8-sig'), 'builtin')
+
+    def test_helper_rechecks_source_hashes_before_replacing_activation(self):
+        previous = self.previous_installation()
+        plan, result, log = self.install(tamper=True)
+        self.assertEqual(result['status'], 'failed', log)
+        self.assertFalse(result['restored'], log)
+        self.assertIn('Source file changed before installation.', log)
+        self.assertEqual(self.active.read_bytes(), previous)
+        self.assertFalse(Path(plan['source_backup']).exists())
