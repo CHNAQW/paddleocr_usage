@@ -7,7 +7,7 @@ from tkinter import font as tkfont, ttk
 from literature_processing import LANGUAGES, PROVIDERS
 from literature_ui import LiteratureControls, ModelControls, scrollable_page
 from ui_i18n import LocalizedVar, copy_text, language, localize_widgets, messagebox, tr, ui_text
-from responsive_ui import AdaptiveLabel, ButtonToolbar, ResponsiveForm
+from responsive_ui import AdaptiveCheckbutton, AdaptiveLabel, ButtonToolbar, NotebookSelector, ResponsiveForm
 
 
 COLORS = {
@@ -157,25 +157,29 @@ def path_field(parent, row, label, variable, command):
 
 
 def quality_controls(parent, controls):
-    """Both entry points edit the same quality options and decision mode."""
+    """OCR and translation share checks, decision mode and revision permission."""
     panel = ttk.Frame(parent, style="Paper.TFrame")
     panel.columnconfigure(0, weight=1)
-    panel.secondary_button = ttk.Checkbutton(panel, text=tr('二次翻译核对'), variable=controls.secondary)
-    panel.secondary_button.grid(row=0, column=0, sticky="w")
-    panel.proofreading_button = ttk.Checkbutton(panel, text=tr('文本校对'), variable=controls.proofreading)
-    panel.proofreading_button.grid(row=1, column=0, sticky="w")
+    panel.secondary_button = AdaptiveCheckbutton(panel, text=tr('二次翻译核对'), variable=controls.secondary)
+    panel.secondary_button.grid(row=0, column=0, sticky="ew")
+    panel.proofreading_button = AdaptiveCheckbutton(panel, text=tr('文本校对'), variable=controls.proofreading)
+    panel.proofreading_button.grid(row=1, column=0, sticky="ew")
     form = ResponsiveForm(panel)
     form.grid(row=2, column=0, sticky="ew", pady=(4, 0))
     panel.arbitration_combo = ttk.Combobox(form, textvariable=controls.arbitration,
         values=[tr('用户自行裁决'), tr('大模型裁决')], state="readonly")
     panel.arbitration_combo.localized_choices = True
     form.add(tr("发现问题时"), panel.arbitration_combo)
-    AdaptiveLabel(panel, text=tr("勾选检查后选择处理方式。大模型裁决会复核翻译分歧和校对疑点；无法明确批准时保留报告待处理。"),
-                  style="Hint.TLabel").grid(row=3, column=0, sticky="ew", pady=(6, 0))
+    panel.revision_button = AdaptiveCheckbutton(panel, text=tr("允许裁决模型直接修订译文"), variable=controls.allow_arbiter_revision)
+    panel.revision_button.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+    AdaptiveLabel(panel, text=tr("默认不授权。授权后，模型可修订翻译分歧或校对疑点，自动核验通过即采用，无需再次确认；仍有疑点时保留报告并交由用户处理。"),
+                  style="Hint.TLabel").grid(row=4, column=0, sticky="ew", pady=(6, 0))
 
     def refresh(*_):
-        panel.arbitration_combo.configure(state="readonly" if controls.secondary.get() or controls.proofreading.get() else "disabled")
-    traces = [(variable, variable.trace_add("write", refresh)) for variable in (controls.secondary, controls.proofreading)]
+        checking = controls.secondary.get() or controls.proofreading.get()
+        panel.arbitration_combo.configure(state="readonly" if checking else "disabled")
+        panel.revision_button.configure(state="normal" if checking and controls.arbitration.get() == "大模型裁决" else "disabled")
+    traces = [(variable, variable.trace_add("write", refresh)) for variable in (controls.secondary, controls.proofreading, controls.arbitration)]
     def cleanup(event):
         if event.widget == panel:
             for variable, trace in traces:
@@ -193,9 +197,9 @@ def build_translation_page(controls, saved, fetch, test):
     files.grid(row=0, column=0, sticky="ew", padx=20, pady=(10, 12))
     controls.input_entry, _ = path_field(body, 0, tr('原文位置'), controls.input, lambda: controls.choose_dir(controls.input))
     controls.output_entry, controls.output_button = path_field(body, 1, tr('译文位置'), controls.output, lambda: controls.choose_dir(controls.output))
-    ttk.Checkbutton(body, text=tr('译文保存在原文所在文件夹'), variable=controls.same_folder,
-                    command=lambda: shell.sync_output()).grid(row=2, column=0, sticky="w")
-    ttk.Checkbutton(body, text=tr('包括子文件夹'), variable=controls.recursive).grid(row=3, column=0, sticky="w")
+    AdaptiveCheckbutton(body, text=tr('译文保存在原文所在文件夹'), variable=controls.same_folder,
+                    command=lambda: shell.sync_output()).grid(row=2, column=0, sticky="ew")
+    AdaptiveCheckbutton(body, text=tr('包括子文件夹'), variable=controls.recursive).grid(row=3, column=0, sticky="ew")
 
     options, body = card(page, tr('02   语言与质量'), tr('翻译模型读取前 300 字符识别语言，长文自动分段。'))
     options.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 12))
@@ -252,7 +256,7 @@ class WorkspaceLayout:
         self.brand_name.pack(anchor="w", pady=(8, 0))
         self.nav_area = tk.Frame(self.rail, bg=COLORS["rail"])
         self.nav_buttons = []
-        for index, title in enumerate(("01   PDF OCR", tr('02   外文翻译'))):
+        for index, title in enumerate(("01   PDF OCR", tr('02   外文翻译'), tr('03   GitHub 上传'))):
             button = tk.Button(self.nav_area, text=title, anchor="w", relief="flat", bd=0, padx=14, pady=12,
                 font=(self.family, 10, "bold"), bg=COLORS["rail"], fg=COLORS["rail_muted"],
                 activebackground=COLORS["selected"], activeforeground="#ffffff", cursor="hand2",
@@ -296,10 +300,14 @@ class WorkspaceLayout:
                                             bg=COLORS["canvas"], bd=0, sashrelief="flat")
         app.workspace_panes.grid(row=1, column=0, sticky="nsew")
         app.notebook = ttk.Notebook(app.workspace_panes, style="Workspace.TNotebook")
-        app.workspace_panes.add(app.notebook, minsize=64, stretch="always")
+        app.workspace_panes.add(app.notebook, minsize=100, stretch="always")
+        app.workspace_panes.bind("<Configure>", self.constrain_panes, add="+")
+        app.workspace_panes.bind("<ButtonRelease-1>", self.constrain_panes, add="+")
         ocr_page = scrollable_page(app.notebook, tr('PDF OCR 转 MD功能'))
         translation_page = scrollable_page(app.notebook, tr('外文文献翻译功能'))
         app.literature = LiteratureControls(app, translation_page, fetch, test)
+        github_page = scrollable_page(app.notebook, tr('GitHub 文档上传'))
+        self.build_github(github_page)
         self.build_ocr(ocr_page, model_choices)
         self.build_log()
         self.build_actions()
@@ -307,10 +315,23 @@ class WorkspaceLayout:
         self.root.bind("<Configure>", self.resize, add="+")
         self.root.bind("<Control-Key-1>", lambda event: app.notebook.select(0))
         self.root.bind("<Control-Key-2>", lambda event: app.notebook.select(1))
+        self.root.bind("<Control-Key-3>", lambda event: app.notebook.select(2))
         self.resize()
         self.select()
         self.sync_output()
         self.refresh_language()
+
+    def build_github(self, page):
+        from github_ui import ManualUpload
+        controls = self.app.literature
+        setup = controls.github_setup
+        destination, body = card(page, tr("01   GitHub 上传位置"), tr("手动上传可独立使用，无需先运行 OCR 或翻译，也无需开启自动上传。"))
+        destination.grid(row=0, column=0, sticky="ew", padx=20, pady=(10, 12))
+        AdaptiveLabel(body, textvariable=setup.summary, style="Card.TLabel").grid(row=0, column=0, sticky="ew", pady=6)
+        ttk.Button(body, text=tr("打开上传设置向导"), command=setup.open).grid(row=1, column=0, sticky="w", pady=6)
+        documents, body = card(page, tr("02   选择并补传文档"))
+        documents.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 20))
+        self.github_manual = setup.manual = ManualUpload(setup, parent=body)
 
     def build_ocr(self, page, models):
         app = self.app
@@ -327,7 +348,7 @@ class WorkspaceLayout:
         for row, text, variable in ((1, tr('包括子文件夹'), app.recursive_var), (2, tr('保留子文件夹结构'), app.preserve_var),
                                      (3, tr('覆盖已有 Markdown'), app.overwrite_var), (4, tr('使用 LLM 核验 OCR 质量'), app.llm_review_var),
                                      (5, tr('自动检测外文并翻译'), app.literature.auto_translate)):
-            ttk.Checkbutton(body, text=text, variable=variable).grid(row=row, column=0, sticky="w")
+            AdaptiveCheckbutton(body, text=text, variable=variable).grid(row=row, column=0, sticky="ew")
         self.ocr_quality_group = ttk.LabelFrame(body, text=tr("自动翻译核对设置（两入口共用）"), padding=10)
         self.ocr_quality_group.columnconfigure(0, weight=1)
         self.ocr_quality_group.grid(row=6, column=0, sticky="ew", pady=(8, 0))
@@ -353,6 +374,7 @@ class WorkspaceLayout:
         app = self.app
         self.settings = tk.Toplevel(self.root)
         self.settings.withdraw()
+        self.settings.minsize(440, 340)
         self.settings.title(tr('偏好设置 · 文献处理软件'))
         self.settings.transient(self.root)
         self.settings.columnconfigure(0, weight=1)
@@ -360,8 +382,8 @@ class WorkspaceLayout:
         settings_header = ttk.Frame(self.settings, padding=(18, 14))
         settings_header.grid(row=0, column=0, sticky="ew")
         settings_header.columnconfigure(0, weight=1)
-        ttk.Label(settings_header, text=tr('连接你的处理服务'), style="CardTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(settings_header, text=tr('界面语言 / Interface language'), style="Subtitle.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        AdaptiveLabel(settings_header, text=tr('连接你的处理服务'), style="CardTitle.TLabel").grid(row=0, column=0, columnspan=2, sticky="ew")
+        AdaptiveLabel(settings_header, text=tr('界面语言 / Interface language'), style="Subtitle.TLabel").grid(row=1, column=0, sticky="ew", pady=(8, 0))
         app.ui_language_var = tk.StringVar(value="English" if language() == "en" else "中文")
         self.language_selector = ttk.Combobox(settings_header, textvariable=app.ui_language_var,
                                               values=("中文", "English"), state="readonly", width=10)
@@ -370,18 +392,21 @@ class WorkspaceLayout:
             "en" if app.ui_language_var.get() == "English" else "zh"))
         self.settings_tabs = ttk.Notebook(self.settings)
         self.settings_tabs.grid(row=1, column=0, sticky="nsew", padx=12)
+        self.settings_selector = NotebookSelector(settings_header, self.settings_tabs)
+        self.settings_selector.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         ocr = scrollable_page(self.settings_tabs, tr('OCR 与核验'))
         models = scrollable_page(self.settings_tabs, tr('翻译模型'))
         github = scrollable_page(self.settings_tabs, tr('GitHub 上传'))
         updates = scrollable_page(self.settings_tabs, tr('软件更新'))
         token = ttk.LabelFrame(ocr, text="PaddleOCR", padding=12)
         token.grid(row=0, column=0, sticky="ew", padx=10, pady=8)
-        ttk.Label(token, textvariable=app.token_state_var).grid(row=0, column=0, columnspan=2, sticky="w", pady=8)
+        token.columnconfigure(0, weight=1)
+        AdaptiveLabel(token, textvariable=app.token_state_var).grid(row=0, column=0, columnspan=2, sticky="ew", pady=8)
         for row, title, callback in ((1, tr('输入/更新 Access Token'), app.set_token), (2, tr('检测 API Key 是否有效'), app.check_api_key), (3, tr('清除 Token'), app.clear_token)):
             ttk.Button(token, text=title, command=callback).grid(row=row, column=0, sticky="w", pady=4)
         review = ttk.LabelFrame(ocr, text=tr('OCR 质量核验模型'), padding=12)
         review.grid(row=1, column=0, sticky="ew", padx=10, pady=8)
-        review.columnconfigure(1, weight=1)
+        review.columnconfigure(0, weight=1)
         form = ResponsiveForm(review, style="TFrame")
         form.grid(row=0, column=0, columnspan=2, sticky="ew")
         for row, title, variable in ((0, "Base URL", app.llm_base_url_var), (1, "API Key", app.llm_api_key_var)):
@@ -390,10 +415,9 @@ class WorkspaceLayout:
             setattr(app, "shared_review_key_entry" if row == 1 else "shared_review_url_entry", entry)
         app.llm_model_combo = ttk.Combobox(form, textvariable=app.llm_model_var)
         form.add(tr('模型'), app.llm_model_combo)
-        app.fetch_models_btn = ttk.Button(review, text=tr('拉取模型列表'), command=app.fetch_llm_models)
-        app.fetch_models_btn.grid(row=3, column=0, pady=6)
-        app.test_llm_api_btn = ttk.Button(review, text=tr('测试LLM API'), command=app.test_llm_api)
-        app.test_llm_api_btn.grid(row=3, column=1, sticky="w", padx=8)
+        review_actions = ButtonToolbar(review, ((tr('拉取模型列表'), app.fetch_llm_models), (tr('测试LLM API'), app.test_llm_api)))
+        review_actions.grid(row=3, column=0, columnspan=2, sticky="ew", pady=6)
+        app.fetch_models_btn, app.test_llm_api_btn = review_actions.buttons
 
         budget = ttk.LabelFrame(models, text=tr("翻译分段预算"), padding=12)
         budget.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
@@ -409,7 +433,9 @@ class WorkspaceLayout:
                       style="Subtitle.TLabel").grid(row=2, column=0, sticky="ew", pady=(6, 0))
         ttk.Button(budget, text=tr("统一 LLM 服务设置"), command=lambda: self.show_settings(4)).grid(row=3, column=0, sticky="w", pady=6)
         roles = ttk.Notebook(models)
-        roles.grid(row=1, column=0, sticky="ew", padx=8, pady=8)
+        roles.grid(row=2, column=0, sticky="ew", padx=8, pady=8)
+        self.roles_selector = NotebookSelector(models, roles)
+        self.roles_selector.grid(row=1, column=0, sticky="ew", padx=8, pady=(8, 0))
         for key, title in (("translator", tr('翻译')), ("reviewer", tr('二次核对')), ("proofreader", tr('校对')), ("arbiter", tr('裁决'))):
             tab = ttk.Frame(roles)
             tab.columnconfigure(0, weight=1)
@@ -428,7 +454,7 @@ class WorkspaceLayout:
         group = ttk.LabelFrame(shared, text=tr("统一 LLM 服务设置"), padding=14)
         group.grid(row=0, column=0, sticky="ew", padx=10, pady=8)
         group.columnconfigure(0, weight=1)
-        ttk.Checkbutton(group, text=tr("所有 LLM 共用同一服务商与 API Key"), variable=controls.shared_llm).grid(row=0, column=0, sticky="w", pady=6)
+        AdaptiveCheckbutton(group, text=tr("所有 LLM 共用同一服务商与 API Key"), variable=controls.shared_llm).grid(row=0, column=0, sticky="ew", pady=6)
         shared_form = ResponsiveForm(group)
         shared_form.grid(row=1, column=0, sticky="ew")
         preset = ttk.Combobox(shared_form, textvariable=controls.shared_provider, values=[tr(v) for v in PROVIDERS], state="readonly")
@@ -452,8 +478,8 @@ class WorkspaceLayout:
 
     def show_settings(self, tab=0):
         self.settings_tabs.select(tab)
-        width = min(680, self.root.winfo_screenwidth() - 60)
-        height = min(650, self.root.winfo_screenheight() - 80)
+        width = min(680, max(440, self.root.winfo_width()), self.root.winfo_screenwidth() - 60)
+        height = min(650, max(340, self.root.winfo_height()), self.root.winfo_screenheight() - 80)
         x = min(max(0, self.root.winfo_rootx() + (self.root.winfo_width() - width) // 2),
                 max(0, self.root.winfo_screenwidth() - width))
         y = min(max(0, self.root.winfo_rooty() + (self.root.winfo_height() - height) // 2),
@@ -481,6 +507,8 @@ class WorkspaceLayout:
         self.refresh_model_summary(self.app.literature)
         self.select()
         self.resize()
+        self.settings_selector.schedule()
+        self.roles_selector.schedule()
         manual = getattr(self.app.literature.github_setup, "manual", None)
         if manual and not manual.closed:
             manual.render()
@@ -541,6 +569,18 @@ class WorkspaceLayout:
         self.translation_stop.grid(row=1, column=2, padx=(0, 8))
         app.manual_query_btn = ttk.Button(self.actions, text=tr('查询'), command=app.manual_query_current_result, state="disabled")
         app.manual_query_btn.grid(row=1, column=1, padx=(0, 8))
+        manual = self.github_manual
+        self.github_status = AdaptiveLabel(self.actions, textvariable=manual.status, max_lines=2, style="Subtitle.TLabel")
+        self.github_scan = ttk.Button(self.actions, text=tr("扫描缺失文档"), command=manual.scan)
+        self.github_upload = ttk.Button(self.actions, text=tr("上传选中文档"), command=manual.upload, style="Accent.TButton")
+        self.github_stop = ttk.Button(self.actions, text=tr("停止"), command=manual.cancel.set)
+        self.github_status.grid(row=1, column=0, sticky="ew", padx=(0, 10))
+        self.github_scan.grid(row=1, column=1, padx=(0, 8))
+        self.github_stop.grid(row=1, column=2, padx=(0, 8))
+        self.github_upload.grid(row=1, column=3)
+        self.task_progress_track = track
+        manual.extra_buttons.append((self.github_scan, self.github_upload, self.github_stop))
+        manual.buttons()
         app.page_progress = ttk.Progressbar(self.log_frame, variable=app.page_progress_var, maximum=100)
         app.page_progress_text_label = tk.Label(self.log_header, textvariable=app.page_progress_text_var,
             bg=COLORS["log"], fg="#adbcaf", font=(self.family, 9), width=1, anchor="w")
@@ -571,20 +611,47 @@ class WorkspaceLayout:
         for i, button in enumerate(self.nav_buttons):
             button.configure(bg=COLORS["selected"] if i == index else COLORS["rail"],
                              fg="#ffffff" if i == index else COLORS["rail_muted"])
-        self.title.configure(text=tr('PDF OCR 转 Markdown') if index == 0 else tr('外文文献翻译'))
-        self.subtitle.configure(text=tr('从扫描文档到可检索的文献。') if index == 0 else tr('保留原意，让文献跨越语言。'))
+        self.title.configure(text=(tr('PDF OCR 转 Markdown'), tr('外文文献翻译'), tr('GitHub 文档上传'))[index])
+        self.subtitle.configure(text=(tr('从扫描文档到可检索的文献。'), tr('保留原意，让文献跨越语言。'),
+                                      tr('比较远端目录，上传核验通过的文档。'))[index])
         app.start_btn.grid_remove()
         app.literature.start_button.grid_remove()
         app.stop_btn.grid_remove()
         self.translation_stop.grid_remove()
         app.manual_query_btn.grid_remove()
+        for widget in (self.github_status, self.github_scan, self.github_upload, self.github_stop):
+            widget.grid_remove()
+        app.status_label.grid()
+        self.task_progress_track.grid()
         if index == 0:
             app.start_btn.grid()
             app.stop_btn.grid()
             app.manual_query_btn.grid()
-        else:
+        elif index == 1:
             app.literature.start_button.grid()
             self.translation_stop.grid()
+        else:
+            app.status_label.grid_remove()
+            self.task_progress_track.grid_remove()
+            for widget in (self.github_status, self.github_scan, self.github_upload, self.github_stop):
+                widget.grid()
+
+    def constrain_panes(self, _event=None):
+        """Keep a scrollable document viewport when the log divider is dragged."""
+        panes = self.app.workspace_panes
+        if len(panes.panes()) < 2:
+            return
+        height = panes.winfo_height()
+        if height < 100:
+            return
+        log_minimum = min(92, max(42, height - 70))
+        minimum = min(220, max(64, int(height * .30)), height - log_minimum - 6)
+        panes.paneconfigure(self.app.notebook, minsize=minimum)
+        panes.paneconfigure(self.log_frame, minsize=log_minimum)
+        top = panes.sash_coord(0)[1]
+        bounded = min(max(top, minimum), max(minimum, height - log_minimum - 6))
+        if bounded != top:
+            panes.sash_place(0, 0, bounded)
 
     def resize(self, event=None):
         if event is not None and event.widget != self.root:
@@ -592,14 +659,18 @@ class WorkspaceLayout:
         nav_font = tkfont.Font(master=self.root, font=self.nav_buttons[0].cget("font"))
         padding = max(32, nav_font.metrics("linespace") * 3)
         rail_width = max(148, *(nav_font.measure(str(text)) + padding for text in
-            ("01   PDF OCR", tr('02   外文翻译'), tr('偏好设置'), self.version.cget("text"))))
+            ("01   PDF OCR", tr('02   外文翻译'), tr('03   GitHub 上传'), tr('偏好设置'), self.version.cget("text"))))
         compact = (self.root.winfo_width() < rail_width + max(650, nav_font.metrics("linespace") * 35)
                    or self.root.winfo_height() < 520)
         self.reflow_forms()
+        if hasattr(self, "github_manual"):
+            self.github_manual.resize()
         if compact == self.compact and getattr(self, "rail_width", None) == rail_width:
             return
         self.compact = compact
         self.rail_width = rail_width
+        self.github_scan.configure(text=tr("扫描缺失") if compact else tr("扫描缺失文档"))
+        self.github_upload.configure(text=tr("上传所选") if compact else tr("上传选中文档"))
         self.rail.grid_forget()
         self.workspace.grid_forget()
         for widget in (self.brand, self.nav_area, self.rail_footer):
@@ -626,7 +697,7 @@ class WorkspaceLayout:
             self.nav_area.grid(row=0, column=1, sticky="ew", padx=8, pady=6)
             for i, button in enumerate(self.nav_buttons):
                 self.nav_area.columnconfigure(i, weight=1)
-                button.configure(text=("PDF OCR", tr('外文翻译'))[i], pady=8, padx=8)
+                button.configure(text=("PDF OCR", tr('外文翻译'), "GitHub")[i], pady=8, padx=8)
                 button.grid(row=0, column=i, sticky="ew", padx=2)
             self.workspace.grid(row=1, column=0, columnspan=2, sticky="nsew")
             self.title.configure(font=(self.family, 17, "bold"))
@@ -652,8 +723,9 @@ class WorkspaceLayout:
             self.nav_area.grid(row=1, column=0, sticky="new", padx=10)
             self.nav_area.columnconfigure(0, weight=1)
             self.nav_area.columnconfigure(1, weight=0)
+            self.nav_area.columnconfigure(2, weight=0)
             for i, button in enumerate(self.nav_buttons):
-                button.configure(text=("01   PDF OCR", tr('02   外文翻译'))[i], pady=12, padx=14)
+                button.configure(text=("01   PDF OCR", tr('02   外文翻译'), tr('03   GitHub 上传'))[i], pady=12, padx=14)
                 button.grid(row=i, column=0, sticky="ew", pady=3)
             self.rail_footer.grid(row=2, column=0, sticky="sew", padx=10)
             self.version.pack(anchor="w", padx=14, pady=(4, 16))

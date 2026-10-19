@@ -1,6 +1,11 @@
 """Reviewed English captions and messages. Chinese strings are stable message IDs."""
 
 EN_MESSAGES = {
+    '启动时自动检查更新': 'Check for updates at startup',
+    '默认关闭。启用后按所选渠道在启动时检查一次；仅提示新版，下载和安装仍需手动确认。': 'Off by default. When enabled, check the selected channel once at startup. Download and installation require your confirmation.',
+    '来源固定为 CHNAQW/paddleocr_usage。可检查最新 Release 或 main 分支；main 代码可能尚未经过正式发布验证。': 'Updates come from CHNAQW/paddleocr_usage. Choose the latest release or main branch; main may contain changes awaiting release validation.',
+    '自动检查更新：{arg0}': 'Automatic update check: {arg0}',
+    '自动检查更新失败，可稍后手动重试：{arg0}': 'Automatic update check failed. Try again manually later: {arg0}',
     "文献处理软件": "Literature Workspace",
     "文献": "Library",
     "选择文件夹": "Browse",
@@ -754,6 +759,26 @@ EN_MESSAGES.update({
     "GitHub 拒绝了更新请求（HTTP {arg0}），可能遇到 API 限流或网络／代理拦截。请稍后重试；正式发行版检查失败时可尝试 main 渠道。\n地址：{arg1}": "GitHub rejected the update request (HTTP {arg0}). API rate limits or a network/proxy block may apply. Retry later; if release checking fails, try the main channel.\nURL: {arg1}",
     "GitHub 更新请求失败（HTTP {arg0}）。请稍后重试。\n地址：{arg1}": "GitHub update request failed (HTTP {arg0}). Retry later.\nURL: {arg1}"
 })
+
+EN_MESSAGES.update({
+    "允许裁决模型直接修订译文": "Allow model revisions",
+    "默认不授权。授权后，模型可修订翻译分歧或校对疑点，自动核验通过即采用，无需再次确认；仍有疑点时保留报告并交由用户处理。": "Off by default. Authorized revisions are checked automatically and applied without another confirmation. Unresolved issues remain pending for your review.",
+    "裁决模型直接修订授权：{arg0}。": "Decision-model revision permission: {arg0}.",
+    "裁决模型未提供有效的完整修订稿。": "The decision model did not provide a valid complete revision.",
+    "修订稿核验缺少有效的问题列表，不能自动接受。": "Revision verification lacks a valid issue list; the revision cannot be accepted automatically.",
+    "{arg0}：第 {arg1} 段已生成模型修订稿，正在自动核验。": "{arg0}: model revision generated for chunk {arg1}; checking it automatically.",
+    "{arg0}：第 {arg1} 段修订稿核验结果：{arg2}。": "{arg0}: revision check for chunk {arg1}: {arg2}.",
+    "已自动接受修订稿": "Revision applied automatically",
+    "修订稿仍需处理": "Revision needs review",
+    "03   GitHub 上传": "03   GitHub uploads",
+    "GitHub 文档上传": "GitHub document uploads",
+    "01   GitHub 上传位置": "01   GitHub destination",
+    "02   选择并补传文档": "02   Select and upload documents",
+    "手动上传可独立使用，无需先运行 OCR 或翻译，也无需开启自动上传。": "Upload documents independently. You can scan and upload without running OCR or translation or enabling automatic uploads.",
+    "比较远端目录，上传核验通过的文档。": "Compare the remote folder and upload verified documents."
+})
+
+EN_MESSAGES.update({"扫描缺失": "Scan missing", "上传所选": "Upload selected"})
 
 _language = "zh"
 _sources = {value: key for key, value in EN_MESSAGES.items()}

@@ -178,6 +178,7 @@ class TranslationOptions:
     proofreading: bool = False
     arbitration: str = "用户自行裁决"
     input_percent: int = 50
+    allow_arbiter_revision: bool = False
 
 
 TRANSLATE_PROMPT = ("你是学术文献翻译员。把 source 全文忠实译成 target_language；"
@@ -197,6 +198,25 @@ PROOF_ARBITRATE_PROMPT = ('对照原文 source、最终译文 translation，独�
     '{"decision":"approve|needs_review|unresolved","has_problem":true或false,"reason":"具体理由"}。'
     '只有确认最终译文完整准确、校对疑点均不成立时，返回 decision=approve 且 has_problem=false；'
     '确认仍有问题时 decision=needs_review 且 has_problem=true；证据不足时 decision=unresolved。')
+ARBITRATE_REVISE_PROMPT = ('对照原文 source、两份译文 first、second 及 comparison，独立裁决。'
+    '用户已授权你直接修订译文。已有完整准确的译文可选 first 或 second；两份都有可修复错误时，'
+    '可选 revised 并提供完整修订译文，修复误译、遗漏或缺字，不摘要、不润色，不编造原文没有的信息。'
+    '保留全部事实、数字、引文、公式、代码、图片与链接及 Markdown 结构。无法可靠修复时选 unresolved。'
+    '只返回 JSON：{"choice":"first|second|revised|unresolved","has_problem":true或false,'
+    '"reason":"理由","revised_translation":"仅 revised 时必填的完整修订译文"}。'
+    '只有所选或修订译文完整准确时 has_problem=false。')
+PROOF_REVISE_PROMPT = ('对照原文 source、译文 translation 和 proofreading，独立复核疑点。'
+    '用户已授权直接修订译文；疑点不成立时 approve，确有且能可靠修复时 revised 并返回完整修订译文。'
+    '只修复误译、缺字少字、语句不通及遗漏，不摘要、不润色、不补写不确定的原文内容。'
+    '保留事实、数字、引文、公式、代码、图片与链接及 Markdown 结构。无法确定时 unresolved。'
+    '只返回 JSON：{"decision":"approve|revised|needs_review|unresolved","has_problem":true或false,'
+    '"reason":"理由","revised_translation":"仅 revised 时必填的完整修订译文"}。'
+    '只有译文或修订稿完整准确时 has_problem=false。')
+REVISION_VERIFY_PROMPT = ('独立核验 source 与 translation。translation 是裁决模型修订后的完整译文。'
+    '检查是否忠实完整、无误译遗漏或缺字、语句通顺，保留事实、数字、引文、公式、代码、图片、链接和 Markdown。'
+    '只核验，不再次修订，不以裁决模型结论代替判断。只返回 JSON：'
+    '{"has_problem":true或false,"issues":["具体问题"],"summary":"结论"}。'
+    '只有完整准确且没有任何疑点时 has_problem=false 且 issues=[]。')
 
 
 class _RetryChunk(Exception):
@@ -221,6 +241,9 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
     model_arbitration = (options.secondary_review or options.proofreading) and options.arbitration == "大模型裁决"
     if model_arbitration and arbiter is None:
         raise ValueError(tr('请选择裁决模型。'))
+    revision_authorized = model_arbitration and options.allow_arbiter_revision is True
+    arbitration_prompt = ARBITRATE_REVISE_PROMPT if revision_authorized else ARBITRATE_PROMPT
+    proof_arbitration_prompt = PROOF_REVISE_PROMPT if revision_authorized else PROOF_ARBITRATE_PROMPT
     percent = options.input_percent
     active = {"translator": translator}
     if options.secondary_review:
@@ -234,6 +257,7 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
            arg1=tr("启用") if options.proofreading else tr("未启用"),
            arg2=tr(options.arbitration) if options.secondary_review or options.proofreading else tr("未启用"),
            arg3=arbiter.model if model_arbitration else tr("未启用")))
+    log(tr("裁决模型直接修订授权：{arg0}。", arg0=tr("启用") if revision_authorized else tr("未启用")))
     for role, profile in active.items():
         profile.validate()
         log(tr("{arg0} / {arg1}：输入预算 {arg2} tokens；比例 {arg3}%；来源 {arg4}。",
@@ -258,6 +282,34 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
         check_request(profile, prompt, data, percent)
         return chat(profile, prompt, data, stop, input_percent=percent)
 
+    def revise(verdict, before, original, stage, record):
+        candidate = verdict.get("revised_translation")
+        revision = {"stage": stage, "before": before,
+                    "candidate": candidate if isinstance(candidate, str) else None, "accepted": False}
+        record.setdefault("revisions", []).append(revision)
+        if not isinstance(candidate, str) or not candidate.strip():
+            revision["error"] = str(tr("裁决模型未提供有效的完整修订稿。"))
+            return before, revision
+        candidate = revision["candidate"] = candidate.strip()
+        verifier = reviewer if stage == "translation" else proofreader
+        log(tr("{arg0}：第 {arg1} 段已生成模型修订稿，正在自动核验。", arg0=source.name, arg1=record["chunk"]))
+        try:
+            verification = review_reply(ask(verifier, REVISION_VERIFY_PROMPT,
+                                            {**data_for(original), "translation": candidate}))
+            revision["verification"] = verification
+            revision["verifier"] = verifier.model
+            if (not isinstance(verification.get("issues"), list)
+                    or not all(isinstance(issue, str) for issue in verification["issues"])):
+                raise RuntimeError(tr("修订稿核验缺少有效的问题列表，不能自动接受。"))
+            revision["accepted"] = not verification["has_problem"] and not any(issue.strip() for issue in verification["issues"])
+        except (ProcessingCancelled, BudgetExceeded, ResponseTooLong):
+            raise
+        except Exception as exc:
+            revision["error"] = str(exc)
+        log(tr("{arg0}：第 {arg1} 段修订稿核验结果：{arg2}。", arg0=source.name, arg1=record["chunk"],
+               arg2=tr("已自动接受修订稿") if revision["accepted"] else tr("修订稿仍需处理")))
+        return (candidate if revision["accepted"] else before), revision
+
     def fits(original):
         _cancel(stop)
         data = data_for(original)
@@ -272,24 +324,30 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
                 check_request(reviewer, TRANSLATE_PROMPT, data, percent)
                 check_request(reviewer, COMPARE_PROMPT, candidates, percent)
                 if options.arbitration == "大模型裁决":
-                    check_request(arbiter, ARBITRATE_PROMPT,
+                    check_request(arbiter, arbitration_prompt,
                                   {**candidates, "comparison": report_reserve}, percent)
+                    if revision_authorized:
+                        check_request(reviewer, REVISION_VERIFY_PROMPT, {**data, "translation": original * 2}, percent)
             if options.proofreading:
                 check_request(proofreader, PROOFREAD_PROMPT, {**data, "translation": original * 2}, percent)
                 if model_arbitration:
-                    check_request(arbiter, PROOF_ARBITRATE_PROMPT,
+                    check_request(arbiter, proof_arbitration_prompt,
                                   {**data, "translation": original * 2, "proofreading": report_reserve}, percent)
+                    if revision_authorized:
+                        check_request(proofreader, REVISION_VERIFY_PROMPT, {**data, "translation": original * 2}, percent)
             return True
         except BudgetExceeded:
             return False
 
     chunks = budget_chunks(text, fits)
     attempt_drafts = {}
+    attempt_record = {}
     def translate_chunk(original, index):
         data = data_for(original)
         first = ask(translator, TRANSLATE_PROMPT, data)
         attempt_drafts["first"] = first
-        record = {"chunk": index, "verified": True, "pendingReasons": []}
+        record = attempt_record
+        record.update(chunk=index, verified=True, pendingReasons=[])
         if options.secondary_review:
             log(tr('{arg0}：第 {arg1} 段二次翻译核对', arg0=source.name, arg1=index))
             second = ask(reviewer, TRANSLATE_PROMPT, data)
@@ -299,19 +357,23 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
                 {**data, "first": first, "second": second}))
             record["comparison"] = comparison
             if comparison["has_problem"]:
+                revision = None
                 if options.arbitration == "大模型裁决":
                     log(tr("{arg0}：第 {arg1} 段开始翻译分歧裁决，模型 {arg2}。",
                            arg0=source.name, arg1=index, arg2=arbiter.model))
-                    verdict = review_reply(ask(arbiter, ARBITRATE_PROMPT,
+                    verdict = review_reply(ask(arbiter, arbitration_prompt,
                         {**data, "first": first, "second": second, "comparison": comparison}))
                     raw_choice = verdict.get("choice")
                     raw_choice = raw_choice.strip().lower() if isinstance(raw_choice, str) else "unresolved"
                     choice = raw_choice if raw_choice in {"first", "second"} and not verdict["has_problem"] else "unresolved"
+                    if revision_authorized and raw_choice == "revised" and not verdict["has_problem"]:
+                        first, revision = revise(verdict, first, original, "translation", record)
+                        choice = "revised" if revision["accepted"] else "unresolved"
                     record["arbitration"] = verdict
                     record["arbitrationChoice"] = choice
                     log(tr("{arg0}：第 {arg1} 段翻译裁决结果：{arg2}；理由：{arg3}",
                            arg0=source.name, arg1=index,
-                           arg2=tr({"first": "接受首次译文", "second": "接受二次译文", "unresolved": "未能明确批准译文"}[choice]),
+                           arg2=tr({"first": "接受首次译文", "second": "接受二次译文", "revised": "已自动接受修订稿", "unresolved": "未能明确批准译文"}[choice]),
                            arg3=verdict.get("reason") or tr("模型未提供理由")))
                 else:
                     log(tr("{arg0}：第 {arg1} 段翻译有分歧，等待用户裁决。", arg0=source.name, arg1=index))
@@ -319,8 +381,11 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
                                      "first": first, "second": second, "comparison": comparison}) if decide else "unresolved"
                     record["arbitration"] = {"choice": choice, "by": "user"}
                 if options.arbitration == "大模型裁决" and choice == "unresolved" and decide:
+                    drafts = {"first": first, "second": second}
+                    if revision and revision.get("candidate"):
+                        drafts["second"] = revision["candidate"]
                     choice = decide({"filename": source.name, "chunk": index, "source": original,
-                        "first": first, "second": second, "problem": {"comparison": comparison, "arbitration": verdict}})
+                        **drafts, "problem": {"comparison": comparison, "arbitration": verdict, "revision": revision}})
                     record["userDecision"] = choice
                 if choice == "retry":
                     raise _RetryChunk()
@@ -328,14 +393,16 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
                 if options.arbitration != "大模型裁决" or "userDecision" in record:
                     record["verified"] = False
                     record["pendingReasons"].append("translation_dispute_unresolved")
-                record["candidates"] = {"first": first, "second": second}
                 if choice == "second":
-                    first = second
-                elif choice != "first":
+                    first = revision["candidate"] if revision and revision.get("candidate") else second
+                elif choice not in {"first", "revised"}:
                     record["verified"] = False
                     if "translation_dispute_unresolved" not in record["pendingReasons"]:
                         record["pendingReasons"].append("translation_dispute_unresolved")
         if options.proofreading:
+            revision = None
+            if any(item["accepted"] for item in record.get("revisions", [])):
+                attempt_drafts["first"] = first
             log(tr('{arg0}：第 {arg1} 段文本校对', arg0=source.name, arg1=index))
             proof = review_reply(ask(proofreader, PROOFREAD_PROMPT, {**data, "translation": first}))
             record["proofreading"] = proof
@@ -343,9 +410,12 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
             if not proof_passed and model_arbitration:
                 log(tr("{arg0}：第 {arg1} 段开始校对疑点裁决，模型 {arg2}。",
                        arg0=source.name, arg1=index, arg2=arbiter.model))
-                verdict = review_reply(ask(arbiter, PROOF_ARBITRATE_PROMPT,
+                verdict = review_reply(ask(arbiter, proof_arbitration_prompt,
                     {**data, "translation": first, "proofreading": proof}))
                 proof_passed = verdict.get("decision") == "approve" and not verdict["has_problem"]
+                if revision_authorized and verdict.get("decision") == "revised" and not verdict["has_problem"]:
+                    first, revision = revise(verdict, first, original, "proofreading", record)
+                    proof_passed = revision["accepted"]
                 record["proofreadingArbitration"] = verdict
                 log(tr("{arg0}：第 {arg1} 段校对裁决结果：{arg2}；理由：{arg3}",
                        arg0=source.name, arg1=index,
@@ -355,12 +425,15 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
                 record["pendingReasons"].append("proofreading_problem")
                 log(tr("{arg0}：第 {arg1} 段校对疑点尚未解决，本段保持待处理。", arg0=source.name, arg1=index))
                 if decide:
+                    drafts = dict(attempt_drafts)
+                    if revision and revision.get("candidate"):
+                        drafts = {"first": first, "second": revision["candidate"]}
                     choice = decide({"filename": source.name, "chunk": index, "source": original,
-                        **attempt_drafts, "problem": {"proofreading": proof, "arbitration": record.get("proofreadingArbitration")}})
+                        **drafts, "problem": {"proofreading": proof, "arbitration": record.get("proofreadingArbitration"), "revision": revision}})
                     if choice == "retry":
                         raise _RetryChunk()
-                    if choice in attempt_drafts:
-                        first = attempt_drafts[choice]
+                    if choice in drafts:
+                        first = drafts[choice]
                     record["proofreadingUserDecision"] = choice
             record["verified"] = record["verified"] and proof_passed
         return first, record
@@ -371,6 +444,7 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
         original = chunks[position]
         log(tr('{arg0}：翻译第 {arg1}/{arg2} 段', arg0=source.name, arg1=position + 1, arg2=len(chunks)))
         attempt_drafts.clear()
+        attempt_record.clear()
         try:
             first, record = translate_chunk(original, position + 1)
         except _RetryChunk:
@@ -394,10 +468,11 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
             if choice == "retry":
                 continue
             first = attempt_drafts.get(choice, attempt_drafts["first"])
-            record = {"chunk": position + 1, "verified": False, "pendingReasons": ["translation_check_failed"],
+            record = {**attempt_record, "chunk": position + 1, "verified": False,
+                      "pendingReasons": list(dict.fromkeys(attempt_record.get("pendingReasons", []) + ["translation_check_failed"])),
                       "checkError": str(exc), "userDecision": choice, "candidates": dict(attempt_drafts)}
         translated.append(first)
-        records.append(record)
+        records.append(dict(record))
         position += 1
     _cancel(stop)
     output = "\n\n".join(translated) + "\n"
@@ -412,6 +487,8 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
               "proofreader": proofreader.model if options.proofreading else None,
               "arbiter": arbiter.model if model_arbitration else None,
               "arbitrationMode": options.arbitration,
+              "allowArbiterRevision": options.allow_arbiter_revision is True,
+              "arbiterRevisionAuthorized": revision_authorized,
               "pendingReasons": sorted({reason for record in records for reason in record["pendingReasons"]}),
               "inputPercent": percent, "tokenEstimate": "utf8_bytes_plus_framing",
               "modelLimits": {role: {**effective_limits(profile).__dict__, "input_budget": input_budget(profile, percent)}

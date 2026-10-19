@@ -11,7 +11,7 @@ def test_windows_version_metadata_has_no_leading_zero_components():
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
     versions = re.findall(r"--(?:file|product)-version=([^\s^]+)", script)
 
-    assert versions == ["26.10.19.5", "26.10.19.5"]
+    assert versions == ["26.10.19.6", "26.10.19.6"]
     for version in versions:
         components = version.split(".")
         assert len(components) == 4
@@ -22,7 +22,7 @@ def test_windows_version_metadata_has_no_leading_zero_components():
 def test_release_filename_keeps_display_version():
     """The public filename must identify the current release."""
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
-    assert 'set "EXE_NAME=PaddleOCR_PDF_to_MD_26.10.19.05.exe"' in script
+    assert 'set "EXE_NAME=PaddleOCR_PDF_to_MD_26.10.19.06.exe"' in script
 
 
 def test_application_and_build_versions_match():
@@ -30,7 +30,7 @@ def test_application_and_build_versions_match():
     import paddleocr_pdf_to_md_gui as application
 
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
-    assert application.APP_VERSION == "26.10.19.05"
+    assert application.APP_VERSION == "26.10.19.06"
     metadata_version = ".".join(str(int(part)) for part in application.APP_VERSION.split("."))
     assert f"--file-version={metadata_version}" in script
     assert f"--product-version={metadata_version}" in script
@@ -41,7 +41,7 @@ def test_application_and_build_versions_match():
 
 def test_windows_version_reference_has_matching_fixed_and_display_versions():
     """The reference resource used to retain an outdated fixed version tuple."""
-    resource = BUILD_SCRIPT.with_name("version_info_26.10.19.05.txt")
+    resource = BUILD_SCRIPT.with_name("version_info_26.10.19.06.txt")
     tree = ast.parse(resource.read_text(encoding="utf-8"))
     fixed_versions = {}
     display_versions = {}
@@ -51,9 +51,9 @@ def test_windows_version_reference_has_matching_fixed_and_display_versions():
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "StringStruct":
             name, value = (ast.literal_eval(arg) for arg in node.args)
             display_versions[name] = value
-    assert fixed_versions == {"filevers": (26, 10, 19, 5), "prodvers": (26, 10, 19, 5)}
-    assert display_versions["FileVersion"] == display_versions["ProductVersion"] == "26.10.19.05"
-    assert display_versions["OriginalFilename"] == "PaddleOCR_PDF_to_MD_26.10.19.05.exe"
+    assert fixed_versions == {"filevers": (26, 10, 19, 6), "prodvers": (26, 10, 19, 6)}
+    assert display_versions["FileVersion"] == display_versions["ProductVersion"] == "26.10.19.06"
+    assert display_versions["OriginalFilename"] == "PaddleOCR_PDF_to_MD_26.10.19.06.exe"
 
 
 def test_source_launchers_check_all_required_workspace_modules():

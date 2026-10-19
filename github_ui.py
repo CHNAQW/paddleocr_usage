@@ -12,7 +12,7 @@ from tkinter import ttk
 from literature_processing import (GitHubOptions, GitHubSetupClient, UPLOAD_KINDS, ProcessingCancelled,
     document_upload_evidence, scan_missing_documents, upload_verified_file, github_folder_name, github_repository_name)
 from literature_ui import scrollable_page
-from responsive_ui import AdaptiveLabel, ButtonToolbar, ResponsiveForm
+from responsive_ui import AdaptiveCheckbutton, AdaptiveLabel, ButtonToolbar, ResponsiveForm
 from ui_i18n import LocalizedVar, filedialog, messagebox, localize_widgets, tr
 
 
@@ -29,8 +29,8 @@ class GitHubSetup:
         self.summary = LocalizedVar(master=parent)
         AdaptiveLabel(box, textvariable=self.summary).grid(row=1, column=0, sticky="ew", pady=8)
         ttk.Button(box, text=tr("打开上传设置向导"), style="Accent.TButton", command=self.open).grid(row=2, column=0, sticky="w", pady=8)
-        ttk.Checkbutton(box, text=tr("自动上传核验通过的 Markdown"), variable=controls.upload,
-                        style="Wizard.TCheckbutton", command=self.toggle).grid(row=3, column=0, sticky="w", pady=6)
+        AdaptiveCheckbutton(box, text=tr("自动上传核验通过的 Markdown"), variable=controls.upload,
+                        style="Wizard.TCheckbutton", command=self.toggle).grid(row=3, column=0, sticky="ew", pady=6)
         form = ResponsiveForm(box)
         form.grid(row=4, column=0, sticky="ew", pady=8)
         combo = ttk.Combobox(form, textvariable=controls.upload_kind, state="readonly", values=[tr(v) for v in UPLOAD_KINDS])
@@ -68,11 +68,20 @@ class GitHubSetup:
 
     def open(self):
         if self.wizard is not None and self.wizard.window.winfo_exists():
+            settings = self.controls.app.workspace_layout.settings
+            self.wizard.window.transient(settings if settings.winfo_viewable() else self.controls.app.root)
+            self.wizard.window.deiconify()
             self.wizard.window.lift()
             return
         self.wizard = GitHubWizard(self)
 
     def open_manual(self):
+        shell = self.controls.app.workspace_layout
+        if getattr(shell, "github_manual", None) is not None:
+            shell.app.notebook.select(2)
+            shell.settings.withdraw()
+            shell.root.lift()
+            return
         try:
             GitHubOptions(self.controls.repository.get(), self.controls.github_token.get(),
                           self.controls.branch.get(), self.controls.folder.get()).validate()
@@ -89,9 +98,11 @@ class GitHubWizard:
     def __init__(self, owner):
         self.owner, self.controls = owner, owner.controls
         self.app = self.controls.app
-        self.window = tk.Toplevel(self.app.workspace_layout.settings)
+        settings = self.app.workspace_layout.settings
+        parent = settings if settings.winfo_viewable() else self.app.root
+        self.window = tk.Toplevel(parent)
         self.window.title(tr("GitHub 上传设置向导"))
-        self.window.transient(self.app.workspace_layout.settings)
+        self.window.transient(parent)
         self.window.minsize(480, 420)
         width = min(720, self.window.winfo_screenwidth() - 40)
         height = min(700, self.window.winfo_screenheight() - 60)
@@ -142,11 +153,10 @@ class GitHubWizard:
         footer.grid(row=2, column=0, sticky="ew")
         footer.columnconfigure(0, weight=1)
         AdaptiveLabel(footer, textvariable=self.status, max_lines=3, style="Subtitle.TLabel").grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 10))
-        ttk.Button(footer, text=tr("取消设置"), command=self.close).grid(row=1, column=0, sticky="w")
-        self.back_button = ttk.Button(footer, text=tr("上一步"), command=self.back)
-        self.back_button.grid(row=1, column=1, padx=8)
-        self.next_button = ttk.Button(footer, text=tr("下一步"), style="Accent.TButton", command=self.next)
-        self.next_button.grid(row=1, column=2)
+        self.navigation = ButtonToolbar(footer, ((tr("取消设置"), self.close), (tr("上一步"), self.back), (tr("下一步"), self.next)))
+        self.navigation.grid(row=1, column=0, sticky="ew")
+        _, self.back_button, self.next_button = self.navigation.buttons
+        self.next_button.configure(style="Accent.TButton")
         for variable in (self.token, self.repository, self.branch, self.folder):
             self.traces.append((variable, variable.trace_add("write", self.dirty)))
         self.window.protocol("WM_DELETE_WINDOW", self.close)
@@ -216,8 +226,8 @@ class GitHubWizard:
         self.intro(parent, tr("确认后再启用自动上传"),
                    tr("连接检查已确认仓库和分支可访问。请确认创建凭据时已允许写入所选仓库；实际写入权限会在上传时校验。"))
         AdaptiveLabel(parent, textvariable=self.review).grid(row=2, column=0, sticky="ew", pady=12)
-        ttk.Checkbutton(parent, text=tr("自动上传核验通过的 Markdown"), variable=self.enabled,
-                        style="Wizard.TCheckbutton").grid(row=3, column=0, sticky="w", pady=10)
+        AdaptiveCheckbutton(parent, text=tr("自动上传核验通过的 Markdown"), variable=self.enabled,
+                        style="Wizard.TCheckbutton").grid(row=3, column=0, sticky="ew", pady=10)
         AdaptiveLabel(parent, text=tr("只上传通过核验的 Markdown；原 PDF、访问凭据和检查报告不会上传。远端已有同名文件会保留。"),
                       style="Subtitle.TLabel").grid(row=4, column=0, sticky="ew", pady=12)
 
@@ -233,6 +243,8 @@ class GitHubWizard:
         self.back_button.configure(state="normal" if self.step else "disabled")
         self.next_button.configure(state="disabled" if self.busy else "normal",
                                    text=tr("保存设置") if self.step == 3 else tr("连接并继续") if self.step == 0 else tr("下一步"))
+
+        self.navigation.schedule()
 
     def show(self, step):
         self.step = step
@@ -399,19 +411,24 @@ class GitHubWizard:
 
 class ManualUpload:
     """Compare first, then let the user upload the selected, positively reviewed files."""
-    def __init__(self, owner):
+    def __init__(self, owner, parent=None):
         self.owner, self.controls = owner, owner.controls
         self.app = self.controls.app
-        self.window = tk.Toplevel(self.app.workspace_layout.settings)
-        self.window.title(tr("手动扫描与补传"))
-        self.window.geometry("820x650")
-        self.window.minsize(480, 420)
+        self.embedded = parent is not None
+        self.window = ttk.Frame(parent) if self.embedded else tk.Toplevel(self.app.workspace_layout.settings)
+        if self.embedded:
+            self.window.grid(row=0, column=0, sticky="nsew")
+        else:
+            self.window.title(tr("手动扫描与补传"))
+            self.window.geometry("820x650")
+            self.window.minsize(480, 420)
         self.window.columnconfigure(0, weight=1)
         self.window.rowconfigure(1, weight=1, minsize=100)
         self.closed, self.busy = False, False
         self.worker_thread = None
         self.events, self.cancel = queue.Queue(), threading.Event()
         self.candidates, self.checked = [], None
+        self.extra_buttons = []
         page = ttk.Frame(self.window, padding=16)
         page.grid(row=0, column=0, sticky="ew")
         page.columnconfigure(0, weight=1)
@@ -440,7 +457,7 @@ class ManualUpload:
         frame.grid(row=1, column=0, sticky="nsew")
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
-        self.tree = ttk.Treeview(frame, columns=("role", "status"), selectmode="extended")
+        self.tree = ttk.Treeview(frame, columns=("role", "status"), selectmode="extended", height=8)
         self.tree.column("#0", width=350, minwidth=100)
         self.tree.column("role", width=100, minwidth=85, stretch=False)
         self.tree.column("status", width=200, minwidth=140)
@@ -458,6 +475,8 @@ class ManualUpload:
         toolbar = ButtonToolbar(footer, ((tr("扫描缺失文档"), self.scan), (tr("上传选中文档"), self.upload), (tr("停止"), self.cancel.set)))
         toolbar.grid(row=1, column=0, sticky="ew")
         self.scan_button, self.upload_button, self.stop_button = toolbar.buttons
+        if self.embedded:
+            footer.grid_remove()  # Embedded tasks use the workspace's fixed action bar.
         self.traces = []
         for var in (self.controls.upload_root, self.controls.upload_kind, self.controls.repository,
                     self.controls.branch, self.controls.folder, self.controls.github_token):
@@ -467,6 +486,7 @@ class ManualUpload:
         self.pending = self.app.root.after(100, self.poll)
         self.render()
         self.buttons()
+        localize_widgets(self.window)
 
     def signature(self):
         c = self.controls
@@ -482,14 +502,15 @@ class ManualUpload:
         self.buttons()
 
     def browse(self):
-        value = filedialog.askdirectory(parent=self.window, title=tr("选择文件夹"), initialdir=self.controls.upload_root.get() or None)
+        value = filedialog.askdirectory(parent=self.window.winfo_toplevel(), title=tr("选择文件夹"), initialdir=self.controls.upload_root.get() or None)
         if value:
             self.controls.upload_root.set(value)
 
     def buttons(self):
-        self.scan_button.configure(state="disabled" if self.busy else "normal")
-        self.upload_button.configure(state="normal" if not self.busy and any(c.status == "ready" for c in self.candidates) else "disabled")
-        self.stop_button.configure(state="normal" if self.busy else "disabled")
+        for scan, upload, stop in [(self.scan_button, self.upload_button, self.stop_button)] + self.extra_buttons:
+            scan.configure(state="disabled" if self.busy else "normal")
+            upload.configure(state="normal" if not self.busy and any(c.status == "ready" for c in self.candidates) else "disabled")
+            stop.configure(state="normal" if self.busy else "disabled")
         self.folder_entry.configure(state="disabled" if self.busy else "normal")
         self.browse_button.configure(state="disabled" if self.busy else "normal")
         self.kind_combo.configure(state="disabled" if self.busy else "readonly")
@@ -515,9 +536,10 @@ class ManualUpload:
                              values=(tr("翻译稿") if item.role == "translation" else tr("原文"), labels[item.status]))
         self.tree.selection_set([i for i in selected if self.tree.exists(i)])
 
-    def resize(self, event):
-        if event.widget == self.window:
-            if self.window.winfo_height() < 560:
+    def resize(self, event=None):
+        if event is None or event.widget == self.window:
+            height = self.app.root.winfo_height() if self.embedded else self.window.winfo_height()
+            if height < 560:
                 self.intro.grid_remove()
             else:
                 self.intro.grid()
@@ -542,6 +564,12 @@ class ManualUpload:
         self.checked = self.signature()
         root, kind, repo, branch, folder, token = self.checked
         options = GitHubOptions(repo, token, branch, folder)
+        try:
+            options.validate()
+        except ValueError:
+            self.checked = None
+            self.owner.open()
+            return
         self.candidates = []
         self.render()
         self.status.set(tr("正在比较本地文档与远端目录……"))
@@ -552,11 +580,11 @@ class ManualUpload:
             return
         selected = [(int(i), self.candidates[int(i)]) for i in self.tree.selection() if self.candidates[int(i)].status == "ready"]
         if not selected:
-            messagebox.showinfo(tr("请选择文档"), tr("请先选择可以补传的文档。"), parent=self.window)
+            messagebox.showinfo(tr("请选择文档"), tr("请先选择可以补传的文档。"), parent=self.window.winfo_toplevel())
             return
         _, kind, repo, branch, folder, token = self.checked
         if not messagebox.askyesno(tr("确认手动上传"), tr("将向 {arg0}（{arg1} / {arg2}）上传 {arg3} 个选中文档。\n上传内容：{arg4}\n远端已有文件会跳过。是否继续？",
-                arg0=repo, arg1=branch, arg2=folder or tr("仓库根目录"), arg3=len(selected), arg4=tr(kind)), parent=self.window):
+                arg0=repo, arg1=branch, arg2=folder or tr("仓库根目录"), arg3=len(selected), arg4=tr(kind)), parent=self.window.winfo_toplevel()):
             return
         try:
             self.app.save_current_config()

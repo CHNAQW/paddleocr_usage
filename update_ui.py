@@ -9,7 +9,7 @@ from tkinter import ttk
 
 from app_updater import (SourcePackage, UpdateCancelled, discard_package, import_package, last_result,
                          launch_install, running_executable, check_github_update, download_github_update)
-from responsive_ui import AdaptiveLabel, ButtonToolbar
+from responsive_ui import AdaptiveCheckbutton, AdaptiveLabel, ButtonToolbar
 from ui_i18n import ChoiceVar, LocalizedVar, copy_text, filedialog, messagebox, tr
 
 
@@ -19,7 +19,13 @@ class UpdatePanel:
         self.executable = running_executable(compiled)
         self.staged, self.thread = None, None
         self.online = None
-        self.channel = ChoiceVar(master=self.root, value="正式发行版（Release）")
+        saved = app.config.literature if isinstance(app.config.literature, dict) else {}
+        saved = saved.get("updates", {})
+        saved = saved if isinstance(saved, dict) else {}
+        self.automatic = tk.BooleanVar(master=self.root, value=saved.get("automatic") is True)
+        self.channel = ChoiceVar(master=self.root, value="最新代码（main）" if saved.get("channel") == "main" else "正式发行版（Release）")
+        self.auto_timer, self.auto_checked, self.auto_in_progress = None, False, False
+        self.preference_signature = (self.automatic.get(), self.channel.get())
         self.installing, self.closed = False, False
         self.cancel = threading.Event()
         self.events = queue.Queue()
@@ -52,8 +58,10 @@ class UpdatePanel:
         self.channel_combo = ttk.Combobox(online, textvariable=self.channel, state="readonly", values=[tr(v) for v in values])
         self.channel_combo.localized_choices = values
         self.channel_combo.grid(row=0, column=0, sticky="ew")
-        self.channel_combo.bind("<<ComboboxSelected>>", self.reset_online)
-        AdaptiveLabel(online, text=tr("来源固定为 CHNAQW/paddleocr_usage。最新代码可能尚未经过正式发布验证；仅在点击检查或下载时联网。"),
+        AdaptiveCheckbutton(online, text=tr("启动时自动检查更新"), variable=self.automatic).grid(row=4, column=0, sticky="ew", pady=(12, 0))
+        AdaptiveLabel(online, text=tr("默认关闭。启用后按所选渠道在启动时检查一次；仅提示新版，下载和安装仍需手动确认。"),
+                      style="Subtitle.TLabel").grid(row=5, column=0, sticky="ew", pady=8)
+        AdaptiveLabel(online, text=tr("来源固定为 CHNAQW/paddleocr_usage。可检查最新 Release 或 main 分支；main 代码可能尚未经过正式发布验证。"),
                       style="Subtitle.TLabel").grid(row=1, column=0, sticky="ew", pady=8)
         self.online_details = LocalizedVar(master=self.root, value=tr("选择渠道后检查新版。"))
         AdaptiveLabel(online, textvariable=self.online_details, max_lines=7).grid(row=2, column=0, sticky="ew", pady=8)
@@ -63,7 +71,48 @@ class UpdatePanel:
         self.frame.bind("<Destroy>", self.cleanup, add="+")
         self.pending = self.root.after(100, self.poll)
         self.notice_timer = self.root.after(1200, self.show_last_result)
+        self.preference_traces = [(v, v.trace_add("write", self.preferences_changed)) for v in (self.automatic, self.channel)]
+        self.schedule_automatic()
         self.buttons()
+
+    def config_data(self):
+        return {"automatic": self.automatic.get(), "channel": "main" if self.channel.get() == "最新代码（main）" else "release"}
+
+    def cancel_automatic_timer(self):
+        if self.auto_timer is not None:
+            self.root.after_cancel(self.auto_timer)
+            self.auto_timer = None
+
+    def preferences_changed(self, *_):
+        signature = (self.automatic.get(), self.channel.get())
+        if signature == self.preference_signature:
+            return
+        channel_changed = signature[1] != self.preference_signature[1]
+        self.preference_signature = signature
+        self.cancel_automatic_timer()
+        if self.auto_in_progress:
+            self.cancel.set()
+        if channel_changed:
+            self.reset_online()
+        self.auto_checked = False
+        self.schedule_automatic()
+
+    def schedule_automatic(self):
+        if self.automatic.get() and not self.closed and not self.auto_checked and self.auto_timer is None:
+            self.auto_timer = self.root.after(3000, self.run_automatic)
+
+    def run_automatic(self):
+        self.auto_timer = None
+        if self.closed or not self.automatic.get() or self.auto_checked:
+            return
+        if self.thread and self.thread.is_alive():
+            self.schedule_automatic()
+            return
+        self.auto_checked = True
+        # A background check must never invalidate a user's selected package/offer.
+        if self.staged or self.online:
+            return
+        self.check_online(automatic=True)
 
     def buttons(self):
         busy = bool(self.thread and self.thread.is_alive())
@@ -83,18 +132,21 @@ class UpdatePanel:
         copy_text(self.root, "\n\n".join((str(tr("当前版本：{arg0}", arg0=self.version)),
                   str(tr(self.channel.get())), self.status.get(), self.online_details.get(), self.details.get())))
 
-    def check_online(self):
+    def check_online(self, automatic=False):
         if self.thread and self.thread.is_alive():
             return
+        self.cancel_automatic_timer()
+        self.auto_checked = True
+        self.auto_in_progress = automatic
         self.reset_online()
         self.cancel.clear()
         self.status.set(tr("正在检查 GitHub 新版……"))
         channel = "main" if self.channel.get() == "最新代码（main）" else "release"
         def worker():
             try:
-                self.events.put(("online", check_github_update(self.version, channel, self.cancel.is_set)))
+                self.events.put(("auto_online" if automatic else "online", check_github_update(self.version, channel, self.cancel.is_set)))
             except Exception as exc:
-                self.events.put(("error", exc))
+                self.events.put(("auto_error" if automatic else "error", exc))
             finally:
                 self.events.put(("done", None))
         self.thread = threading.Thread(target=worker, daemon=True)
@@ -116,6 +168,8 @@ class UpdatePanel:
     def read(self, source, offer=None):
         if self.thread and self.thread.is_alive():
             return
+        self.cancel_automatic_timer()
+        self.auto_checked = True
         if self.staged:
             discard_package(self.staged)
             self.staged = None
@@ -147,8 +201,8 @@ class UpdatePanel:
                 kind, value = self.events.get_nowait()
                 if kind == "progress":
                     self.progress.set(value)
-                elif kind == "online":
-                    if not self.cancel.is_set():
+                elif kind in ("online", "auto_online"):
+                    if not self.cancel.is_set() and (kind == "online" or self.automatic.get()):
                         self.online = value
                         if value:
                             self.online_details.set(tr("发现新版：{arg0}\n{arg1}\n{arg2}", arg0=value.version, arg1=value.page, arg2=value.notes))
@@ -156,6 +210,12 @@ class UpdatePanel:
                         else:
                             self.online_details.set(tr("所选渠道暂无更高版本。"))
                             self.status.set(tr("所选渠道暂无更高版本。"))
+                        if kind == "auto_online":
+                            self.app.log(tr("自动检查更新：{arg0}", arg0=self.online_details.get()))
+                elif kind == "auto_error":
+                    if not self.cancel.is_set() and self.automatic.get():
+                        self.status.set(tr("自动检查更新失败，可稍后手动重试：{arg0}", arg0=value))
+                        self.app.log(self.status.get())
                 elif kind == "package":
                     if self.cancel.is_set():
                         discard_package(value)
@@ -174,6 +234,7 @@ class UpdatePanel:
                         self.app.log(self.status.get())
                 elif kind == "done":
                     self.thread = None
+                    self.auto_in_progress = False
         except queue.Empty:
             pass
         self.buttons()
@@ -229,6 +290,9 @@ class UpdatePanel:
             return
         self.closed = True
         self.cancel.set()
+        for variable, trace in self.preference_traces:
+            variable.trace_remove("write", trace)
+        self.cancel_automatic_timer()
         for timer in (self.pending, self.notice_timer):
             if timer is not None:
                 self.root.after_cancel(timer)
