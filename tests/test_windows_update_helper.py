@@ -185,7 +185,7 @@ public class UpdateProbe {
         self.assertNotEqual(second_plan['source_backup'], plan['source_backup'])
         self.assertEqual(Path(second_plan['source_backup']).read_bytes(), first_record)
         self.assertEqual(Path(plan['source_backup']).read_bytes(), previous)
-        self.assertEqual(json.loads(self.active.read_text())['version'], '26.10.19.08')
+        self.assertEqual(json.loads(self.active.read_text(encoding='utf-8-sig'))['version'], '26.10.19.08')
 
     def test_failed_startup_restores_exact_previous_record_and_restarts_it(self):
         previous = self.previous_installation()
@@ -194,11 +194,11 @@ public class UpdateProbe {
         self.assertTrue(result['restored'], log)
         self.assertEqual(self.active.read_bytes(), previous)
         self.assertEqual(Path(plan['source_backup']).read_bytes(), previous)
-        self.assertEqual(json.loads(self.restarted.read_text())['version'], '26.10.19.06')
+        self.assertEqual(json.loads(self.restarted.read_text(encoding='utf-8-sig'))['version'], '26.10.19.06')
 
     def test_failed_first_install_removes_activation_record_and_restarts_builtin(self):
         _, result, log = self.install(fail_health=True)
         self.assertEqual(result['status'], 'failed', log)
         self.assertTrue(result['restored'], log)
         self.assertFalse(self.active.exists())
-        self.assertEqual(self.restarted.read_text(), 'builtin')
+        self.assertEqual(self.restarted.read_text(encoding='utf-8-sig'), 'builtin')
