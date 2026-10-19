@@ -1,4 +1,4 @@
-文献处理软件 26.10.19.03
+文献处理软件 26.10.19.04
 
 启动
 1. 完整解压源码，保留十四个 Python 模块及 update_helper.ps1、requirements.txt 与图标。
@@ -70,12 +70,19 @@ Token 仅保留本次运行；模型 Key 与 PaddleOCR Token 按原方式明文�
 在“偏好设置 → 界面语言”中选择 English / 中文，即时生效并记忆到下次启动。
 也可点击主界面右上角“文/A”图标直接切换。界面语言不改变文献的来源/目标语言、模型或文件路径。
 
+复制功能
+日志有“复制日志”，更新页有“复制更新信息”；文本／状态／路径可右键复制，文本框支持 Ctrl+A／Ctrl+C。
+报错、警告、信息弹窗文字可选择并有“复制信息”；稿件／核对报告有“复制全文”。
+
 本地 ZIP 更新
 偏好设置 → 软件更新 → 选择更新 ZIP → 确认版本／类型／来源 → 安装并重启。
 支持直接导入本仓库的 GitHub 源码 ZIP；不需要重新打包。
 也可选择“正式发行版（Release）／最新代码（main）”→“检查 GitHub 更新”→查看说明→“下载此版本”→校验后“安装并重启”。
 联网更新固定来自 CHNAQW/paddleocr_usage，仅主动点击时联网，不自动检查、安装或下载依赖。正式发行版优先完整更新 ZIP，否则下载对应源码；main 固定到检查时的提交。
 下载失败、取消、指纹或版本不符时清理临时文件，当前程序保持运行。
+源码直接从 codeload.github.com 下载固定提交；main 检查遇 API 403／429 时尝试官方 Atom 与原始源码入口。代理也可能导致 403，请检查其 GitHub 路由规则。
+助手使用编码命令启动，启动前创建 install.log，并捕获 helper-output-<id>.log；失败详情可复制，重试保留旧日志。
+若旧 EXE 自己的助手无法启动，须先重新打包并手动替换成 26.10.19.04，之后再测试软件内更新。
 首次须手动换成带固定启动器的新 EXE；以后用内置 Python 运行时加载用户目录中的更新源码。
 源码 APP_VERSION 须更高，依赖须匹配内置运行时。新增未打包依赖或更换启动器时需完整程序更新包。
 完整程序 ZIP 由打包脚本自动生成，含新版 EXE、update.json 和 SHA-256；也可用 make_update_package.py 生成。
@@ -85,10 +92,10 @@ Token 仅保留本次运行；模型 Key 与 PaddleOCR Token 按原方式明文�
 
 构建 Windows EXE
 双击 build_paddleocr_pdf_to_md_EXE.bat，需 Python 3.9–3.13。
-输出：PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.19.03.exe
+输出：PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.19.04.exe
 校验：同目录下的 .exe.sha256.txt。
-固定运行缓存：%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.19.03
-界面与文件名版本：26.10.19.03；Windows 数字文件/产品版本：26.10.19.3。
+固定运行缓存：%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.19.04
+界面与文件名版本：26.10.19.04；Windows 数字文件/产品版本：26.10.19.4。
 版本更新不代表 EXE 已编译发布；不要关闭安全防护或添加排除项。
 
 详细操作、限制、费用、隐私和使用条件请阅读 README.md 与 License。

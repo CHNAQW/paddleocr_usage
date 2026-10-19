@@ -738,6 +738,23 @@ EN_MESSAGES.update({"整理核验缺少有效的问题列表，不能视为通�
 
 EN_MESSAGES.update({"前缀 FORMATTED_": "Prefix FORMATTED_", "后缀 _FORMATTED": "Suffix _FORMATTED"})
 
+EN_MESSAGES.update({
+    "复制": "Copy",
+    "复制全部": "Copy all",
+    "全选": "Select all",
+    "剪切": "Cut",
+    "粘贴": "Paste",
+    "复制信息": "Copy message",
+    "复制日志": "Copy log",
+    "复制全文": "Copy full text",
+    "复制更新信息": "Copy update details",
+    "关闭": "Close",
+    "正在启动更新助手，请稍候……": "Starting the update helper. Please wait…",
+    "更新助手未能启动，当前程序保持运行。日志：{arg0}\n详情：{arg1}": "The update helper could not start. The current app remains open. Log: {arg0}\nDetails: {arg1}",
+    "GitHub 拒绝了更新请求（HTTP {arg0}），可能遇到 API 限流或网络／代理拦截。请稍后重试；正式发行版检查失败时可尝试 main 渠道。\n地址：{arg1}": "GitHub rejected the update request (HTTP {arg0}). API rate limits or a network/proxy block may apply. Retry later; if release checking fails, try the main channel.\nURL: {arg1}",
+    "GitHub 更新请求失败（HTTP {arg0}）。请稍后重试。\n地址：{arg1}": "GitHub update request failed (HTTP {arg0}). Retry later.\nURL: {arg1}"
+})
+
 _language = "zh"
 _sources = {value: key for key, value in EN_MESSAGES.items()}
 
