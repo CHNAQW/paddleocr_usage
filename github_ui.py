@@ -4,6 +4,8 @@ from __future__ import annotations
 import queue
 import threading
 import tkinter as tk
+from task_runtime import drain_events
+
 from tkinter import font as tkfont
 import webbrowser
 from pathlib import Path, PurePosixPath
@@ -357,8 +359,7 @@ class GitHubWizard:
         if self.closed:
             return
         try:
-            while True:
-                generation, result, error = self.events.get_nowait()
+            for generation, result, error in drain_events(self.events):
                 if generation != self.generation:
                     continue
                 self.busy = False
@@ -370,6 +371,10 @@ class GitHubWizard:
                     self.completed(result)
         except queue.Empty:
             pass
+        except Exception as exc:
+            self.busy = False
+            self.status.set(tr("后台事件处理失败：{arg0}", arg0=exc))
+            self.update_buttons()
         self.poll_id = self.window.after(60, self.poll)
 
     def back(self):
@@ -429,6 +434,8 @@ class ManualUpload:
         self.events, self.cancel = queue.Queue(), threading.Event()
         self.candidates, self.checked = [], None
         self.extra_buttons = []
+        self.render_timer = None
+        self.render_generation = 0
         page = ttk.Frame(self.window, padding=16)
         page.grid(row=0, column=0, sticky="ew")
         page.columnconfigure(0, weight=1)
@@ -515,7 +522,12 @@ class ManualUpload:
         self.browse_button.configure(state="disabled" if self.busy else "normal")
         self.kind_combo.configure(state="disabled" if self.busy else "readonly")
 
-    def render(self):
+    def render(self, auto_select=False):
+        if self.render_timer is not None:
+            self.app.root.after_cancel(self.render_timer)
+            self.render_timer = None
+        self.render_generation += 1
+        generation = self.render_generation
         c = self.controls
         self.destination.set(tr("目标：{arg0} · {arg1} / {arg2}", arg0=c.repository.get(), arg1=c.branch.get(), arg2=c.folder.get() or tr("仓库根目录")))
         selected = set(self.tree.selection())
@@ -531,10 +543,23 @@ class ManualUpload:
         labels = {"ready": tr("可以补传"), "existing": tr("远端已有，跳过"), "unverified": tr("尚未核验通过"),
                   "changed": tr("需重新核验文件指纹"), "oversize": tr("超过 20 MB"),
                   "uploaded": tr("上传完成"), "failed": tr("上传失败，文件保留本地")}
-        for i, item in enumerate(self.candidates):
-            self.tree.insert("", "end", iid=str(i), text=item.relative,
-                             values=(tr("翻译稿") if item.role == "translation" else tr("原文"), labels[item.status]))
-        self.tree.selection_set([i for i in selected if self.tree.exists(i)])
+        def batch(start=0):
+            self.render_timer = None
+            if self.closed or generation != self.render_generation:
+                return
+            end = min(start + 100, len(self.candidates))
+            chosen = []
+            for i in range(start, end):
+                item = self.candidates[i]
+                self.tree.insert("", "end", iid=str(i), text=item.relative,
+                                 values=(tr("翻译稿") if item.role == "translation" else tr("原文"), labels[item.status]))
+                if str(i) in selected or (auto_select and item.status == "ready"):
+                    chosen.append(str(i))
+            if chosen:
+                self.tree.selection_add(chosen)
+            if end < len(self.candidates):
+                self.render_timer = self.app.root.after(1, lambda: batch(end))
+        batch()
 
     def resize(self, event=None):
         if event is None or event.widget == self.window:
@@ -620,19 +645,19 @@ class ManualUpload:
     def poll(self):
         self.pending = None
         try:
-            while True:
-                kind, value = self.events.get_nowait()
+            for kind, value in drain_events(self.events):
                 if kind == "scan" and self.checked == self.signature() and not self.cancel.is_set():
                     self.candidates = value
-                    self.render()
+                    self.render(auto_select=True)
                     ready = [str(i) for i, c in enumerate(value) if c.status == "ready"]
-                    self.tree.selection_set(ready)
                     self.status.set(tr("扫描完成：共 {arg0} 个文档，{arg1} 个可以补传。", arg0=len(value), arg1=len(ready)))
                 elif kind == "row" and self.checked == self.signature():
                     from dataclasses import replace
                     index, status = value
                     self.candidates[index] = replace(self.candidates[index], status=status)
-                    self.render()
+                    if self.tree.exists(str(index)):
+                        labels = {"existing": tr("远端已有，跳过"), "uploaded": tr("上传完成"), "failed": tr("上传失败，文件保留本地")}
+                        self.tree.set(str(index), "status", labels.get(status, status))
                 elif kind == "uploaded":
                     self.status.set(tr("本次上传：成功 {arg0}，远端已有 {arg1}，失败 {arg2}。", arg0=value["uploaded"], arg1=value["existing"], arg2=value["failed"]))
                 elif kind == "error":
@@ -643,6 +668,8 @@ class ManualUpload:
                         self.status.set(tr("已停止。"))
         except queue.Empty:
             pass
+        except Exception as exc:
+            self.status.set(tr("后台事件处理失败：{arg0}", arg0=exc))
         self.buttons()
         if not self.closed:
             self.pending = self.app.root.after(100, self.poll)
@@ -652,6 +679,9 @@ class ManualUpload:
             return
         self.closed = True
         self.cancel.set()
+        if self.render_timer is not None:
+            self.app.root.after_cancel(self.render_timer)
+            self.render_timer = None
         if self.pending:
             self.app.root.after_cancel(self.pending)
         for variable, token in self.traces:

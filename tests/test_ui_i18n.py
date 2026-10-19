@@ -29,7 +29,7 @@ class TranslationTests(unittest.TestCase):
 
     def test_every_literal_ui_message_has_an_english_translation(self):
         root = Path(__file__).resolve().parents[1]
-        for name in ("workspace_ui.py", "literature_ui.py", "literature_processing.py", "paddleocr_pdf_to_md_gui.py", "github_ui.py", "model_budget.py", "app_updater.py", "update_ui.py"):
+        for name in ("workspace_ui.py", "literature_ui.py", "literature_processing.py", "paddleocr_pdf_to_md_gui.py", "github_ui.py", "model_budget.py", "app_updater.py", "update_ui.py", "task_runtime.py"):
             for node in ast.walk(ast.parse((root / name).read_text(encoding="utf-8-sig"))):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "tr" and node.args:
                     source = node.args[0]

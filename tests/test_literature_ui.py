@@ -561,6 +561,7 @@ class DesktopLayoutTests(unittest.TestCase):
             self.assertTrue(controls.snapshot["auto_translate"])
             self.assertEqual(controls.snapshot["profiles"]["translator"].model, "translation-model")
             thread.return_value.start.assert_called_once()
+            self.app.background_jobs.clear()
             self.app.worker_thread = None
             controls.auto_translate.set(False)
             self.app.start_btn.configure(state="normal")

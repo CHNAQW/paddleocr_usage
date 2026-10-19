@@ -5,6 +5,8 @@ import queue
 import sys
 import threading
 import tkinter as tk
+from task_runtime import drain_events
+
 from tkinter import ttk
 
 from app_updater import (SourcePackage, UpdateCancelled, discard_package, import_package, last_result,
@@ -27,6 +29,7 @@ class UpdatePanel:
         self.auto_timer, self.auto_checked, self.auto_in_progress = None, False, False
         self.preference_signature = (self.automatic.get(), self.channel.get())
         self.installing, self.closed = False, False
+        self.handoff = False
         self.cancel = threading.Event()
         self.events = queue.Queue()
         self.frame = ttk.Frame(parent, padding=14)
@@ -115,7 +118,7 @@ class UpdatePanel:
         self.check_online(automatic=True)
 
     def buttons(self):
-        busy = bool(self.thread and self.thread.is_alive())
+        busy = self.handoff or bool(self.thread and self.thread.is_alive())
         self.choose_button.configure(state="disabled" if busy else "normal")
         self.cancel_button.configure(state="normal" if busy else "disabled")
         self.install_button.configure(state="normal" if self.staged and self.executable and not busy else "disabled")
@@ -197,9 +200,18 @@ class UpdatePanel:
     def poll(self):
         self.pending = None
         try:
-            while True:
-                kind, value = self.events.get_nowait()
-                if kind == "progress":
+            for kind, value in drain_events(self.events):
+                if kind == "install_ready":
+                    self.installing = True
+                    self.thread = None
+                    self.root.destroy()
+                    return
+                elif kind == "install_error":
+                    self.handoff = False
+                    self.thread = None
+                    self.status.set(tr("无法开始安装：{arg0}", arg0=value))
+                    self.app.log(self.status.get())
+                elif kind == "progress":
                     self.progress.set(value)
                 elif kind in ("online", "auto_online"):
                     if not self.cancel.is_set() and (kind == "online" or self.automatic.get()):
@@ -237,6 +249,8 @@ class UpdatePanel:
                     self.auto_in_progress = False
         except queue.Empty:
             pass
+        except Exception as exc:
+            self.status.set(tr("后台事件处理失败：{arg0}", arg0=exc))
         self.buttons()
         if not self.closed:
             self.pending = self.root.after(100, self.poll)
@@ -244,11 +258,11 @@ class UpdatePanel:
     def app_busy(self):
         names = ("worker_thread", "check_thread", "repair_thread", "model_fetch_thread", "manual_check_thread")
         manual = getattr(self.app.literature.github_setup, "manual", None)
-        return (any(getattr(self.app, name, None) and getattr(self.app, name).is_alive() for name in names)
+        return (bool(getattr(self.app, "background_jobs", {})) or any(getattr(self.app, name, None) and getattr(self.app, name).is_alive() for name in names)
                 or self.app.literature.busy() or bool(manual and manual.busy))
 
     def install(self):
-        if not self.staged or not self.executable or (self.thread and self.thread.is_alive()):
+        if self.handoff or not self.staged or not self.executable or (self.thread and self.thread.is_alive()):
             return
         if self.app_busy():
             messagebox.showwarning(tr("暂时无法安装"), tr("请等待 OCR、翻译或检查任务结束，再安装更新。"), parent=self.frame.winfo_toplevel())
@@ -259,15 +273,22 @@ class UpdatePanel:
             return
         try:
             self.app.save_current_config()
-            self.status.set(tr("正在启动更新助手，请稍候……"))
-            self.root.update_idletasks()
-            launch_install(self.staged, self.executable, self.version)
         except Exception as exc:
             self.status.set(tr("无法开始安装：{arg0}", arg0=exc))
             self.app.log(self.status.get())
             return
-        self.installing = True
-        self.root.destroy()
+        self.handoff = True
+        self.status.set(tr("正在启动更新助手，请稍候……"))
+        package, executable = self.staged, self.executable
+        def worker():
+            try:
+                launch_install(package, executable, self.version)
+                self.events.put(("install_ready", None))
+            except Exception as exc:
+                self.events.put(("install_error", exc))
+        self.thread = threading.Thread(target=worker, daemon=True)
+        self.thread.start()
+        self.buttons()
 
     def show_last_result(self):
         self.notice_timer = None
@@ -296,7 +317,7 @@ class UpdatePanel:
         for timer in (self.pending, self.notice_timer):
             if timer is not None:
                 self.root.after_cancel(timer)
-        if self.staged and not self.installing:
+        if self.staged and not self.installing and not self.handoff:
             discard_package(self.staged)
         while not self.events.empty():
             kind, value = self.events.get_nowait()
