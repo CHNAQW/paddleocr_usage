@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(26, 10, 18, 3),
-    prodvers=(26, 10, 18, 3),
+    filevers=(26, 10, 19, 2),
+    prodvers=(26, 10, 19, 2),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,11 +16,11 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'Literature Processing Software'),
           StringStruct('FileDescription', 'Literature Processing Software'),
-          StringStruct('FileVersion', '26.10.18.03'),
+          StringStruct('FileVersion', '26.10.19.02'),
           StringStruct('InternalName', 'PaddleOCR_PDF_to_MD'),
-          StringStruct('OriginalFilename', 'PaddleOCR_PDF_to_MD_26.10.18.03.exe'),
+          StringStruct('OriginalFilename', 'PaddleOCR_PDF_to_MD_26.10.19.02.exe'),
           StringStruct('ProductName', 'Literature Processing Software'),
-          StringStruct('ProductVersion', '26.10.18.03')
+          StringStruct('ProductVersion', '26.10.19.02')
         ]
       )
     ]),

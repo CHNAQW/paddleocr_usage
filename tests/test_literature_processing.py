@@ -82,7 +82,8 @@ class TranslationTests(unittest.TestCase):
         decide = Mock(return_value="second")
         result, _ = self.translate([self.detect, "首次", "修正后", '{"has_problem":true,"issues":["漏译"]}'],
             options=lp.TranslationOptions(secondary_review=True), reviewer=self.profile, decide=decide)
-        self.assertTrue(result["verified"])
+        self.assertFalse(result["verified"])
+        self.assertEqual(result["status"], "needs_review")
         self.assertEqual(self.output.read_text(encoding="utf-8"), "修正后\n")
         self.assertEqual(decide.call_args.args[0]["source"], self.source.read_text())
 

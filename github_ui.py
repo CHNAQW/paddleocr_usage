@@ -4,20 +4,23 @@ from __future__ import annotations
 import queue
 import threading
 import tkinter as tk
+from tkinter import font as tkfont
 import webbrowser
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from tkinter import ttk
 
-from literature_processing import GitHubOptions, GitHubSetupClient, github_folder_name, github_repository_name
+from literature_processing import (GitHubOptions, GitHubSetupClient, UPLOAD_KINDS, ProcessingCancelled,
+    document_upload_evidence, scan_missing_documents, upload_verified_file, github_folder_name, github_repository_name)
 from literature_ui import scrollable_page
-from responsive_ui import AdaptiveLabel, ResponsiveForm
-from ui_i18n import LocalizedVar, localize_widgets, tr
+from responsive_ui import AdaptiveLabel, ButtonToolbar, ResponsiveForm
+from ui_i18n import LocalizedVar, filedialog, messagebox, localize_widgets, tr
 
 
 class GitHubSetup:
     def __init__(self, parent, controls):
         self.controls = controls
         self.wizard = None
+        self.manual = None
         box = ttk.LabelFrame(parent, text=tr("GitHub 上传设置"), padding=16)
         box.grid(row=0, column=0, sticky="ew", padx=10, pady=8)
         box.columnconfigure(0, weight=1)
@@ -28,8 +31,16 @@ class GitHubSetup:
         ttk.Button(box, text=tr("打开上传设置向导"), style="Accent.TButton", command=self.open).grid(row=2, column=0, sticky="w", pady=8)
         ttk.Checkbutton(box, text=tr("自动上传核验通过的 Markdown"), variable=controls.upload,
                         style="Wizard.TCheckbutton", command=self.toggle).grid(row=3, column=0, sticky="w", pady=6)
+        form = ResponsiveForm(box)
+        form.grid(row=4, column=0, sticky="ew", pady=8)
+        combo = ttk.Combobox(form, textvariable=controls.upload_kind, state="readonly", values=[tr(v) for v in UPLOAD_KINDS])
+        combo.localized_choices = UPLOAD_KINDS
+        form.add(tr("上传内容"), combo)
+        ttk.Button(box, text=tr("手动扫描与补传"), command=self.open_manual).grid(row=5, column=0, sticky="w", pady=8)
+        AdaptiveLabel(box, text=tr("手动补传会比较目标仓库，仅上传远端缺少且核验通过的 Markdown。上传内容选项也适用于自动上传。"),
+                      style="Subtitle.TLabel").grid(row=6, column=0, sticky="ew", pady=8)
         AdaptiveLabel(box, text=tr("访问凭据只在本次运行中使用。下次启动时，向导会保留仓库和保存位置。"),
-                      style="Subtitle.TLabel").grid(row=4, column=0, sticky="ew", pady=8)
+                      style="Subtitle.TLabel").grid(row=7, column=0, sticky="ew", pady=8)
         self.traces = []
         for variable in (controls.repository, controls.branch, controls.folder, controls.github_token, controls.upload):
             self.traces.append((variable, variable.trace_add("write", self.refresh)))
@@ -60,6 +71,18 @@ class GitHubSetup:
             self.wizard.window.lift()
             return
         self.wizard = GitHubWizard(self)
+
+    def open_manual(self):
+        try:
+            GitHubOptions(self.controls.repository.get(), self.controls.github_token.get(),
+                          self.controls.branch.get(), self.controls.folder.get()).validate()
+        except ValueError:
+            self.open()
+            return
+        if self.manual is not None and not self.manual.closed:
+            self.manual.window.lift()
+            return
+        self.manual = ManualUpload(self)
 
 
 class GitHubWizard:
@@ -372,3 +395,236 @@ class GitHubWizard:
             variable.trace_remove("write", trace)
         self.window.grab_release()
         self.window.destroy()
+
+
+class ManualUpload:
+    """Compare first, then let the user upload the selected, positively reviewed files."""
+    def __init__(self, owner):
+        self.owner, self.controls = owner, owner.controls
+        self.app = self.controls.app
+        self.window = tk.Toplevel(self.app.workspace_layout.settings)
+        self.window.title(tr("手动扫描与补传"))
+        self.window.geometry("820x650")
+        self.window.minsize(480, 420)
+        self.window.columnconfigure(0, weight=1)
+        self.window.rowconfigure(1, weight=1, minsize=100)
+        self.closed, self.busy = False, False
+        self.worker_thread = None
+        self.events, self.cancel = queue.Queue(), threading.Event()
+        self.candidates, self.checked = [], None
+        page = ttk.Frame(self.window, padding=16)
+        page.grid(row=0, column=0, sticky="ew")
+        page.columnconfigure(0, weight=1)
+        AdaptiveLabel(page, text=tr("先比较，再补传"), style="WizardHeading.TLabel").grid(row=0, column=0, sticky="ew")
+        self.intro = AdaptiveLabel(page, text=tr("选择包含原文和译文的本地文件夹。列表默认选中远端缺少且核验通过的文档；可按 Ctrl / Shift 调整选择。"),
+                      style="Subtitle.TLabel")
+        self.intro.grid(row=1, column=0, sticky="ew", pady=8)
+        form = ResponsiveForm(page)
+        form.grid(row=2, column=0, sticky="ew")
+        path_box = ttk.Frame(form)
+        path_box.columnconfigure(0, weight=1)
+        self.folder_entry = ttk.Entry(path_box, textvariable=self.controls.upload_root, width=1)
+        self.folder_entry.grid(row=0, column=0, sticky="ew")
+        self.browse_button = ttk.Button(path_box, text=tr("选择文件夹"), command=self.browse)
+        self.browse_button.grid(row=0, column=1, padx=(8, 0))
+        form.add(tr("本地文档位置"), path_box)
+        self.kind_combo = ttk.Combobox(form, textvariable=self.controls.upload_kind, state="readonly", values=[tr(v) for v in UPLOAD_KINDS])
+        self.kind_combo.localized_choices = UPLOAD_KINDS
+        form.add(tr("上传内容"), self.kind_combo)
+        self.destination = LocalizedVar(master=self.window)
+        destination_label = AdaptiveLabel(page, textvariable=self.destination, style="Subtitle.TLabel", max_lines=2)
+        destination_label.grid(row=3, column=0, sticky="ew", pady=8)
+        from workspace_ui import HoverTip
+        HoverTip(destination_label, self.destination.get)
+        frame = ttk.Frame(self.window, padding=(16, 0))
+        frame.grid(row=1, column=0, sticky="nsew")
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+        self.tree = ttk.Treeview(frame, columns=("role", "status"), selectmode="extended")
+        self.tree.column("#0", width=350, minwidth=100)
+        self.tree.column("role", width=100, minwidth=85, stretch=False)
+        self.tree.column("status", width=200, minwidth=140)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        ybar = ttk.Scrollbar(frame, command=self.tree.yview)
+        ybar.grid(row=0, column=1, sticky="ns")
+        xbar = ttk.Scrollbar(frame, orient="horizontal", command=self.tree.xview)
+        xbar.grid(row=1, column=0, sticky="ew")
+        self.tree.configure(yscrollcommand=ybar.set, xscrollcommand=xbar.set)
+        footer = ttk.Frame(self.window, padding=16)
+        footer.grid(row=2, column=0, sticky="ew")
+        footer.columnconfigure(0, weight=1)
+        self.status = LocalizedVar(master=self.window, value=tr("点击扫描，将只读取远端目录，尚不会上传。"))
+        AdaptiveLabel(footer, textvariable=self.status, max_lines=2).grid(row=0, column=0, sticky="ew", pady=8)
+        toolbar = ButtonToolbar(footer, ((tr("扫描缺失文档"), self.scan), (tr("上传选中文档"), self.upload), (tr("停止"), self.cancel.set)))
+        toolbar.grid(row=1, column=0, sticky="ew")
+        self.scan_button, self.upload_button, self.stop_button = toolbar.buttons
+        self.traces = []
+        for var in (self.controls.upload_root, self.controls.upload_kind, self.controls.repository,
+                    self.controls.branch, self.controls.folder, self.controls.github_token):
+            self.traces.append((var, var.trace_add("write", self.invalidate)))
+        self.window.bind("<Destroy>", self.cleanup, add="+")
+        self.window.bind("<Configure>", self.resize, add="+")
+        self.pending = self.app.root.after(100, self.poll)
+        self.render()
+        self.buttons()
+
+    def signature(self):
+        c = self.controls
+        return (c.upload_root.get(), c.upload_kind.get(), c.repository.get(), c.branch.get(), c.folder.get(), c.github_token.get())
+
+    def invalidate(self, *_):
+        if self.checked == self.signature():
+            return  # A language refresh only changes the displayed ChoiceVar value.
+        self.cancel.set()
+        self.checked, self.candidates = None, []
+        self.render()
+        self.status.set(tr("设置已变化，请重新扫描后上传。"))
+        self.buttons()
+
+    def browse(self):
+        value = filedialog.askdirectory(parent=self.window, title=tr("选择文件夹"), initialdir=self.controls.upload_root.get() or None)
+        if value:
+            self.controls.upload_root.set(value)
+
+    def buttons(self):
+        self.scan_button.configure(state="disabled" if self.busy else "normal")
+        self.upload_button.configure(state="normal" if not self.busy and any(c.status == "ready" for c in self.candidates) else "disabled")
+        self.stop_button.configure(state="normal" if self.busy else "disabled")
+        self.folder_entry.configure(state="disabled" if self.busy else "normal")
+        self.browse_button.configure(state="disabled" if self.busy else "normal")
+        self.kind_combo.configure(state="disabled" if self.busy else "readonly")
+
+    def render(self):
+        c = self.controls
+        self.destination.set(tr("目标：{arg0} · {arg1} / {arg2}", arg0=c.repository.get(), arg1=c.branch.get(), arg2=c.folder.get() or tr("仓库根目录")))
+        selected = set(self.tree.selection())
+        self.tree.delete(*self.tree.get_children())
+        self.tree.heading("#0", text=tr("相对路径"))
+        self.tree.heading("role", text=tr("文档类型"))
+        self.tree.heading("status", text=tr("处理状态"))
+        font = tkfont.nametofont("TkDefaultFont")
+        role_width = max(font.measure(str(v)) for v in (tr("文档类型"), tr("翻译稿"), tr("原文"))) + 24
+        self.tree.column("role", width=role_width, minwidth=role_width)
+        self.tree.column("#0", minwidth=font.measure(str(tr("相对路径"))) + 24)
+        self.tree.column("status", minwidth=font.measure(str(tr("需重新核验文件指纹"))) + 24)
+        labels = {"ready": tr("可以补传"), "existing": tr("远端已有，跳过"), "unverified": tr("尚未核验通过"),
+                  "changed": tr("需重新核验文件指纹"), "oversize": tr("超过 20 MB"),
+                  "uploaded": tr("上传完成"), "failed": tr("上传失败，文件保留本地")}
+        for i, item in enumerate(self.candidates):
+            self.tree.insert("", "end", iid=str(i), text=item.relative,
+                             values=(tr("翻译稿") if item.role == "translation" else tr("原文"), labels[item.status]))
+        self.tree.selection_set([i for i in selected if self.tree.exists(i)])
+
+    def resize(self, event):
+        if event.widget == self.window:
+            if self.window.winfo_height() < 560:
+                self.intro.grid_remove()
+            else:
+                self.intro.grid()
+
+    def launch(self, work, kind):
+        self.cancel.clear()
+        self.busy = True
+        def worker():
+            try:
+                self.events.put((kind, work()))
+            except Exception as exc:
+                self.events.put(("error", exc))
+            finally:
+                self.events.put(("done", None))
+        self.worker_thread = threading.Thread(target=worker, daemon=True)
+        self.worker_thread.start()
+        self.buttons()
+
+    def scan(self):
+        if self.busy:
+            return
+        self.checked = self.signature()
+        root, kind, repo, branch, folder, token = self.checked
+        options = GitHubOptions(repo, token, branch, folder)
+        self.candidates = []
+        self.render()
+        self.status.set(tr("正在比较本地文档与远端目录……"))
+        self.launch(lambda: scan_missing_documents(root, kind, options, stop=self.cancel.is_set), "scan")
+
+    def upload(self):
+        if self.busy or self.checked != self.signature():
+            return
+        selected = [(int(i), self.candidates[int(i)]) for i in self.tree.selection() if self.candidates[int(i)].status == "ready"]
+        if not selected:
+            messagebox.showinfo(tr("请选择文档"), tr("请先选择可以补传的文档。"), parent=self.window)
+            return
+        _, kind, repo, branch, folder, token = self.checked
+        if not messagebox.askyesno(tr("确认手动上传"), tr("将向 {arg0}（{arg1} / {arg2}）上传 {arg3} 个选中文档。\n上传内容：{arg4}\n远端已有文件会跳过。是否继续？",
+                arg0=repo, arg1=branch, arg2=folder or tr("仓库根目录"), arg3=len(selected), arg4=tr(kind)), parent=self.window):
+            return
+        try:
+            self.app.save_current_config()
+        except Exception as exc:
+            self.status.set(tr("无法开始上传：{arg0}", arg0=exc))
+            return
+        options = GitHubOptions(repo, token, branch, folder)
+        self.status.set(tr("正在上传选中文档……"))
+        def work():
+            counts = {"uploaded": 0, "existing": 0, "failed": 0}
+            for index, item in selected:
+                if self.cancel.is_set():
+                    break
+                try:
+                    role, status, digest = document_upload_evidence(item.path)
+                    if status != "ready" or digest != item.sha256 or role != item.role:
+                        raise ValueError(tr("核验后文件发生变化，请重新核验再上传。"))
+                    remote = upload_verified_file(item.path, item.relative, True, options, item.sha256, self.cancel.is_set)
+                    self.controls.log(tr("GitHub 上传成功：{arg0}", arg0=remote))
+                    state = "uploaded"
+                except ProcessingCancelled:
+                    break
+                except FileExistsError:
+                    state = "existing"
+                except Exception as exc:
+                    state = "failed"
+                    self.controls.log(tr("GitHub 未上传，文件已保留本地：{arg0}；{arg1}", arg0=item.relative, arg1=exc))
+                counts[state] += 1
+                self.events.put(("row", (index, state)))
+            return counts
+        self.launch(work, "uploaded")
+
+    def poll(self):
+        self.pending = None
+        try:
+            while True:
+                kind, value = self.events.get_nowait()
+                if kind == "scan" and self.checked == self.signature() and not self.cancel.is_set():
+                    self.candidates = value
+                    self.render()
+                    ready = [str(i) for i, c in enumerate(value) if c.status == "ready"]
+                    self.tree.selection_set(ready)
+                    self.status.set(tr("扫描完成：共 {arg0} 个文档，{arg1} 个可以补传。", arg0=len(value), arg1=len(ready)))
+                elif kind == "row" and self.checked == self.signature():
+                    from dataclasses import replace
+                    index, status = value
+                    self.candidates[index] = replace(self.candidates[index], status=status)
+                    self.render()
+                elif kind == "uploaded":
+                    self.status.set(tr("本次上传：成功 {arg0}，远端已有 {arg1}，失败 {arg2}。", arg0=value["uploaded"], arg1=value["existing"], arg2=value["failed"]))
+                elif kind == "error":
+                    self.status.set(tr("已停止。") if isinstance(value, ProcessingCancelled) else tr("GitHub 操作失败：{arg0}", arg0=value))
+                elif kind == "done":
+                    self.busy = False
+                    if self.cancel.is_set():
+                        self.status.set(tr("已停止。"))
+        except queue.Empty:
+            pass
+        self.buttons()
+        if not self.closed:
+            self.pending = self.app.root.after(100, self.poll)
+
+    def cleanup(self, event):
+        if event.widget != self.window:
+            return
+        self.closed = True
+        self.cancel.set()
+        if self.pending:
+            self.app.root.after_cancel(self.pending)
+        for variable, token in self.traces:
+            variable.trace_remove("write", token)

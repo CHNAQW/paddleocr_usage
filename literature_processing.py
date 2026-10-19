@@ -160,7 +160,8 @@ def find_markdown_files(root: Path, recursive=True, output_root: Path | None = N
     for path in paths:
         if not path.is_file() or path.suffix.lower() != ".md" or path.is_symlink():
             continue
-        if path.stem.upper().startswith("TRANSLATED_") or path.stem.upper().endswith("_TRANSLATED"):
+        if (path.stem.upper().startswith(("TRANSLATED_", "FORMATTED_"))
+                or path.stem.upper().endswith(("_TRANSLATED", "_FORMATTED"))):
             continue
         # Only exclude a distinct output subtree, never the input folder itself.
         if output and output != root and output in path.resolve().parents:
@@ -196,6 +197,10 @@ PROOF_ARBITRATE_PROMPT = ('对照原文 source、最终译文 translation，独�
     '{"decision":"approve|needs_review|unresolved","has_problem":true或false,"reason":"具体理由"}。'
     '只有确认最终译文完整准确、校对疑点均不成立时，返回 decision=approve 且 has_problem=false；'
     '确认仍有问题时 decision=needs_review 且 has_problem=true；证据不足时 decision=unresolved。')
+
+
+class _RetryChunk(Exception):
+    """An explicit user request to discard the current generated drafts."""
 
 
 def translate_document(source: Path, destination: Path, options: TranslationOptions,
@@ -279,13 +284,17 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
             return False
 
     chunks = budget_chunks(text, fits)
+    attempt_drafts = {}
     def translate_chunk(original, index):
         data = data_for(original)
         first = ask(translator, TRANSLATE_PROMPT, data)
+        attempt_drafts["first"] = first
         record = {"chunk": index, "verified": True, "pendingReasons": []}
         if options.secondary_review:
             log(tr('{arg0}：第 {arg1} 段二次翻译核对', arg0=source.name, arg1=index))
             second = ask(reviewer, TRANSLATE_PROMPT, data)
+            attempt_drafts["second"] = second
+            record["candidates"] = {"first": first, "second": second}
             comparison = review_reply(ask(reviewer, COMPARE_PROMPT,
                 {**data, "first": first, "second": second}))
             record["comparison"] = comparison
@@ -309,12 +318,23 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
                     choice = decide({"filename": source.name, "chunk": index, "source": original,
                                      "first": first, "second": second, "comparison": comparison}) if decide else "unresolved"
                     record["arbitration"] = {"choice": choice, "by": "user"}
+                if options.arbitration == "大模型裁决" and choice == "unresolved" and decide:
+                    choice = decide({"filename": source.name, "chunk": index, "source": original,
+                        "first": first, "second": second, "problem": {"comparison": comparison, "arbitration": verdict}})
+                    record["userDecision"] = choice
+                if choice == "retry":
+                    raise _RetryChunk()
+                # Keeping a disputed draft is not a positive quality approval.
+                if options.arbitration != "大模型裁决" or "userDecision" in record:
+                    record["verified"] = False
+                    record["pendingReasons"].append("translation_dispute_unresolved")
                 record["candidates"] = {"first": first, "second": second}
                 if choice == "second":
                     first = second
                 elif choice != "first":
                     record["verified"] = False
-                    record["pendingReasons"].append("translation_dispute_unresolved")
+                    if "translation_dispute_unresolved" not in record["pendingReasons"]:
+                        record["pendingReasons"].append("translation_dispute_unresolved")
         if options.proofreading:
             log(tr('{arg0}：第 {arg1} 段文本校对', arg0=source.name, arg1=index))
             proof = review_reply(ask(proofreader, PROOFREAD_PROMPT, {**data, "translation": first}))
@@ -334,6 +354,14 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
             if not proof_passed:
                 record["pendingReasons"].append("proofreading_problem")
                 log(tr("{arg0}：第 {arg1} 段校对疑点尚未解决，本段保持待处理。", arg0=source.name, arg1=index))
+                if decide:
+                    choice = decide({"filename": source.name, "chunk": index, "source": original,
+                        **attempt_drafts, "problem": {"proofreading": proof, "arbitration": record.get("proofreadingArbitration")}})
+                    if choice == "retry":
+                        raise _RetryChunk()
+                    if choice in attempt_drafts:
+                        first = attempt_drafts[choice]
+                    record["proofreadingUserDecision"] = choice
             record["verified"] = record["verified"] and proof_passed
         return first, record
 
@@ -342,8 +370,12 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
         _cancel(stop)
         original = chunks[position]
         log(tr('{arg0}：翻译第 {arg1}/{arg2} 段', arg0=source.name, arg1=position + 1, arg2=len(chunks)))
+        attempt_drafts.clear()
         try:
             first, record = translate_chunk(original, position + 1)
+        except _RetryChunk:
+            log(tr("已丢弃当前译文草稿，按用户选择重试此分段。"))
+            continue
         except (BudgetExceeded, ResponseTooLong):
             if len(original) < 2:
                 raise
@@ -352,6 +384,18 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
             chunks[position:position + 1] = halves
             log(tr("译文扩展或输出截断，已缩小原文分段并重新翻译核对。"))
             continue
+        except ProcessingCancelled:
+            raise
+        except Exception as exc:
+            if not decide or not attempt_drafts:
+                raise
+            choice = decide({"filename": source.name, "chunk": position + 1, "source": original,
+                             **attempt_drafts, "problem": str(exc)})
+            if choice == "retry":
+                continue
+            first = attempt_drafts.get(choice, attempt_drafts["first"])
+            record = {"chunk": position + 1, "verified": False, "pendingReasons": ["translation_check_failed"],
+                      "checkError": str(exc), "userDecision": choice, "candidates": dict(attempt_drafts)}
         translated.append(first)
         records.append(record)
         position += 1
@@ -377,6 +421,216 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
     with destination.open("x", encoding="utf-8", newline="\n") as handle:
         handle.write(output)
     destination.with_suffix(".translation.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report
+
+
+FORMAT_PROMPT = ("你是 Markdown 文献排版编辑。只整理 source 的 Markdown 格式，便于人类阅读。"
+    "合理使用现有标题的层级、段落与空行、列表、表格、引用和代码围栏；保留原有章节顺序与语言。"
+    "不得翻译、摘要、润色、补写标题内容、修改措辞或擅自修复疑似 OCR 错字。"
+    "完整保留全部正文、数字、引用、参考文献、代码、公式、图片与链接地址。"
+    "已有代码块内容和数学公式必须原样保留。每个 source 只整理一次；不生成另一候选版本。"
+    "只返回整理后的 Markdown，不添加说明，不把整篇文章套入代码围栏。")
+FORMAT_VERIFY_PROMPT = ("独立校对 source 与 formatted。这是一次整理之后的二次核验，不是二次整理。"
+    "检查全部内容、语种、顺序、数字、引文、参考文献、代码、公式、图片与链接是否保留，"
+    "检查 Markdown 标题、段落、列表、表格和围栏是否清晰可读。疑似缺字或语句不通只指出，不擅自修正文稿。"
+    "只能返回核验 JSON，绝不生成、改写或再次排版整理稿："
+    '{"has_problem":true或false,"issues":["具体问题"],"summary":"结论"}。')
+
+
+def _markdown_protected(text):
+    """Ranges that must not be split across separate formatting requests."""
+    ranges, fence, start, position = [], None, 0, 0
+    for line in text.splitlines(keepends=True):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line.rstrip("\r\n"))
+        if marker:
+            run, tail = marker.groups()
+            if fence is None:
+                fence, start = run, position
+            elif run[0] == fence[0] and len(run) >= len(fence) and not tail.strip():
+                ranges.append((start, position + len(line)))
+                fence = None
+        position += len(line)
+    if fence:
+        ranges.append((start, len(text)))
+    ranges.extend((m.start(), m.end()) for m in re.finditer(r"\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]", text))
+    # Contiguous Markdown table rows remain one unit, including the separator.
+    ranges.extend((m.start(), m.end()) for m in re.finditer(r"(?m)^(?:[^\n]*\|[^\n]*\n){2,}", text))
+    merged = []
+    for begin, end in sorted(ranges):
+        if merged and begin <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+        else:
+            merged.append((begin, end))
+    return merged
+
+
+def formatting_chunks(text, fits):
+    units, position = [], 0
+    for begin, end in _markdown_protected(text):
+        units.extend(budget_chunks(text[position:begin], fits))
+        block = text[begin:end]
+        if not fits(block):
+            raise ValueError(tr("完整代码块、公式或表格超出整理／核验模型预算，请提高上限或改用更大模型。"))
+        units.append(block)
+        position = end
+    units.extend(budget_chunks(text[position:], fits))
+    chunks = []
+    for unit in units:
+        if chunks and fits(chunks[-1] + unit):
+            chunks[-1] += unit
+        else:
+            chunks.append(unit)
+    return chunks
+
+
+def formatting_content_issues(source, formatted):
+    """Conservative checks supplement the LLM; formatting cannot approve content edits."""
+    from collections import Counter
+    def plain(text):
+        text = re.sub(r"(?m)^ {0,3}(?:`{3,}|~{3,})[^\n]*$", "", text)
+        return re.sub(r"(?m)^\s*\d+[.)]\s+", "", text)
+    left, right = plain(source), plain(formatted)
+    issues = []
+    if re.sub(r"[\W_]+", "", left) != re.sub(r"[\W_]+", "", right):
+        issues.append(tr("整理稿的文字内容或顺序发生变化。"))
+    if re.findall(r"\d+(?:[.,]\d+)*%?", left) != re.findall(r"\d+(?:[.,]\d+)*%?", right):
+        issues.append(tr("整理稿中的数字发生变化。"))
+    for pattern in (r"!?\[[^\]\n]*\]\(([^\n]*?)\)", r"https?://[^\s<>]+"):
+        if Counter(re.findall(pattern, source)) != Counter(re.findall(pattern, formatted)):
+            issues.append(tr("整理稿中的图片或链接地址发生变化。"))
+            break
+    # Match fence bodies independently of fence style/language labels.
+    def code(text):
+        result, fence, lines = [], None, []
+        for line in text.splitlines(keepends=True):
+            marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line.rstrip("\r\n"))
+            if fence is None and marker:
+                fence, lines = marker.group(1), []
+            elif fence and marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence) and not marker.group(2).strip():
+                result.append("".join(lines)); fence = None
+            elif fence:
+                lines.append(line)
+        if fence:
+            result.append("".join(lines))
+        return result
+    if Counter(code(source)) - Counter(code(formatted)):
+        issues.append(tr("整理稿中的代码块内容发生变化。"))
+    inline = r"(?<!`)(`{1,2})(?!`)([^\n]*?)\1(?!`)"
+    if Counter(m.group(2) for m in re.finditer(inline, source)) - Counter(m.group(2) for m in re.finditer(inline, formatted)):
+        issues.append(tr("整理稿中的行内代码发生变化。"))
+    math = r"\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|(?<!\$)\$(?!\$)[^\n$]+\$(?!\$)"
+    if Counter(re.findall(math, source)) != Counter(re.findall(math, formatted)):
+        issues.append(tr("整理稿中的数学公式发生变化。"))
+    return issues
+
+
+def formatted_path(source, input_root, output_root=None, prefix=False):
+    parent = source.parent if output_root is None else Path(output_root) / source.relative_to(input_root).parent
+    name = f"FORMATTED_{source.stem}.md" if prefix else f"{source.stem}_FORMATTED.md"
+    result = parent / name
+    if result.resolve() == source.resolve():
+        raise ValueError(tr("整理稿不能覆盖原文。"))
+    return result
+
+
+def find_formatting_files(root, recursive=True, output_root=None):
+    root = Path(root).resolve()
+    output = Path(output_root).resolve() if output_root else None
+    paths = root.rglob("*") if recursive else root.iterdir()
+    return sorted(path for path in paths if path.is_file() and path.suffix.lower() == ".md"
+        and not any(p.is_symlink() for p in (path, *path.parents))
+        and not any(part.startswith(".") for part in path.relative_to(root).parts)
+        and not path.stem.upper().startswith("FORMATTED_") and not path.stem.upper().endswith("_FORMATTED")
+        and not path.with_suffix(".formatting.json").exists()
+        and not (output and output != root and output in path.resolve().parents))
+
+
+def format_markdown_document(source, destination, formatter, verifier, input_percent=50,
+                             stop=lambda: False, log=lambda message: None, decide=None):
+    """One formatting response and one independent, JSON-only review per source chunk."""
+    source, destination = Path(source), Path(destination)
+    if destination.resolve() == source.resolve():
+        raise ValueError(tr("整理稿不能覆盖原文。"))
+    report_path = destination.with_suffix(".formatting.json")
+    if destination.exists() or report_path.exists():
+        return {"status": "existing", "verified": False, "path": str(destination)}
+    for profile in (formatter, verifier):
+        profile.validate()
+    source_bytes = source.read_bytes()
+    text = source_bytes.decode("utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
+    if not text.strip():
+        raise ValueError(tr("Markdown 文件为空，无法整理。"))
+    def fits(original):
+        _cancel(stop)
+        try:
+            check_request(formatter, FORMAT_PROMPT, {"source": original}, input_percent)
+            check_request(verifier, FORMAT_VERIFY_PROMPT, {"source": original, "formatted": original * 2}, input_percent)
+            return True
+        except BudgetExceeded:
+            return False
+    chunks = formatting_chunks(text, fits)
+    output, records = [], []
+    for index, original in enumerate(chunks, 1):
+        prior = []
+        while True:
+            _cancel(stop)
+            log(tr("{arg0}：整理第 {arg1}/{arg2} 段（仅整理一次）。", arg0=source.name, arg1=index, arg2=len(chunks)))
+            candidate = chat(formatter, FORMAT_PROMPT, {"source": original}, stop, input_percent=input_percent)
+            record = {"chunk": index, "attempt": len(prior) + 1, "verified": False,
+                      "contentIssues": formatting_content_issues(original, candidate)}
+            log(tr("{arg0}：第 {arg1} 段独立核验，不再次整理。", arg0=source.name, arg1=index))
+            try:
+                review = review_reply(chat(verifier, FORMAT_VERIFY_PROMPT, {"source": original, "formatted": candidate},
+                                          stop, input_percent=input_percent))
+                record["review"] = review
+                if not isinstance(review.get("issues"), list) or any(not isinstance(item, str) for item in review["issues"]):
+                    raise ValueError(tr("整理核验缺少有效的问题列表，不能视为通过。"))
+                record["verified"] = not review["has_problem"] and not review["issues"] and not record["contentIssues"]
+            except ProcessingCancelled:
+                raise
+            except Exception as exc:
+                record["reviewError"] = str(exc)
+            if not record["verified"] and decide:
+                choice = decide({"filename": source.name, "chunk": index, "source": original,
+                                 "first": candidate, "problem": dict(record)})
+                if choice == "retry":
+                    prior.append(record)
+                    log(tr("已丢弃当前整理稿，按用户选择重试此分段。"))
+                    continue
+                record["userDecision"] = choice
+            record["priorAttempts"] = prior
+            break
+        output.append(candidate)
+        records.append(record)
+    _cancel(stop)
+    result_text = "\n\n".join(output) + "\n"
+    issues = formatting_content_issues(text, result_text)
+    verified = all(r["verified"] for r in records) and not issues
+    try:
+        role, upstream, digest = document_upload_evidence(source)
+        upstream_verified = upstream == "ready" and digest == hashlib.sha256(source_bytes).hexdigest()
+    except (OSError, ValueError, UnicodeError):
+        role, upstream_verified = "original", False
+    report = {"status": "verified" if verified else "needs_review", "verified": verified,
+        "source": str(source), "path": str(destination), "sourceSHA256": hashlib.sha256(source_bytes).hexdigest(),
+        "outputSHA256": hashlib.sha256(result_text.encode("utf-8")).hexdigest(),
+        "formatter": formatter.model, "verifier": verifier.model, "inputPercent": input_percent,
+        "formattingPasses": max(r["attempt"] for r in records), "userRetries": sum(len(r["priorAttempts"]) for r in records),
+        "verificationOnly": True, "documentRole": role, "upstreamVerified": upstream_verified,
+        "contentIssues": issues, "checks": records,
+        "pendingReasons": [] if verified else ["formatting_verification_failed"],
+        "modelLimits": {name: {**effective_limits(profile).__dict__, "input_budget": input_budget(profile, input_percent)}
+                        for name, profile in (("formatter", formatter), ("verifier", verifier))}}
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Reserve both names exclusively; never replace a previous result or report.
+    with report_path.open("x", encoding="utf-8", newline="\n") as report_file:
+        try:
+            with destination.open("x", encoding="utf-8", newline="\n") as document:
+                document.write(result_text)
+            json.dump(report, report_file, ensure_ascii=False, indent=2)
+        except BaseException:
+            report_path.unlink(missing_ok=True)
+            raise
     return report
 
 
@@ -550,6 +804,138 @@ class GitHubSetupClient:
             folder = "" if parent == "." else parent
         return True
 
+    def remote_paths(self, options):
+        """Read the complete tree; a truncated recursive response is never treated as complete."""
+        options.validate()
+        branch = self.get(f"/repos/{options.repository}/branches/{quote(options.branch, safe='')}")
+        tree_sha = branch["commit"]["commit"]["tree"]["sha"]
+        route = f"/repos/{options.repository}/git/trees/"
+        tree = self.get(route + quote(tree_sha, safe=""), {"recursive": "1"})
+        paths = set()
+        if not tree.get("truncated"):
+            return {item["path"] for item in tree["tree"]}
+        pending = [("", tree_sha)]
+        while pending:
+            prefix, sha = pending.pop()
+            value = self.get(route + quote(sha, safe=""))
+            if value.get("truncated"):
+                raise RuntimeError(tr("远端目录过大，无法完整比较；本次未上传，请缩小目标目录后重试。"))
+            for item in value["tree"]:
+                name = prefix + item["path"]
+                paths.add(name)
+                if item.get("type") == "tree":
+                    pending.append((name + "/", item["sha"]))
+        return paths
+
+
+UPLOAD_KINDS = ("仅上传原文", "仅上传翻译稿", "同时上传")
+
+
+def upload_kind_allows(selection, role):
+    return selection == "同时上传" or selection == {"original": "仅上传原文", "translation": "仅上传翻译稿"}.get(role)
+
+
+@dataclass(frozen=True)
+class UploadCandidate:
+    path: Path
+    relative: str
+    role: str
+    status: str
+    sha256: str
+
+
+def review_text_sha256(text):
+    return hashlib.sha256(text.replace("\r\n", "\n").replace("\r", "\n").strip().encode("utf-8")).hexdigest()
+
+
+def document_upload_evidence(path):
+    """Bind positive local review evidence to the current bytes/text, including old reports."""
+    format_report = path.with_suffix(".formatting.json")
+    report_path = format_report if format_report.exists() else path.with_suffix(".translation.json")
+    translated = path.with_suffix(".translation.json").exists() or path.stem.upper().startswith("TRANSLATED_") or path.stem.upper().endswith("_TRANSLATED")
+    if format_report.exists():
+        try:
+            value = json.loads(format_report.read_text(encoding="utf-8-sig"))
+            if isinstance(value, dict):
+                translated = value.get("documentRole") == "translation"
+        except (OSError, ValueError, UnicodeError):
+            pass
+    if path.stat().st_size > 20 * 1024 * 1024:
+        return ("translation" if translated else "original"), "oversize", ""
+    content = path.read_bytes()
+    digest = hashlib.sha256(content).hexdigest()
+    def load(report):
+        value = json.loads(report.read_text(encoding="utf-8-sig"))
+        if not isinstance(value, dict):
+            raise ValueError("invalid report")
+        return value
+    if report_path.exists():
+        report = load(report_path)
+        translated = report.get("documentRole") == "translation" if format_report.exists() else True
+        ok = (report.get("verified") is True and report.get("status") == "verified"
+              and report.get("upstreamVerified", not format_report.exists()) is True and not report.get("pendingReasons"))
+        matches = report.get("outputSHA256") == digest
+    else:
+        review_path = path.with_suffix(".llm-review.json")
+        if not review_path.exists():
+            return ("translation" if translated else "original"), "unverified", digest
+        review = load(review_path)
+        ok = review.get("hasProblem") is False
+        # read_text normalizes CRLF just as the manual OCR review does.
+        text_digest = review_text_sha256(path.read_text(encoding="utf-8"))
+        matches = review.get("textSHA256") == text_digest
+        if not translated:
+            for suffix in (".raw.json", ".json"):
+                raw_path = path.with_suffix(suffix)
+                if raw_path.exists():
+                    raw = load(raw_path)
+                    def warning(value):
+                        return (isinstance(value, dict) and (bool(value.get("qualityWarning"))
+                                or any(warning(v) for v in value.values()))) or (isinstance(value, list) and any(warning(v) for v in value))
+                    ok = ok and not warning(raw)
+    status = "ready" if ok and matches else "changed" if ok and not matches else "unverified"
+    if len(content) > 20 * 1024 * 1024:
+        status = "oversize"
+    return ("translation" if translated else "original"), status, digest
+
+
+def scan_missing_documents(root, selection, options, recursive=True, stop=lambda: False, client=None):
+    if not str(root).strip():
+        raise ValueError(tr("请选择有效的文档文件夹和上传类型。"))
+    root = Path(root).expanduser().resolve()
+    if not root.is_dir() or selection not in UPLOAD_KINDS:
+        raise ValueError(tr("请选择有效的文档文件夹和上传类型。"))
+    options.validate()
+    client = client or GitHubSetupClient(options.token, stop)
+    remote = client.remote_paths(options)
+    candidates = []
+    for path in sorted(root.rglob("*") if recursive else root.iterdir()):
+        _cancel(stop)
+        relative = path.relative_to(root)
+        if (path.suffix.lower() != ".md" or not path.is_file() or any(p.startswith(".") for p in relative.parts)
+                or any(p.is_symlink() for p in (path, *path.parents))):
+            continue
+        role = "translation" if path.with_suffix(".translation.json").exists() or path.stem.upper().startswith("TRANSLATED_") or path.stem.upper().endswith("_TRANSLATED") else "original"
+        if path.with_suffix(".formatting.json").exists():
+            try:
+                evidence = json.loads(path.with_suffix(".formatting.json").read_text(encoding="utf-8-sig"))
+                if isinstance(evidence, dict) and evidence.get("documentRole") in {"original", "translation"}:
+                    role = evidence["documentRole"]
+            except (OSError, ValueError, UnicodeError):
+                pass
+        if not upload_kind_allows(selection, role):
+            continue
+        name = str(PurePosixPath(options.folder) / relative.as_posix())
+        if name in remote:
+            status, digest = "existing", ""
+        else:
+            try:
+                role, status, digest = document_upload_evidence(path)
+            except (OSError, ValueError, UnicodeError):
+                status, digest = "unverified", ""
+        candidates.append(UploadCandidate(path, relative.as_posix(), role, status, digest))
+    return candidates
+
 
 def upload_verified_file(path: Path, relative_name: str, verified: bool, options: GitHubOptions,
                          expected_sha256: str, stop=lambda: False) -> str:
@@ -570,7 +956,7 @@ def upload_verified_file(path: Path, relative_name: str, verified: bool, options
     url = f"https://api.github.com/repos/{options.repository}/contents/{quote(remote, safe='/')}"
     headers = {"Authorization": f"Bearer {options.token}", "Accept": "application/vnd.github+json",
                "X-GitHub-Api-Version": "2022-11-28"}
-    response = requests.get(url, headers=headers, params={"ref": options.branch}, timeout=(15, 60))
+    response = requests.get(url, headers=headers, params={"ref": options.branch}, timeout=(15, 60), allow_redirects=False)
     if response.status_code == 200:
         raise FileExistsError(tr('GitHub 已存在 {arg0}；为避免覆盖，未上传。', arg0=remote))
     if response.status_code != 404:
@@ -579,7 +965,7 @@ def upload_verified_file(path: Path, relative_name: str, verified: bool, options
     response = requests.put(url, headers=headers, json={
         "message": f"Add reviewed literature: {remote}", "branch": options.branch,
         "content": base64.b64encode(content).decode("ascii"),
-    }, timeout=(15, 60))
+    }, timeout=(15, 60), allow_redirects=False)
     if response.status_code != 201:
         raise RuntimeError(tr('GitHub 上传失败：HTTP {arg0}。请检查分支和 Contents 写入权限。', arg0=response.status_code))
     return remote

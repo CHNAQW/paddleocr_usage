@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from workspace_ui import WorkspaceLayout, configure_workspace_theme
-from literature_processing import ProcessingCancelled
+from literature_processing import ProcessingCancelled, review_text_sha256
 from model_budget import ModelCatalog
 
 import tkinter as tk
@@ -58,7 +58,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "文献处理软件"
-APP_VERSION = "26.10.18.03"
+APP_VERSION = "26.10.19.02"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -772,6 +772,7 @@ def process_split_pdf_async(
             merged_review = {
                 "programVersion": APP_VERSION,
                 "reviewedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "textSHA256": review_text_sha256(output_md_path.read_text(encoding="utf-8")),
                 "filename": output_md_path.name,
                 "model": llm_model,
                 "hasProblem": any(bool(review.get("hasProblem")) for review in part_reviews),
@@ -796,7 +797,9 @@ def load_config() -> AppConfig:
     if CONFIG_PATH.exists():
         try:
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-            cfg = AppConfig(**{**AppConfig().__dict__, **data})
+            defaults = AppConfig().__dict__
+            cfg = AppConfig(**{**defaults, **{key: value for key, value in data.items() if key in defaults}})
+            cfg.__dict__.update({key: value for key, value in data.items() if key not in defaults})
             if cfg.model not in MODEL_CHOICES:
                 cfg.model = DEFAULT_MODEL
             if not cfg.base_url:
@@ -1134,6 +1137,7 @@ def review_markdown_with_llm(
         "reviewedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "filename": filename,
         "model": model,
+        "textSHA256": review_text_sha256(markdown),
         "hasProblem": any(item["has_problem"] for item in reviews),
         "chunks": reviews,
     }
@@ -1923,6 +1927,8 @@ class PaddleOCRBatchGUI:
         self.root = root
         self._set_adaptive_window_size()
 
+        self.app_version = APP_VERSION
+        self.compiled_application = "__compiled__" in globals()
         self.config = load_config()
         set_language(self.config.ui_language)
         self.root.tk.call("::msgcat::mclocale", "en" if language() == "en" else "zh_cn")
@@ -2774,6 +2780,8 @@ def main() -> None:
     configure_unicode_ui_fonts(root)
     configure_design_language(root)
     app = PaddleOCRBatchGUI(root)
+    from app_updater import signal_ready
+    root.after(250, lambda: signal_ready(APP_VERSION))
     root.mainloop()
 
 

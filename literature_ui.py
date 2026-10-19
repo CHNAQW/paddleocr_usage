@@ -86,11 +86,14 @@ class ModelControls:
         self.provider = ChoiceVar(value=next((name for name, url in PROVIDERS.items()
                                                 if url and url == self.url.get()), tr('自定义 OpenAI compatible')))
         selector = ttk.Combobox(self.form, textvariable=self.provider, values=[ui_text(value) for value in PROVIDERS], state="readonly")
+        self.provider_selector = selector
         selector.localized_choices = True
         self.form.add(tr('服务商预设'), selector)
         selector.bind("<<ComboboxSelected>>", self.preset)
         for row, label, variable, hidden in ((1, "Base URL", self.url, False), (2, "API Key", self.key, True)):
-            self.form.add(label, ttk.Entry(self.form, textvariable=variable, show="*" if hidden else ""))
+            entry = ttk.Entry(self.form, textvariable=variable, show="*" if hidden else "")
+            self.form.add(label, entry)
+            setattr(self, "key_entry" if hidden else "url_entry", entry)
         self.combo = ttk.Combobox(self.form, textvariable=self.model)
         self.form.add(tr('模型 / 接入点 ID'), self.combo)
         self.limit_entry = ttk.Entry(self.form, textvariable=self.limit_value)
@@ -173,6 +176,18 @@ class LiteratureControls:
         self.snapshot = None
         self.cancel_event = threading.Event()
         saved = app.config.literature if isinstance(app.config.literature, dict) else {}
+        self.formatting = None
+        self.formatting_saved = saved.get("formatting", {})
+        self.fetch, self.test = fetch, test
+        shared = saved.get("llm_service", {})
+        shared = shared if isinstance(shared, dict) else {}
+        existing = next((saved[key] for key in ("translator", "reviewer", "proofreader", "arbiter")
+                         if isinstance(saved.get(key), dict) and saved[key].get("api_key") and saved[key].get("base_url")), {})
+        self.shared_llm = tk.BooleanVar(value=shared.get("enabled", False))
+        self.shared_url = tk.StringVar(value=shared.get("base_url", existing.get("base_url") or app.config.llm_base_url or PROVIDERS["DeepSeek"]))
+        self.shared_key = tk.StringVar(value=shared.get("api_key", existing.get("api_key") or (app.config.llm_api_key if app.config.llm_base_url else "")))
+        self.shared_provider = ChoiceVar(value=next((name for name, url in PROVIDERS.items()
+                                                   if url and url == self.shared_url.get()), "自定义 OpenAI compatible"))
         self.auto_translate = tk.BooleanVar(value=saved.get("auto_translate", False))
         self.input = tk.StringVar(value=saved.get("input", ""))
         self.output = tk.StringVar(value=saved.get("output", ""))
@@ -186,6 +201,8 @@ class LiteratureControls:
         self.arbitration = ChoiceVar(value=saved.get("arbitration", "用户自行裁决"))
         self.input_percent = tk.StringVar(value=str(saved.get("input_percent", 50)))
         self.upload = tk.BooleanVar(value=saved.get("upload", False))
+        self.upload_kind = ChoiceVar(value=saved.get("upload_kind", "同时上传"))
+        self.upload_root = tk.StringVar(value=saved.get("upload_root", ""))
         self.repository = tk.StringVar(value=saved.get("repository", ""))
         self.branch = tk.StringVar(value=saved.get("branch", "main"))
         self.folder = tk.StringVar(value=saved.get("folder", ""))
@@ -194,6 +211,9 @@ class LiteratureControls:
         self.status = LocalizedVar(value=tr('选择 Markdown 文件夹后开始。'))
         self.profiles = {}
         self._build(saved, fetch, test)
+        for variable in (self.shared_llm, self.shared_url, self.shared_key):
+            variable.trace_add("write", self.sync_llm_service)
+        self.sync_llm_service()
         for variable in (self.input, self.output, self.same_folder):
             variable.trace_add("write", lambda *_: self.app.workspace_layout.sync_output())
         self.app.root.after(100, self.poll)
@@ -220,8 +240,11 @@ class LiteratureControls:
                 "same_folder": self.same_folder.get(), "recursive": self.recursive.get(), "filename_position": self.prefix.get(),
                 "source": self.source.get(), "target": self.target.get(), "secondary": self.secondary.get(),
                 "proofreading": self.proofreading.get(), "arbitration": self.arbitration.get(), "upload": self.upload.get(),
-                "repository": self.repository.get(), "branch": self.branch.get(), "folder": self.folder.get()}
+                "repository": self.repository.get(), "branch": self.branch.get(), "folder": self.folder.get(),
+                "upload_kind": self.upload_kind.get(), "upload_root": self.upload_root.get()}
         data["input_percent"] = self.chunk_percent()
+        data["formatting"] = self.formatting.config_data() if self.formatting else self.formatting_saved
+        data["llm_service"] = {"enabled": self.shared_llm.get(), "base_url": self.shared_url.get(), "api_key": self.shared_key.get()}
         data.update({key: value.config_data() for key, value in self.profiles.items()})
         return data
 
@@ -232,7 +255,58 @@ class LiteratureControls:
         return int(value)
 
     def busy(self):
-        return bool(self.thread and self.thread.is_alive())
+        return bool(self.thread and self.thread.is_alive()) or bool(getattr(self, "formatting", None) and self.formatting.busy)
+
+    def open_formatting(self):
+        if self.formatting is None:
+            self.formatting = MarkdownFormatting(self)
+            self.sync_llm_service()
+        self.formatting.window.deiconify()
+        self.formatting.window.lift()
+
+    def shared_preset(self, _event=None):
+        value = PROVIDERS[self.shared_provider.get()]
+        if value and value != self.shared_url.get():
+            self.shared_key.set("")
+            self.shared_url.set(value)
+
+    def sync_llm_service(self, *_):
+        enabled = self.shared_llm.get()
+        if not _ or _[0] != str(self.shared_key):
+            self.shared_provider.set(next((name for name, url in PROVIDERS.items() if url and url == self.shared_url.get()), "自定义 OpenAI compatible"))
+        models = list(self.profiles.values())
+        if self.formatting:
+            models += list(self.formatting.models.values())
+        for model in models:
+            if enabled:
+                if model.url.get() != self.shared_url.get():
+                    model.url.set(self.shared_url.get())
+                model.key.set(self.shared_key.get())
+                model.provider.set(next((name for name, url in PROVIDERS.items() if url and url == self.shared_url.get()), "自定义 OpenAI compatible"))
+            model.provider_selector.configure(state="disabled" if enabled else "readonly")
+            for entry in (model.url_entry, model.key_entry):
+                entry.configure(state="disabled" if enabled else "normal")
+            for widget in (model.provider_selector, model.url_entry, model.key_entry):
+                if not getattr(widget, "_shared_override_bound", False):
+                    widget.bind("<Button-1>", self.override_shared_llm, add="+")
+                    widget._shared_override_bound = True
+        if enabled:
+            self.app.llm_base_url_var.set(self.shared_url.get())
+            self.app.llm_api_key_var.set(self.shared_key.get())
+        for entry in (self.app.shared_review_url_entry, self.app.shared_review_key_entry):
+            entry.configure(state="disabled" if enabled else "normal")
+            if not getattr(entry, "_shared_override_bound", False):
+                entry.bind("<Button-1>", self.override_shared_llm, add="+")
+                entry._shared_override_bound = True
+
+    def override_shared_llm(self, event):
+        if not self.shared_llm.get():
+            return
+        if not messagebox.askyesno(tr("覆盖统一 LLM 设置"),
+                tr("您已选择“所有服务共用一个LLM服务商”，是否需要强制覆盖设置？"), parent=event.widget.winfo_toplevel()):
+            return "break"
+        self.shared_llm.set(False)
+        event.widget.focus_set()
 
     def make_snapshot(self, translating=True):
         profiles = {key: value.profile() for key, value in self.profiles.items()}
@@ -266,7 +340,7 @@ class LiteratureControls:
                     self.secondary.get(), self.proofreading.get(), self.arbitration.get(), self.chunk_percent()),
                 "output": None if self.same_folder.get() else Path(self.output.get()).expanduser().resolve(),
                 "prefix": self.prefix.get().startswith("前缀"), "github": github,
-                "auto_translate": self.auto_translate.get()}
+                "auto_translate": self.auto_translate.get(), "upload_kind": self.upload_kind.get()}
 
     def input_paths(self):
         if not self.input.get().strip() or not Path(self.input.get()).is_dir():
@@ -306,6 +380,8 @@ class LiteratureControls:
 
     def stop(self):
         self.cancel_event.set()
+        if getattr(self, "formatting", None):
+            self.formatting.cancel.set()
         if self.app.worker_thread and self.app.worker_thread.is_alive():
             self.app.stop_requested = True
         self.status.set(tr('已请求停止；等待当前 API 请求返回后退出。'))
@@ -316,17 +392,38 @@ class LiteratureControls:
     def log(self, text):
         self.app.log_queue.put(("log", text))
 
-    def decide(self, payload):
+    def decide(self, payload, stop=None):
+        stopped = stop or self.stopped
         response = queue.Queue(maxsize=1)
-        self.events.put(("decision", (payload, response)))
-        while not self.stopped():
+        self.events.put(("decision", (payload, response, stopped)))
+        while not stopped():
             try:
                 return response.get(timeout=0.2)
             except queue.Empty:
                 continue
         raise ProcessingCancelled(tr('用户已停止。'))
 
-    def maybe_upload(self, path, root, verified, snapshot, expected_hash=None):
+    def run_with_issue_dialog(self, path, work, stop=None):
+        stopped = stop or self.stopped
+        while not stopped():
+            try:
+                return work()
+            except ProcessingCancelled:
+                raise
+            except Exception as exc:
+                try:
+                    source = path.read_text(encoding="utf-8-sig")
+                except (OSError, UnicodeError):
+                    source = ""
+                choice = self.decide({"filename": path.name, "source": source, "first": None, "problem": str(exc)}, stopped)
+                if choice != "retry":
+                    raise
+        raise ProcessingCancelled(tr("用户已停止。"))
+
+    def maybe_upload(self, path, root, verified, snapshot, expected_hash=None, role="original"):
+        from literature_processing import upload_kind_allows
+        if not upload_kind_allows(snapshot.get("upload_kind", "同时上传"), role):
+            return
         if not snapshot["github"]:
             return
         if not verified:
@@ -356,8 +453,10 @@ class LiteratureControls:
         self.log(tr('{arg0}：{arg1}', arg0=path.name, arg1=labels[result['status']]))
         self.events.put(("status", tr('{arg0}：{arg1}', arg0=path.name, arg1=labels[result['status']])))
         if result["status"] in {"verified", "needs_review", "unverified"}:
+            result["upstreamVerified"] = upstream_ok
+            destination.with_suffix(".translation.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
             upload_root = root if snapshot["output"] is None else snapshot["output"]
-            self.maybe_upload(destination, upload_root, result["verified"] and upstream_ok, snapshot, result["outputSHA256"])
+            self.maybe_upload(destination, upload_root, result["verified"] and upstream_ok, snapshot, result["outputSHA256"], role="translation")
         return result
 
     def after_ocr(self, path, root, raw_data, reviewed_markdown=None):
@@ -380,7 +479,7 @@ class LiteratureControls:
                 if isinstance(value, dict):
                     return bool(value.get("qualityWarning")) or any(warning(v) for v in value.values())
                 return isinstance(value, list) and any(warning(v) for v in value)
-            self.process(path, root, snapshot, upstream_ok=not warning(raw_data))
+            self.run_with_issue_dialog(path, lambda: self.process(path, root, snapshot, upstream_ok=not warning(raw_data)))
 
     def worker(self, root, paths, snapshot):
         counts = {"verified": 0, "needs_review": 0, "unverified": 0, "target_language": 0, "existing": 0, "failed": 0}
@@ -393,7 +492,7 @@ class LiteratureControls:
                 self.events.put(("status", tr('正在处理 {arg0}/{arg1}：{arg2}', arg0=index, arg1=len(paths), arg2=path.name)))
                 self.events.put(("progress", (index - 1, len(paths))))
                 try:
-                    result = self.process(path, root, snapshot)
+                    result = self.run_with_issue_dialog(path, lambda: self.process(path, root, snapshot))
                     counts[result["status"]] += 1
                 except ProcessingCancelled:
                     stopped = True
@@ -406,22 +505,47 @@ class LiteratureControls:
             summary = (tr('翻译{arg0}：核验通过 {arg1}，待处理 {arg2}，未核验 {arg3}，目标语言跳过 {arg4}，已有译文跳过 {arg5}，失败 {arg6}。', arg0=tr('已停止') if stopped else tr('完成'), arg1=counts['verified'], arg2=counts['needs_review'], arg3=counts['unverified'], arg4=counts['target_language'], arg5=counts['existing'], arg6=counts['failed']))
             self.events.put(("done", summary))
 
-    def decision_dialog(self, payload, response):
-        if self.stopped():
+    def decision_dialog(self, payload, response, stop=None):
+        from responsive_ui import ButtonToolbar
+        stopped = stop or self.stopped
+        if stopped():
             response.put("unresolved")
             return
         dialog = tk.Toplevel(self.app.root)
-        dialog.localized_title = tr('翻译争议裁决：{arg0} 第 {arg1} 段', arg0=payload['filename'], arg1=payload['chunk'])
+        dialog.localized_title = tr("处理问题：{arg0}", arg0=payload["filename"])
         dialog.title(dialog.localized_title)
         dialog.geometry("860x600")
         dialog.minsize(480, 360)
         dialog.rowconfigure(1, weight=1)
         dialog.columnconfigure(0, weight=1)
-        ttk.Label(dialog, text=tr('请对照原文与两份译文；只有确认所选译文无误时才接受。'), wraplength=450).grid(row=0, column=0, sticky="w", padx=8, pady=6)
+        problem = payload.get("problem", payload.get("comparison", {}))
+        details = json.dumps(problem, ensure_ascii=False, indent=2) if isinstance(problem, (dict, list)) else str(problem)
+        def reasons(value):
+            if isinstance(value, str):
+                return [value]
+            if isinstance(value, list):
+                return [item for child in value for item in reasons(child)]
+            if isinstance(value, dict):
+                return [item for key in ("contentIssues", "issues", "reviewError", "checkError", "reason", "summary",
+                                        "review", "comparison", "proofreading", "arbitration")
+                        if key in value for item in reasons(value[key])]
+            return []
+        summary = "\n".join(dict.fromkeys(reasons(problem))) or details
+        header = ttk.Frame(dialog, padding=12)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        AdaptiveLabel(header, text=tr("发现问题：{arg0}", arg0=summary), max_lines=3).grid(row=0, column=0, sticky="ew")
+        AdaptiveLabel(header, text=tr("保留稿件会标记待处理；重试将丢弃本次生成稿，重做当前分段／文件，不删除原文。"),
+                      style="Subtitle.TLabel", max_lines=2).grid(row=1, column=0, sticky="ew", pady=(8, 0))
         notebook = ttk.Notebook(dialog)
-        notebook.grid(row=1, column=0, sticky="nsew", padx=8)
-        for title, text in ((tr('原文'), payload["source"]), (tr('首次译文'), payload["first"]), (tr('二次译文'), payload["second"]),
-                            (tr('核对报告'), json.dumps(payload["comparison"], ensure_ascii=False, indent=2))):
+        notebook.grid(row=1, column=0, sticky="nsew", padx=12)
+        drafts = [(tr("原文"), payload.get("source", ""))]
+        if payload.get("first") is not None:
+            drafts.append((tr("第一稿"), payload["first"]))
+        if payload.get("second") is not None:
+            drafts.append((tr("第二稿"), payload["second"]))
+        drafts.append((tr("核对报告"), details))
+        for title, text in drafts:
             frame = ttk.Frame(notebook)
             frame.rowconfigure(0, weight=1)
             frame.columnconfigure(0, weight=1)
@@ -434,22 +558,34 @@ class LiteratureControls:
             scrollbar.grid(row=0, column=1, sticky="ns")
             body.configure(yscrollcommand=scrollbar.set)
             notebook.add(frame, text=title)
-        actions = ttk.Frame(dialog)
-        actions.grid(row=2, column=0, sticky="ew", padx=8, pady=6)
+        chosen = False
+        timer = None
         def choose(value):
+            nonlocal chosen
+            if chosen:
+                return
+            chosen = True
             response.put(value)
+            if timer:
+                self.app.root.after_cancel(timer)
             dialog.destroy()
-        for label, value in ((tr('接受首次译文'), "first"), (tr('接受二次译文'), "second"), (tr('保留首次译文，标记待处理'), "unresolved")):
-            ttk.Button(actions, text=label, command=lambda v=value: choose(v)).pack(side="left", padx=3)
+        actions = [(tr("保留第一稿"), lambda: choose("first"))] if payload.get("first") is not None else [(tr("跳过此文件"), lambda: choose("unresolved"))]
+        actions.append((tr("删除并重试上一步"), lambda: choose("retry")))
+        if payload.get("second") is not None:
+            actions.append((tr("保留第二稿"), lambda: choose("second")))
+        bar = ButtonToolbar(dialog, actions)
+        bar.grid(row=2, column=0, sticky="ew", padx=12, pady=12)
         dialog.protocol("WM_DELETE_WINDOW", lambda: choose("unresolved"))
-        def close_if_stopped():
+        def check_stop():
+            nonlocal timer
+            timer = None
             if not dialog.winfo_exists():
                 return
-            if self.stopped():
+            if stopped():
                 choose("unresolved")
             else:
-                dialog.after(200, close_if_stopped)
-        dialog.after(200, close_if_stopped)
+                timer = self.app.root.after(200, check_stop)
+        timer = self.app.root.after(200, check_stop)
         localize_widgets(dialog)
 
     def poll(self):
@@ -474,6 +610,8 @@ class LiteratureControls:
                     messagebox.showinfo(tr('文献处理'), payload, parent=self.app.root)
                 elif kind == "profile_result":
                     controls, testing, result, error, requested = payload
+                    if not controls.box.winfo_exists():
+                        continue
                     try:
                         unchanged = controls.profile() == requested
                     except ValueError:
@@ -497,3 +635,276 @@ class LiteratureControls:
         except queue.Empty:
             pass
         self.app.root.after(100, self.poll)
+
+
+class MarkdownFormatting:
+    """A standalone single-pass formatter with a mandatory verification-only model."""
+    def __init__(self, owner):
+        from responsive_ui import ButtonToolbar
+        self.owner, self.app = owner, owner.app
+        self.root = self.app.root
+        self.window = tk.Toplevel(self.root)
+        self.window.title(tr("Markdown 整理与核验"))
+        self.window.transient(self.root)
+        self.window.minsize(540, 420)
+        self.window.geometry(f"{min(820, self.root.winfo_screenwidth()-40)}x{min(800, self.root.winfo_screenheight()-60)}")
+        self.window.columnconfigure(0, weight=1)
+        self.window.rowconfigure(1, weight=1)
+        saved = owner.formatting_saved if isinstance(owner.formatting_saved, dict) else {}
+        self.input = tk.StringVar(master=self.root, value=saved.get("input", owner.input.get() or self.app.output_var.get()))
+        self.output = tk.StringVar(master=self.root, value=saved.get("output", ""))
+        self.same_folder = tk.BooleanVar(master=self.root, value=saved.get("same_folder", True))
+        self.recursive = tk.BooleanVar(master=self.root, value=saved.get("recursive", True))
+        self.prefix = ChoiceVar(master=self.root, value=saved.get("filename_position", "后缀 _FORMATTED"))
+        self.status = LocalizedVar(master=self.root, value=tr("选择 Markdown 文件或文件夹，配置整理及核验模型后开始。"))
+        self.events, self.cancel = queue.Queue(), threading.Event()
+        self.thread, self.busy, self.closed = None, False, False
+        self.progress = tk.DoubleVar(master=self.root)
+        self.models = {}
+        head = ttk.Frame(self.window, padding=(16, 12))
+        head.grid(row=0, column=0, sticky="ew")
+        head.columnconfigure(0, weight=1)
+        AdaptiveLabel(head, text=tr("Markdown 整理与核验"), style="WizardHeading.TLabel").grid(row=0, column=0, sticky="ew")
+        AdaptiveLabel(head, text=tr("仅整理一次，再独立核验；保留原文，不翻译、不润色，不生成第二份整理稿。"),
+                      style="Subtitle.TLabel", max_lines=2).grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        notebook = ttk.Notebook(self.window, style="Workspace.TNotebook")
+        notebook.grid(row=1, column=0, sticky="nsew")
+        body = scrollable_page(notebook, tr("Markdown 整理"))
+        files = ttk.LabelFrame(body, text=tr("文档与输出"), padding=12)
+        files.grid(row=0, column=0, sticky="ew", padx=12, pady=8)
+        files.columnconfigure(0, weight=1)
+        form = ResponsiveForm(files)
+        form.grid(row=0, column=0, sticky="ew")
+        def path_row(variable, output=False):
+            row = ttk.Frame(form)
+            row.columnconfigure(0, weight=1)
+            entry = ttk.Entry(row, textvariable=variable, width=1)
+            entry.grid(row=0, column=0, sticky="ew")
+            actions = ttk.Frame(row)
+            actions.grid(row=0, column=1, sticky="e", padx=(6, 0))
+            if not output:
+                ttk.Button(actions, text=tr("选择 MD"), command=self.choose_file).pack(side="left", padx=(0, 6))
+            ttk.Button(actions, text=tr("选择文件夹"), command=lambda: self.choose_folder(output)).pack(side="left")
+            stacked = None
+            def reflow(event):
+                nonlocal stacked
+                if event.widget != row:
+                    return
+                narrow = row.winfo_width() < actions.winfo_reqwidth() + 166
+                if narrow == stacked:
+                    return
+                stacked = narrow
+                entry.grid_configure(columnspan=2 if narrow else 1)
+                actions.grid_configure(row=1 if narrow else 0, column=0 if narrow else 1,
+                                       columnspan=2 if narrow else 1, padx=(0, 0) if narrow else (6, 0),
+                                       pady=(4, 0) if narrow else (0, 0))
+            row.bind("<Configure>", reflow, add="+")
+            return row, entry
+        row, self.input_entry = path_row(self.input)
+        form.add(tr("Markdown 文件或文件夹"), row)
+        row, self.output_entry = path_row(self.output, True)
+        form.add(tr("整理稿位置"), row)
+        values = ("前缀 FORMATTED_", "后缀 _FORMATTED")
+        marker = ttk.Combobox(form, textvariable=self.prefix, values=[tr(v) for v in values], state="readonly")
+        marker.localized_choices = values
+        form.add(tr("文件名标记"), marker)
+        percent = ttk.Spinbox(form, textvariable=owner.input_percent, from_=50, to=80, increment=1)
+        form.add(tr("输入上限使用比例（50%–80%）"), percent)
+        ttk.Checkbutton(files, text=tr("整理稿保存在原文件夹"), variable=self.same_folder).grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Checkbutton(files, text=tr("包括子文件夹"), variable=self.recursive).grid(row=2, column=0, sticky="w", pady=4)
+        AdaptiveLabel(files, text=tr("与翻译共用分段比例；同时按整理和核验模型预算规划，完整代码块、公式和表格不拆开。"),
+                      style="Subtitle.TLabel").grid(row=3, column=0, sticky="ew", pady=6)
+        roles = ttk.Notebook(body)
+        roles.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
+        for key, label, fallback in (("formatter", tr("整理模型"), "translator"), ("verifier", tr("核验模型（只校对）"), "proofreader")):
+            tab = ttk.Frame(roles)
+            tab.columnconfigure(0, weight=1)
+            roles.add(tab, text=label)
+            defaults = {}
+            try:
+                defaults = owner.profiles[fallback].config_data()
+                if not defaults.get("model"):
+                    defaults = owner.profiles["translator"].config_data()
+            except ValueError:
+                pass
+            model = ModelControls(tab, label, saved.get(key, defaults), owner.events, owner.fetch, owner.test)
+            model.box.grid(row=0, column=0, sticky="ew")
+            self.models[key] = model
+        hint = tr("核验只返回问题与结论。疑点或核验失败会保留整理稿及 .formatting.json 报告并标记待处理，不自动重新整理或上传。")
+        AdaptiveLabel(body, text=hint, style="Subtitle.TLabel").grid(row=2, column=0, sticky="ew", padx=24, pady=8)
+        ttk.Button(body, text=tr("统一 LLM 服务设置"), command=lambda: self.app.workspace_layout.show_settings(4)).grid(row=3, column=0, sticky="w", padx=24, pady=8)
+        footer = ttk.Frame(self.window, padding=(16, 10))
+        footer.grid(row=2, column=0, sticky="ew")
+        footer.columnconfigure(0, weight=1)
+        AdaptiveLabel(footer, textvariable=self.status, max_lines=2).grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        ttk.Progressbar(footer, variable=self.progress, maximum=100).grid(row=1, column=0, sticky="ew")
+        toolbar = ButtonToolbar(footer, ((tr("扫描 Markdown"), self.scan), (tr("开始整理并核验"), self.start),
+                                        (tr("停止"), self.cancel.set)))
+        toolbar.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        self.scan_button, self.start_button, self.stop_button = toolbar.buttons
+        self.traces = [(var, var.trace_add("write", self.sync_output)) for var in (self.input, self.output, self.same_folder)]
+        self.sync_output()
+        self.window.protocol("WM_DELETE_WINDOW", self.close)
+        self.window.bind("<Destroy>", self.cleanup, add="+")
+        self.pending = self.root.after(100, self.poll)
+        self.buttons()
+        localize_widgets(self.window)
+
+    def sync_output(self, *_):
+        if self.same_folder.get():
+            value = self.input.get().strip()
+            expected = str(Path(value).parent) if value and Path(value).suffix.lower() == ".md" else value
+            if self.output.get() != expected:
+                self.output.set(expected)
+        self.output_entry.configure(state="disabled" if self.same_folder.get() else "normal")
+
+    def choose_file(self):
+        path = filedialog.askopenfilename(parent=self.window, title=tr("选择 Markdown 文件"), filetypes=[("Markdown", "*.md *.MD")])
+        if path:
+            self.input.set(path)
+
+    def choose_folder(self, output=False):
+        if output and self.same_folder.get():
+            if not messagebox.askyesno(tr("修改整理稿位置"), tr("已选择与原文件同目录，是否改用指定输出文件夹？"), parent=self.window):
+                return
+        path = filedialog.askdirectory(parent=self.window, title=tr("选择文件夹"))
+        if path:
+            if output:
+                self.same_folder.set(False)
+            (self.output if output else self.input).set(path)
+
+    def config_data(self):
+        return {"input": self.input.get(), "output": self.output.get(), "same_folder": self.same_folder.get(),
+                "recursive": self.recursive.get(), "filename_position": self.prefix.get(),
+                **{key: model.config_data() for key, model in self.models.items()}}
+
+    def paths(self):
+        from literature_processing import find_formatting_files
+        if not self.input.get().strip():
+            raise ValueError(tr("请选择有效的 Markdown 文件或文件夹。"))
+        source = Path(self.input.get()).expanduser().resolve()
+        output = None
+        if not self.same_folder.get():
+            if not self.output.get().strip():
+                raise ValueError(tr("请选择整理稿输出文件夹。"))
+            output = Path(self.output.get()).expanduser().resolve()
+            if output.exists() and not output.is_dir():
+                raise ValueError(tr("请选择整理稿输出文件夹。"))
+        if source.is_file() and source.suffix.lower() == ".md":
+            return source.parent, [source], output
+        if source.is_dir():
+            return source, find_formatting_files(source, self.recursive.get(), output), output
+        raise ValueError(tr("请选择有效的 Markdown 文件或文件夹。"))
+
+    def scan(self):
+        try:
+            _, paths, _ = self.paths()
+            self.status.set(tr("发现 {arg0} 个可整理 Markdown；原文和译文均可，跳过已有整理稿。", arg0=len(paths)))
+        except Exception as exc:
+            self.status.set(tr("扫描失败：{arg0}", arg0=exc))
+
+    def start(self):
+        from literature_processing import formatted_path, format_markdown_document
+        if self.owner.busy() or (self.app.worker_thread and self.app.worker_thread.is_alive()):
+            messagebox.showwarning(tr("正在运行"), tr("请等待 OCR、翻译或整理任务结束。"), parent=self.window)
+            return
+        try:
+            root, paths, output = self.paths()
+            if not paths:
+                raise ValueError(tr("没有发现待整理的 Markdown。"))
+            models = {key: model.profile() for key, model in self.models.items()}
+            for profile in models.values():
+                profile.validate()
+            percent, prefix = self.owner.chunk_percent(), self.prefix.get().startswith("前缀")
+            self.app.save_current_config()
+        except Exception as exc:
+            messagebox.showerror(tr("无法开始整理"), str(exc), parent=self.window)
+            return
+        self.cancel.clear()
+        self.app.stop_requested = False
+        self.busy = True
+        self.progress.set(0)
+        self.buttons()
+        self.app.start_btn.configure(state="disabled")
+        self.owner.start_button.configure(state="disabled")
+        self.status.set(tr("整理与核验已开始；本次设置已固定。"))
+        def worker():
+            counts = {"verified": 0, "needs_review": 0, "existing": 0, "failed": 0}
+            stopped = False
+            try:
+                for index, path in enumerate(paths, 1):
+                    if self.cancel.is_set():
+                        stopped = True
+                        break
+                    try:
+                        self.events.put(("status", tr("正在整理 {arg0}/{arg1}：{arg2}", arg0=index, arg1=len(paths), arg2=path.name)))
+                        destination = formatted_path(path, root, output, prefix)
+                        result = self.owner.run_with_issue_dialog(path,
+                            lambda: format_markdown_document(path, destination, **models, input_percent=percent,
+                                stop=self.cancel.is_set, log=self.owner.log,
+                                decide=lambda payload: self.owner.decide(payload, self.cancel.is_set)), self.cancel.is_set)
+                        counts[result["status"]] += 1
+                        label = {"verified": tr("整理核验通过"), "needs_review": tr("整理稿待核验处理"), "existing": tr("整理稿已存在，跳过")}[result["status"]]
+                        self.owner.log(tr("{arg0}：{arg1}", arg0=path.name, arg1=label))
+                    except ProcessingCancelled:
+                        stopped = True
+                        break
+                    except Exception as exc:
+                        counts["failed"] += 1
+                        self.owner.log(tr("整理失败，原文已保留：{arg0}；{arg1}", arg0=path.name, arg1=exc))
+                    self.events.put(("progress", 100 * index / len(paths)))
+            finally:
+                self.events.put(("done", (counts, stopped)))
+        self.thread = threading.Thread(target=worker, daemon=True)
+        self.thread.start()
+
+    def buttons(self):
+        for button in (self.scan_button, self.start_button):
+            button.configure(state="disabled" if self.busy else "normal")
+        self.stop_button.configure(state="normal" if self.busy else "disabled")
+
+    def poll(self):
+        self.pending = None
+        try:
+            while True:
+                kind, value = self.events.get_nowait()
+                if kind == "status":
+                    self.status.set(value)
+                    self.app.status_var.set(value)
+                elif kind == "progress":
+                    self.progress.set(value)
+                elif kind == "done":
+                    self.busy = False
+                    counts, stopped = value
+                    message = tr("整理完成：通过 {arg0}，待处理 {arg1}，已有 {arg2}，失败 {arg3}。",
+                                 arg0=counts["verified"], arg1=counts["needs_review"], arg2=counts["existing"], arg3=counts["failed"])
+                    if stopped:
+                        message = tr("已停止。") + " " + message
+                    self.status.set(message)
+                    self.app.status_var.set(message)
+                    self.owner.log(message)
+                    self.app.start_btn.configure(state="normal")
+                    self.owner.start_button.configure(state="normal")
+        except queue.Empty:
+            pass
+        self.buttons()
+        if not self.closed:
+            self.pending = self.root.after(100, self.poll)
+
+    def close(self):
+        try:
+            self.app.save_current_config()
+        except Exception as exc:
+            self.status.set(tr("无法保存整理设置：{arg0}", arg0=exc))
+            return
+        self.window.withdraw()
+
+    def cleanup(self, event):
+        if event.widget != self.window:
+            return
+        self.closed = True
+        self.cancel.set()
+        if self.pending:
+            self.root.after_cancel(self.pending)
+        for variable, token in self.traces:
+            variable.trace_remove("write", token)
