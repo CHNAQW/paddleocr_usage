@@ -138,6 +138,20 @@ class InterfaceResponsivenessTests(unittest.TestCase):
         finally:
             release.set()
 
+    def test_ocr_preparation_blocks_conflicting_translation_and_manual_review(self):
+        self.app.background_jobs['pdf_prepare'] = object()
+        self.assertTrue(self.c.busy())
+        self.app.llm_api_key_var.set('fixture-key')
+        self.app.llm_model_var.set('fixture-model')
+        with patch.object(application.messagebox, 'showwarning') as notice, \
+                patch.object(self.app, '_choose_markdown_files') as choose:
+            self.c.start()
+            self.app.manual_llm_check()
+            choose.assert_not_called()
+            self.assertEqual(notice.call_count, 2)
+        self.assertIsNone(self.c.thread)
+        self.app.background_jobs.clear()
+
     def test_force_automatic_settings_are_shared_saved_bilingual_and_snapshotted(self):
         self.c.force_auto.set(True)
         self.assertTrue(self.c.proofreading.get())
@@ -175,6 +189,11 @@ class InterfaceResponsivenessTests(unittest.TestCase):
             self.app.log(str(index)+'\nline\nline')
         self.assertLessEqual(len(self.app.log_history), 1000)
         self.assertLessEqual(int(self.app.log_text.index('end-1c').split('.')[0]), 2001)
+        for _ in range(30):
+            self.app.log(huge)
+        self.assertLessEqual(len(self.app.log_text.get('1.0','end-1c')), 250000)
+        self.app.refresh_log_language()
+        self.assertLessEqual(len(self.app.log_text.get('1.0','end-1c')), 250000)
         self.heartbeat()
 
     def test_github_table_inserts_in_batches_and_allows_interleaved_events(self):

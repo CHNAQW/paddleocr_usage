@@ -269,7 +269,8 @@ class LiteratureControls:
 
     def busy(self):
         manual = getattr(self.app, "manual_check_thread", None)
-        return bool(self.thread and self.thread.is_alive()) or bool(manual and manual.is_alive()) or bool(getattr(self, "formatting", None) and self.formatting.busy)
+        preparing_ocr = "pdf_prepare" in getattr(self.app, "background_jobs", {})
+        return preparing_ocr or bool(self.thread and self.thread.is_alive()) or bool(manual and manual.is_alive()) or bool(getattr(self, "formatting", None) and self.formatting.busy)
 
     def open_formatting(self):
         if self.formatting is None:

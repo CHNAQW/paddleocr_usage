@@ -2191,6 +2191,9 @@ class PaddleOCRBatchGUI:
         if self.manual_check_thread and self.manual_check_thread.is_alive():
             messagebox.showwarning(tr('正在检验'), tr('已有手动 LLM 检验正在运行。'), parent=self.root)
             return
+        if self.literature.busy() or (self.worker_thread and self.worker_thread.is_alive()):
+            messagebox.showwarning(tr('正在运行'), tr('请等待当前 OCR / 翻译任务完成。'), parent=self.root)
+            return
         paths = self._choose_markdown_files(tr('选择要手动进行 LLM 检验的 Markdown'))
         if not paths:
             return
@@ -2833,8 +2836,17 @@ class PaddleOCRBatchGUI:
             if len(display) > 16000:
                 display = display[:16000] + "\n" + str(tr("日志过长，界面已截短；复制日志可查看保留的完整消息。"))
             self.log_text.insert("end", display + "\n", (self._log_message_tag(display),))
+        self._trim_log_display()
         self.log_text.configure(state="disabled")
         self.log_text.see("end")
+
+    def _trim_log_display(self):
+        lines = int(self.log_text.index("end-1c").split(".")[0])
+        if lines > 2000:
+            self.log_text.delete("1.0", f"{lines - 2000}.0")
+        characters = self.log_text.count("1.0", "end-1c", "chars")
+        if characters and characters[0] > 250000:
+            self.log_text.delete("1.0", "end-250001c")
 
     def log(self, message: str) -> None:
         ts = datetime.now().strftime("%H:%M:%S")
@@ -2852,9 +2864,7 @@ class PaddleOCRBatchGUI:
         self.log_text.configure(state="normal")
         self.log_text.insert("end", f"[{ts}] ", ("timestamp",))
         self.log_text.insert("end", f"{message}\n", (tag,))
-        lines = int(self.log_text.index("end-1c").split(".")[0])
-        if lines > 2000:
-            self.log_text.delete("1.0", f"{lines - 2000}.0")
+        self._trim_log_display()
         self.log_text.configure(state="disabled")
         self.log_text.see("end")
 

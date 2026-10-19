@@ -445,8 +445,8 @@ PDF／Markdown 扫描、整理扫描、字数检查和更新助手启动放到�
 Stopping LLM requests or OCR status queries releases the waiting task promptly; the underlying network call may finish later within its own socket timeout, and its late result is ignored. Outstanding calls are bounded. Already submitted OCR jobs and GitHub writes cannot be withdrawn by closing the UI.  
 停止 LLM 请求或 OCR 状态查询时，等待任务会及时退出；底层网络请求可能在自己的超时范围内稍后结束，迟到结果不再用于当前任务，并限制未结束请求数量。关闭界面不会撤回已经提交的 OCR 任务或 GitHub 写入。
 
-The log view retains up to about 2,000 lines. In-memory history retains up to 1,000 messages with a size limit; a long entry is shortened on screen while its retained full text remains available through Copy log. Old history is discarded to prevent growing memory and rendering costs. Document reports retain their own review records.  
-日志界面保留约 2,000 行；内存历史最多 1,000 条并限制总大小。超长单条在界面截短，仍可通过复制日志读取保留的完整消息；过旧历史会移除，避免内存和绘制成本持续增长。文献报告另行保留核验记录。
+The log view retains up to about 2,000 lines and 250,000 characters. In-memory history retains up to 1,000 messages with a size limit; a long entry is shortened on screen while its retained full text remains available through Copy log. Old history is discarded to prevent growing memory and rendering costs. Document reports retain their own review records.  
+日志界面保留约 2,000 行、250,000 字符；内存历史最多 1,000 条并限制总大小。超长单条在界面截短，仍可通过复制日志读取保留的完整消息；过旧历史会移除，避免内存和绘制成本持续增长。文献报告另行保留核验记录。
 
 ### Chinese / English Interface   汉英界面切换
 
@@ -933,8 +933,8 @@ Enable **Text proofreading** independently or after secondary review, and config
 
 ### Resolve Issues Without Losing Drafts   问题弹窗与稿件选择
 
-Unresolved translation or formatting findings show a dialog with the concrete problem, source, available drafts and full report. Choose **Keep first draft**, **Discard and retry previous step**, or **Keep second draft**. The second-draft action and tab appear only when a second translation actually exists; Markdown formatting never generates a second candidate. If generation failed before any draft exists, choose **Skip this file** or retry.  
-翻译或整理仍有未解决的问题时，弹窗显示具体原因、原文、已有稿件及完整报告，可选 **保留第一稿／删除并重试上一步／保留第二稿**。只有确有第二份译文时才显示第二稿按钮与标签；Markdown 整理不会生成第二候选稿。生成阶段失败、尚无稿件时，提供 **跳过此文件** 或重试。
+In manual mode, unresolved translation or formatting findings show a dialog with the concrete problem, source, available drafts and full report. Choose **Keep first draft**, **Discard and retry previous step**, or **Keep second draft**. The second-draft action and tab appear only when a second translation actually exists; Markdown formatting never generates a second candidate. If generation failed before any draft exists, choose **Skip this file** or retry.  
+未启用强制全自动时，翻译或整理仍有未解决的问题会弹窗显示具体原因、原文、已有稿件及完整报告，可选 **保留第一稿／删除并重试上一步／保留第二稿**。只有确有第二份译文时才显示第二稿按钮与标签；Markdown 整理不会生成第二候选稿。生成阶段失败、尚无稿件时，提供 **跳过此文件** 或重试。
 
 Retry discards the current in-memory generated drafts and reruns only the current chunk or failed file. Original Markdown/PDF files and already completed chunks/files are retained; retries require an explicit click. Kept drafts with unresolved findings remain `needs_review` and cannot auto-upload. Closing the dialog also leaves an existing draft pending. Stopping ends the LLM wait promptly and cancels the remaining work; the remote request may still finish.  
 重试会丢弃本次尚未落盘的生成稿，仅重做当前分段或失败文件；不删除原 Markdown／PDF，也不重做已完成的分段或文件，只有用户明确点击才重试。保留仍有疑点的稿件会继续标记 `needs_review`，不会自动上传；关闭问题窗口也会让已有稿件保持待处理。停止会尽快结束 LLM 等待并取消后续处理；远端请求仍可能完成。
