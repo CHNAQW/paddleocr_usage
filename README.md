@@ -1347,8 +1347,8 @@ If the current build is interrupted during its first extraction, close the appli
 
 ### Source Updates Report an Invalid Path   源码更新提示“路径的形式不合法”
 
-If the installation log reports an exception calling `Replace` with three arguments, the Windows helper has started but failed while replacing an existing `active-source.json` record. Windows PowerShell can convert its null backup argument to an empty string. Version **26.10.19.07** supplies a real, unique backup path to `File.Replace`, replacing the record and saving its previous bytes atomically. Startup failure restores that backup; first-time activation still uses `Move`. Exception details and the script location are recorded in the log.  
-若安装日志出现“使用‘3’个参数调用‘Replace’时发生异常：路径的形式不合法”，说明助手已启动，但替换已有 `active-source.json` 时失败。Windows PowerShell 会将原来的空备份参数转换为空字符串。**26.10.19.07** 改用真实且独立的备份路径，让 `File.Replace` 原子替换并保存旧记录；启动失败时恢复备份，首次激活仍使用 `Move`。日志增加完整异常及脚本位置。
+If the installation log reports an exception calling `Replace` with three arguments, the Windows helper has started but failed while replacing an existing `active-source.json` record. Windows PowerShell can convert its null backup argument to an empty string. Version **26.10.19.07** supplies a real, unique backup path to `File.Replace`, replacing the record and saving its previous bytes atomically. Startup failure restores that backup; first-time activation still uses `Move`. File hashes are computed with .NET SHA-256 without depending on PowerShell module autoloading. Exception details and the script location are recorded in the log.  
+若安装日志出现“使用‘3’个参数调用‘Replace’时发生异常：路径的形式不合法”，说明助手已启动，但替换已有 `active-source.json` 时失败。Windows PowerShell 会将原来的空备份参数转换为空字符串。**26.10.19.07** 改用真实且独立的备份路径，让 `File.Replace` 原子替换并保存旧记录；启动失败时恢复备份，首次激活仍使用 `Move`。文件哈希改用 .NET SHA-256，避免依赖 PowerShell 模块自动加载；日志增加完整异常及脚本位置。
 
 The old program still runs its old helper when importing a newer source ZIP. If it has this failure, use this one-time recovery before importing **26.10.19.07 or later**:  
 旧程序导入新版源码 ZIP 时运行的仍是旧助手。已遇到此错误时，导入 **26.10.19.07 或更高版本** 前可进行以下一次性恢复：
