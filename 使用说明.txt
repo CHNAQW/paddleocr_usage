@@ -1,4 +1,5 @@
-文献处理软件 26.10.19.07
+文献处理软件 26.10.19.08
+本次仅递增版本，用于测试 .07 → .08 连续源码更新；测试时保留已有 active-source.json，正常导入更新包。
 
 启动
 1. 完整解压源码，保留十四个 Python 模块及 update_helper.ps1、requirements.txt 与图标。
@@ -105,10 +106,10 @@ PaddleOCR 的服务／模型／Token 与 GitHub 上传 Token 独立。
 
 构建 Windows EXE
 双击 build_paddleocr_pdf_to_md_EXE.bat，需 Python 3.9–3.13。
-输出：PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.19.07.exe
+输出：PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.19.08.exe
 校验：同目录下的 .exe.sha256.txt。
-固定运行缓存：%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.19.07
-界面与文件名版本：26.10.19.07；Windows 数字文件/产品版本：26.10.19.7。
+固定运行缓存：%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.19.08
+界面与文件名版本：26.10.19.08；Windows 数字文件/产品版本：26.10.19.8。
 版本更新不代表 EXE 已编译发布；不要关闭安全防护或添加排除项。
 
 详细操作、限制、费用、隐私和使用条件请阅读 README.md 与 License。
