@@ -477,10 +477,10 @@ class DesktopLayoutTests(unittest.TestCase):
         self.root.update()
         self.assertEqual(self.app.notebook.index(self.app.notebook.select()), 0)
 
-    def test_both_entries_and_default_translation_settings(self):
+    def test_three_entries_and_default_translation_settings(self):
         tabs = self.app.notebook.tabs()
         self.assertEqual([self.app.notebook.tab(tab, "text") for tab in tabs],
-                         ["PDF OCR 转 MD功能", "外文文献翻译功能"])
+                         ["PDF OCR 转 MD功能", "外文文献翻译功能", "GitHub 文档上传"])
         self.app.notebook.select(1)
         self.root.update()
         self.assertIn("文献处理软件", self.root.title())

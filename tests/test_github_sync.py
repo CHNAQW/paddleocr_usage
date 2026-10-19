@@ -179,17 +179,18 @@ class ManualUploadTests(unittest.TestCase):
         upload.assert_not_called()
         self.assertEqual(self.panel.candidates[0].status, 'failed')
 
-    def test_bilingual_small_dialog_and_sidebar_follow_font_metrics(self):
+    def test_bilingual_small_workspace_and_sidebar_follow_font_metrics(self):
         self.stage()
-        self.panel.window.geometry('480x420')
+        self.root.geometry('540x420')
         for locale, label in (('en', 'Scan missing documents'), ('zh', '扫描缺失文档')):
             self.app.change_ui_language(locale); self.root.update()
             self.assertEqual(self.panel.scan_button.cget('text'), label)
-            self.assertTrue(self.panel.upload_button.winfo_ismapped())
+            self.assertTrue(self.app.workspace_layout.github_upload.winfo_ismapped())
             self.assertEqual(len(self.panel.candidates), 2)
-            self.assertGreaterEqual(self.panel.tree.winfo_height(), 80)
-            self.assertLessEqual(self.panel.upload_button.winfo_rooty() + self.panel.upload_button.winfo_height(),
-                                 self.panel.window.winfo_rooty() + self.panel.window.winfo_height())
+            self.assertGreaterEqual(self.panel.tree.winfo_reqheight(), 80)
+            button = self.app.workspace_layout.github_upload
+            self.assertLessEqual(button.winfo_rooty() + button.winfo_height(),
+                                 self.root.winfo_rooty() + self.root.winfo_height())
         self.root.geometry('1100x780'); self.root.update()
         rail = self.app.workspace_layout
         self.assertEqual(rail.rail.winfo_width(), rail.rail_width)

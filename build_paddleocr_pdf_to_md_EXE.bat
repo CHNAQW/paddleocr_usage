@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal EnableExtensions
 
 REM ============================================================
-REM 文献处理软件 26.10.19.05 EXE 打包器
+REM 文献处理软件 26.10.19.06 EXE 打包器
 REM 使用 Nuitka 原生编译为单个、无压缩 EXE，不要求代码签名证书。
 REM ============================================================
 
@@ -17,14 +17,14 @@ set "VENV=%ROOT%.venv-nuitka-2.7.12"
 set "PYTHON=%VENV%\Scripts\python.exe"
 set "OUTDIR=%ROOT%PaddleOCR_PDF_to_MD_EXE"
 set "WORKDIR=%ROOT%build\nuitka"
-set "EXE_NAME=PaddleOCR_PDF_to_MD_26.10.19.05.exe"
+set "EXE_NAME=PaddleOCR_PDF_to_MD_26.10.19.06.exe"
 set "EXE_PATH=%OUTDIR%\%EXE_NAME%"
 set "HASH_PATH=%OUTDIR%\%EXE_NAME%.sha256.txt"
 
 pushd "%ROOT%" >nul 2>nul
 
 echo ============================================================
-echo 文献处理软件 26.10.19.05 EXE 打包器
+echo 文献处理软件 26.10.19.06 EXE 打包器
 echo 输出形式：可直接对外发布的单个 EXE
 echo 当前目录：%ROOT%
 echo ============================================================
@@ -113,7 +113,7 @@ echo [提示] 首次打包会自动下载并缓存 MinGW64，无需安装 Visual
 "%PYTHON%" -m nuitka ^
   --mode=onefile ^
   --onefile-no-compression ^
-  --onefile-tempdir-spec="{CACHE_DIR}/PaddleOCR/PDFToMarkdown/26.10.19.05" ^
+  --onefile-tempdir-spec="{CACHE_DIR}/PaddleOCR/PDFToMarkdown/26.10.19.06" ^
   --mingw64 ^
   --assume-yes-for-downloads ^
   --lto=yes ^
@@ -127,8 +127,8 @@ echo [提示] 首次打包会自动下载并缓存 MinGW64，无需安装 Visual
   --company-name="文献处理软件" ^
   --product-name="文献处理软件" ^
   --file-description="文献处理软件" ^
-  --file-version=26.10.19.5 ^
-  --product-version=26.10.19.5 ^
+  --file-version=26.10.19.6 ^
+  --product-version=26.10.19.6 ^
   --output-dir="%WORKDIR%" ^
   --output-filename="%EXE_NAME%" ^
   --remove-output ^

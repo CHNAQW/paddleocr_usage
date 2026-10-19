@@ -12,7 +12,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from ui_i18n import ChoiceVar, LocalizedVar, copy_text, filedialog, localize_widgets, messagebox, tr, ui_text
-from responsive_ui import AdaptiveLabel, ResponsiveForm
+from responsive_ui import AdaptiveCheckbutton, AdaptiveLabel, ButtonToolbar, ResponsiveForm
 from model_budget import DEFAULT_CONTEXT_LIMIT, ModelLimits, positive_integer
 
 from literature_processing import (
@@ -39,12 +39,9 @@ def scrollable_page(notebook, title):
     window = canvas.create_window((0, 0), window=content, anchor="nw")
 
     def resize(_event=None):
-        canvas.itemconfigure(window, width=max(canvas.winfo_width(), content.winfo_reqwidth()))
+        canvas.itemconfigure(window, width=max(1, canvas.winfo_width()))
         canvas.configure(scrollregion=canvas.bbox("all"))
-        if content.winfo_reqwidth() > canvas.winfo_width():
-            horizontal.grid()
-        else:
-            horizontal.grid_remove()
+        horizontal.grid_remove()
     content.bind("<Configure>", resize)
     canvas.bind("<Configure>", resize)
 
@@ -99,14 +96,13 @@ class ModelControls:
         self.limit_entry = ttk.Entry(self.form, textvariable=self.limit_value)
         self.form.add(tr("输入上限（tokens）"), self.limit_entry)
         self.limit_status = LocalizedVar(master=self.box)
-        actions = ttk.Frame(self.box, style="Paper.TFrame")
-        actions.grid(row=1, column=0, sticky="w", pady=8)
-        ttk.Button(actions, text=tr('拉取模型'), command=lambda: self.request(False)).pack(side="left", padx=3)
-        ttk.Button(actions, text=tr('测试接口'), command=lambda: self.request(True)).pack(side="left", padx=3)
+        actions = ButtonToolbar(self.box, ((tr('拉取模型'), lambda: self.request(False)),
+                                           (tr('测试接口'), lambda: self.request(True))))
+        actions.grid(row=1, column=0, sticky="ew", pady=8)
         AdaptiveLabel(self.box, text=tr('兼容 /chat/completions；不支持 /models 的服务可手填模型或接入点 ID。'),
                       style="Hint.TLabel").grid(row=2, column=0, sticky="ew", pady=4)
-        ttk.Checkbutton(self.box, text=tr("手动设置输入上限"), variable=self.manual_limit,
-                        command=self.refresh_limits).grid(row=3, column=0, sticky="w")
+        AdaptiveCheckbutton(self.box, text=tr("手动设置输入上限"), variable=self.manual_limit,
+                        command=self.refresh_limits).grid(row=3, column=0, sticky="ew")
         AdaptiveLabel(self.box, textvariable=self.limit_status, style="Hint.TLabel").grid(row=4, column=0, sticky="ew", pady=4)
         for variable in (self.url, self.model):
             variable.trace_add("write", self.identity_changed)
@@ -199,6 +195,7 @@ class LiteratureControls:
         self.secondary = tk.BooleanVar(value=saved.get("secondary", False))
         self.proofreading = tk.BooleanVar(value=saved.get("proofreading", False))
         self.arbitration = ChoiceVar(value=saved.get("arbitration", "用户自行裁决"))
+        self.allow_arbiter_revision = tk.BooleanVar(value=saved.get("allow_arbiter_revision", False))
         self.input_percent = tk.StringVar(value=str(saved.get("input_percent", 50)))
         self.upload = tk.BooleanVar(value=saved.get("upload", False))
         self.upload_kind = ChoiceVar(value=saved.get("upload_kind", "同时上传"))
@@ -240,9 +237,11 @@ class LiteratureControls:
                 "same_folder": self.same_folder.get(), "recursive": self.recursive.get(), "filename_position": self.prefix.get(),
                 "source": self.source.get(), "target": self.target.get(), "secondary": self.secondary.get(),
                 "proofreading": self.proofreading.get(), "arbitration": self.arbitration.get(), "upload": self.upload.get(),
+                "allow_arbiter_revision": self.allow_arbiter_revision.get(),
                 "repository": self.repository.get(), "branch": self.branch.get(), "folder": self.folder.get(),
                 "upload_kind": self.upload_kind.get(), "upload_root": self.upload_root.get()}
         data["input_percent"] = self.chunk_percent()
+        data["updates"] = self.app.updates.config_data()
         data["formatting"] = self.formatting.config_data() if self.formatting else self.formatting_saved
         data["llm_service"] = {"enabled": self.shared_llm.get(), "base_url": self.shared_url.get(), "api_key": self.shared_key.get()}
         data.update({key: value.config_data() for key, value in self.profiles.items()})
@@ -337,7 +336,8 @@ class LiteratureControls:
         if translating and not self.same_folder.get() and not self.output.get().strip():
             raise ValueError(tr('请选择译文输出文件夹，或勾选输出到原文文件夹。'))
         return {"profiles": profiles, "options": TranslationOptions(self.target.get().strip(), self.source.get().strip() or "自动检测",
-                    self.secondary.get(), self.proofreading.get(), self.arbitration.get(), self.chunk_percent()),
+                    self.secondary.get(), self.proofreading.get(), self.arbitration.get(), self.chunk_percent(),
+                    allow_arbiter_revision=self.allow_arbiter_revision.get()),
                 "output": None if self.same_folder.get() else Path(self.output.get()).expanduser().resolve(),
                 "prefix": self.prefix.get().startswith("前缀"), "github": github,
                 "auto_translate": self.auto_translate.get(), "upload_kind": self.upload_kind.get()}
@@ -527,7 +527,7 @@ class LiteratureControls:
                 return [item for child in value for item in reasons(child)]
             if isinstance(value, dict):
                 return [item for key in ("contentIssues", "issues", "reviewError", "checkError", "reason", "summary",
-                                        "review", "comparison", "proofreading", "arbitration")
+                                        "review", "comparison", "proofreading", "arbitration", "revision", "verification", "error")
                         if key in value for item in reasons(value[key])]
             return []
         summary = "\n".join(dict.fromkeys(reasons(problem))) or details
@@ -712,8 +712,8 @@ class MarkdownFormatting:
         form.add(tr("文件名标记"), marker)
         percent = ttk.Spinbox(form, textvariable=owner.input_percent, from_=50, to=80, increment=1)
         form.add(tr("输入上限使用比例（50%–80%）"), percent)
-        ttk.Checkbutton(files, text=tr("整理稿保存在原文件夹"), variable=self.same_folder).grid(row=1, column=0, sticky="w", pady=4)
-        ttk.Checkbutton(files, text=tr("包括子文件夹"), variable=self.recursive).grid(row=2, column=0, sticky="w", pady=4)
+        AdaptiveCheckbutton(files, text=tr("整理稿保存在原文件夹"), variable=self.same_folder).grid(row=1, column=0, sticky="ew", pady=4)
+        AdaptiveCheckbutton(files, text=tr("包括子文件夹"), variable=self.recursive).grid(row=2, column=0, sticky="ew", pady=4)
         AdaptiveLabel(files, text=tr("与翻译共用分段比例；同时按整理和核验模型预算规划，完整代码块、公式和表格不拆开。"),
                       style="Subtitle.TLabel").grid(row=3, column=0, sticky="ew", pady=6)
         roles = ttk.Notebook(body)

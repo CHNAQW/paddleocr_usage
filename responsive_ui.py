@@ -43,6 +43,66 @@ class ButtonToolbar(ttk.Frame):
             self.pending = None
 
 
+class AdaptiveCheckbutton(ttk.Checkbutton):
+    """Wrap the complete option caption while retaining native checkbox behavior."""
+    def __init__(self, parent, *, text="", **kwargs):
+        self.source = LocalizedVar(master=parent, value=text)
+        self.display = tk.StringVar(master=parent, value=str(text))
+        super().__init__(parent, textvariable=self.display, **kwargs)
+        self.scheduler, self.pending = self._root(), None
+        self.trace = self.source.trace_add("write", self.schedule)
+        self.bind("<Configure>", self.schedule, add="+")
+        self.bind("<Destroy>", self.cleanup, add="+")
+
+    def cget(self, key):
+        return self.source.get() if key == "text" else super().cget(key)
+
+    def configure(self, cnf=None, **kwargs):
+        if "text" in kwargs:
+            self.source.set(kwargs.pop("text"))
+        return super().configure(cnf, **kwargs)
+
+    config = configure
+
+    def schedule(self, *_):
+        if self.pending is None:
+            self.pending = self.scheduler.after_idle(self.refresh)
+
+    def refresh(self):
+        self.pending = None
+        if self.winfo_width() <= 1:
+            return
+        font = tkfont.Font(root=self, font=ttk.Style(self).lookup(self.cget("style") or "TCheckbutton", "font") or "TkDefaultFont")
+        width = max(40, self.winfo_width() - 32)
+        lines, line = [], ""
+        for token in re.findall(r"\n|[^\S\n]+|[^\s]+", self.source.get()):
+            if token == "\n":
+                lines.append(line.rstrip())
+                line = ""
+                continue
+            if line and font.measure(line + token) > width:
+                lines.append(line.rstrip())
+                line = ""
+                token = token.lstrip()
+            for char in token:
+                if line and font.measure(line + char) > width:
+                    lines.append(line.rstrip())
+                    line = ""
+                line += char
+        lines.append(line.rstrip())
+        caption = "\n".join(lines)
+        if self.display.get() != caption:
+            self.display.set(caption)
+
+    def cleanup(self, _event=None):
+        if self.pending is not None:
+            self.scheduler.after_cancel(self.pending)
+            self.pending = None
+        if self.trace is not None:
+            self.source.trace_remove("write", self.trace)
+            self.trace = None
+
+
 class AdaptiveLabel(ttk.Label):
     def __init__(self, parent, *, text="", textvariable=None, max_lines=None, **kwargs):
         self.source = textvariable if textvariable is not None else LocalizedVar(master=parent, value=text)
@@ -186,3 +246,44 @@ class ResponsiveForm(ttk.Frame):
         for variable, callback in self.traces:
             self.tk.call("trace", "remove", "variable", variable, "write", callback)
         self.traces.clear()
+
+
+class NotebookSelector(ttk.Combobox):
+    """Offer every section when the notebook's tab captions no longer fit."""
+    def __init__(self, parent, notebook):
+        super().__init__(parent, state="readonly", width=1)
+        self.notebook = notebook
+        self.scheduler, self.pending = self._root(), None
+        self.bind("<<ComboboxSelected>>", self.select_section)
+        self.bind("<Destroy>", self.cleanup, add="+")
+        notebook.bind("<Configure>", self.schedule, add="+")
+        notebook.bind("<<NotebookTabChanged>>", self.schedule, add="+")
+        self.schedule()
+
+    def select_section(self, _event=None):
+        if self.current() >= 0:
+            self.notebook.select(self.current())
+
+    def schedule(self, *_):
+        if self.pending is None:
+            self.pending = self.scheduler.after_idle(self.refresh)
+
+    def refresh(self):
+        self.pending = None
+        titles = [self.notebook.tab(tab, "text") for tab in self.notebook.tabs()]
+        if not titles:
+            return
+        self.configure(values=titles)
+        self.current(self.notebook.index(self.notebook.select()))
+        font = tkfont.Font(root=self, font=ttk.Style(self).lookup("TNotebook.Tab", "font") or "TkDefaultFont")
+        compact = sum(font.measure(title) + 26 for title in titles) + 12 > self.notebook.winfo_width()
+        self.notebook.configure(style="Workspace.TNotebook" if compact else "TNotebook")
+        if compact:
+            self.grid()
+        else:
+            self.grid_remove()
+
+    def cleanup(self, _event=None):
+        if self.pending is not None:
+            self.scheduler.after_cancel(self.pending)
+            self.pending = None

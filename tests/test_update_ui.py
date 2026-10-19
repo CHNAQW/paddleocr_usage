@@ -33,7 +33,7 @@ class UpdatePanelTests(unittest.TestCase):
         self.exe.write_bytes(pe_payload())
         new = self.folder / "new.exe"
         new.write_bytes(pe_payload())
-        self.zip = updates.build_package(new, "26.10.19.06", self.folder)
+        self.zip = updates.build_package(new, "26.10.19.07", self.folder)
         self.root.update()
 
     def tearDown(self):
@@ -61,7 +61,7 @@ class UpdatePanelTests(unittest.TestCase):
                 self.root.update()
                 time.sleep(.01)
         self.assertIsNotNone(self.panel.staged)
-        self.assertIn("26.10.19.06", self.panel.details.get())
+        self.assertIn("26.10.19.07", self.panel.details.get())
         self.assertEqual(str(self.panel.install_button.cget("state")), "disabled")
         self.assertTrue(self.zip.is_file())
 
@@ -122,7 +122,7 @@ class UpdatePanelTests(unittest.TestCase):
         self.assertIsNone(self.panel.thread)
 
     def test_explicit_online_check_never_downloads_or_installs_and_uses_selected_channel(self):
-        offer = updates.OnlineUpdate("26.10.19.06", "https://github.com/update.zip", "Changes", "https://github.com/release")
+        offer = updates.OnlineUpdate("26.10.19.07", "https://github.com/update.zip", "Changes", "https://github.com/release")
         self.panel.channel.set("最新代码（main）")
         with patch.object(update_ui, "check_github_update", return_value=offer) as check, \
                 patch.object(update_ui, "download_github_update") as download, patch.object(update_ui, "launch_install") as install:
@@ -135,7 +135,7 @@ class UpdatePanelTests(unittest.TestCase):
         self.assertEqual(str(self.panel.download_button.cget("state")), "normal")
 
     def test_online_download_reuses_package_validation_and_waits_for_install_confirmation(self):
-        offer = updates.OnlineUpdate("26.10.19.06", "https://github.com/update.zip", "", "")
+        offer = updates.OnlineUpdate("26.10.19.07", "https://github.com/update.zip", "", "")
         self.panel.online = offer
         self.panel.executable = self.exe
         def download(*args, **kwargs):
@@ -161,6 +161,111 @@ class UpdatePanelTests(unittest.TestCase):
         self.panel.reset_online()
         self.assertIsNone(self.panel.online)
         self.assertEqual(str(self.panel.download_button.cget("state")), "disabled")
+
+    def start_automatic_now(self):
+        self.panel.cancel_automatic_timer()
+        self.panel.run_automatic()
+
+    def test_automatic_checks_are_opt_in_and_preferences_persist(self):
+        self.assertFalse(self.panel.automatic.get())
+        self.assertIsNone(self.panel.auto_timer)
+        with patch.object(update_ui, "check_github_update") as check:
+            self.start_automatic_now()
+        check.assert_not_called()
+        self.panel.channel.set("最新代码（main）")
+        self.panel.automatic.set(True)
+        self.assertIsNotNone(self.panel.auto_timer)
+        self.assertEqual(self.app.literature.config_data()["updates"], {"automatic": True, "channel": "main"})
+        self.panel.automatic.set(False)
+        self.assertIsNone(self.panel.auto_timer)
+
+    def test_saved_auto_channel_is_restored_and_old_configs_remain_off(self):
+        from tkinter import ttk
+        for saved, enabled, channel in (({}, False, "release"), ({"automatic": "false"}, False, "release"),
+                                        ({"automatic": True, "channel": "main"}, True, "main")):
+            with self.subTest(saved=saved):
+                app = Mock(root=self.root, config=Mock(literature={"updates": saved}))
+                parent = ttk.Frame(self.root)
+                panel = update_ui.UpdatePanel(parent, app, application.APP_VERSION)
+                self.assertEqual(panel.config_data(), {"automatic": enabled, "channel": channel})
+                self.assertEqual(panel.auto_timer is not None, enabled)
+                parent.destroy()
+
+    def test_automatic_check_only_notifies_for_both_channels_once(self):
+        for channel in ("正式发行版（Release）", "最新代码（main）"):
+            self.panel.online = None
+            self.panel.channel.set(channel)
+            self.panel.automatic.set(True)
+            self.panel.auto_checked = False
+            offer = updates.OnlineUpdate("26.10.19.07", "https://github.com/update.zip", "Changes", "https://github.com/release")
+            with patch.object(update_ui, "check_github_update", return_value=offer) as check, \
+                    patch.object(update_ui, "download_github_update") as download, patch.object(update_ui, "launch_install") as install:
+                self.start_automatic_now()
+                self.wait_worker()
+                self.start_automatic_now()
+            self.assertEqual(check.call_count, 1)
+            self.assertEqual(check.call_args.args[1], "main" if "main" in channel else "release")
+            download.assert_not_called()
+            install.assert_not_called()
+            self.assertIs(self.panel.online, offer)
+            self.assertTrue(self.root.winfo_exists())
+
+    def test_auto_check_preserves_staged_package_and_manual_offer(self):
+        self.panel.automatic.set(True)
+        for attr in ("staged", "online"):
+            sentinel = Mock()
+            setattr(self.panel, attr, sentinel)
+            self.panel.auto_checked = False
+            with patch.object(update_ui, "check_github_update") as check:
+                self.start_automatic_now()
+            check.assert_not_called()
+            self.assertIs(getattr(self.panel, attr), sentinel)
+            setattr(self.panel, attr, None)
+
+    def test_auto_check_defers_while_busy_and_language_switch_does_not_repeat(self):
+        self.panel.automatic.set(True)
+        self.panel.thread = Mock(is_alive=Mock(return_value=True))
+        self.start_automatic_now()
+        self.assertIsNotNone(self.panel.auto_timer)
+        self.assertFalse(self.panel.auto_checked)
+        self.panel.thread = None
+        with patch.object(update_ui, "check_github_update", return_value=None) as check:
+            self.start_automatic_now()
+            self.wait_worker()
+            self.app.change_ui_language("en")
+            self.root.update()
+            self.start_automatic_now()
+        self.assertEqual(check.call_count, 1)
+        self.assertIsNone(self.panel.auto_timer)
+
+    def test_disabling_automatic_check_cancels_inflight_and_ignores_offer(self):
+        import threading
+        entered, release = threading.Event(), threading.Event()
+        offer = updates.OnlineUpdate("26.10.19.07", "https://github.com/update.zip", "", "")
+        def check(*_args):
+            entered.set()
+            release.wait(2)
+            return offer
+        self.panel.automatic.set(True)
+        with patch.object(update_ui, "check_github_update", side_effect=check):
+            self.start_automatic_now()
+            self.assertTrue(entered.wait(1))
+            self.panel.automatic.set(False)
+            self.assertTrue(self.panel.cancel.is_set())
+            release.set()
+            self.wait_worker()
+        self.assertIsNone(self.panel.online)
+        self.assertIsNone(self.panel.auto_timer)
+
+    def test_background_check_failure_is_logged_without_modal_or_download(self):
+        self.panel.automatic.set(True)
+        with patch.object(update_ui, "check_github_update", side_effect=ValueError("403 test")), \
+                patch.object(update_ui.messagebox, "showerror") as error, patch.object(update_ui, "download_github_update") as download:
+            self.start_automatic_now()
+            self.wait_worker()
+        error.assert_not_called()
+        download.assert_not_called()
+        self.assertIn("403 test", self.panel.status.get())
 
 
 if __name__ == "__main__":
