@@ -31,7 +31,7 @@ jobs:
             for ($offset = 0; $offset -lt $output.Length; $offset += 1000) {
               $part = $output.Substring($offset, [Math]::Min(1000, $output.Length - $offset))
               $details = $part.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-              Write-Output "::error title=Native update regression $offset::$details"
+              Write-Output ('::error title=Native update regression ' + $offset + '::' + $details)
             }
           }
           exit $testExit
