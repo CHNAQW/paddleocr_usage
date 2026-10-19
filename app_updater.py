@@ -278,7 +278,7 @@ def launch_install(package, current_exe, current_version, cache=None):
             "helper_output": str(package.directory / ("helper-output-" + stamp + ".log"))}
     plan.update(kind="source" if source_update else "exe", active=str(cache / "active-source.json"),
                 source_record=package.record if source_update else None,
-                source_backup=str(package.directory / "previous-source.json"))
+                source_backup=str(package.directory / ("previous-source-" + stamp + ".json")))
     plan_path = package.directory / "install.json"
     with plan_path.open("x", encoding="utf-8") as handle:
         json.dump(plan, handle, ensure_ascii=False)

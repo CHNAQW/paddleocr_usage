@@ -58,13 +58,14 @@ try {
                 throw 'Source file changed before installation.'
             }
         }
-        if (Test-Path -LiteralPath $plan.active) {
-            [System.IO.File]::Copy($plan.active, $plan.source_backup, $false)
-        }
         $record = $plan.source_record | ConvertTo-Json -Depth 6
         [System.IO.File]::WriteAllText($plan.active + '.tmp', $record, (New-Object System.Text.UTF8Encoding($false)))
         if (Test-Path -LiteralPath $plan.active) {
-            [System.IO.File]::Replace($plan.active + '.tmp', $plan.active, $null)
+            # Windows PowerShell 5.1 can bind $null to an empty .NET string,
+            # which File.Replace rejects as an invalid backup path. A real
+            # backup also keeps replacement and rollback state atomic.
+            Write-Log ('Replacing source activation record: ' + $plan.active + '; backup: ' + $plan.source_backup)
+            [System.IO.File]::Replace($plan.active + '.tmp', $plan.active, $plan.source_backup)
         } else {
             [System.IO.File]::Move($plan.active + '.tmp', $plan.active)
         }
@@ -99,6 +100,8 @@ try {
 } catch {
     $failure = $_.Exception.Message
     Write-Log ('Update failed: ' + $failure)
+    Write-Log ($_.Exception.ToString())
+    if ($_.ScriptStackTrace) { Write-Log $_.ScriptStackTrace }
     $restored = $false
     $restart = $null
     try {
