@@ -33,7 +33,7 @@ class UpdatePanelTests(unittest.TestCase):
         self.exe.write_bytes(pe_payload())
         new = self.folder / "new.exe"
         new.write_bytes(pe_payload())
-        self.zip = updates.build_package(new, "26.10.18.05", self.folder)
+        self.zip = updates.build_package(new, "26.10.19.02", self.folder)
         self.root.update()
 
     def tearDown(self):
@@ -61,7 +61,7 @@ class UpdatePanelTests(unittest.TestCase):
                 self.root.update()
                 time.sleep(.01)
         self.assertIsNotNone(self.panel.staged)
-        self.assertIn("26.10.18.05", self.panel.details.get())
+        self.assertIn("26.10.19.02", self.panel.details.get())
         self.assertEqual(str(self.panel.install_button.cget("state")), "disabled")
         self.assertTrue(self.zip.is_file())
 
@@ -113,6 +113,54 @@ class UpdatePanelTests(unittest.TestCase):
             self.assertEqual(self.panel.choose_button.cget("text"), text)
             self.assertGreaterEqual(self.app.log_text.winfo_height(), 40)
             self.assertEqual(self.app.workspace_layout.settings_tabs.index("end"), 4)
+
+    def wait_worker(self):
+        deadline = time.monotonic() + 3
+        while self.panel.thread and time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(.01)
+        self.assertIsNone(self.panel.thread)
+
+    def test_explicit_online_check_never_downloads_or_installs_and_uses_selected_channel(self):
+        offer = updates.OnlineUpdate("26.10.19.02", "https://github.com/update.zip", "Changes", "https://github.com/release")
+        self.panel.channel.set("最新代码（main）")
+        with patch.object(update_ui, "check_github_update", return_value=offer) as check, \
+                patch.object(update_ui, "download_github_update") as download, patch.object(update_ui, "launch_install") as install:
+            self.panel.check_online()
+            self.wait_worker()
+        self.assertEqual(check.call_args.args[:2], (application.APP_VERSION, "main"))
+        download.assert_not_called()
+        install.assert_not_called()
+        self.assertIn("Changes", self.panel.online_details.get())
+        self.assertEqual(str(self.panel.download_button.cget("state")), "normal")
+
+    def test_online_download_reuses_package_validation_and_waits_for_install_confirmation(self):
+        offer = updates.OnlineUpdate("26.10.19.02", "https://github.com/update.zip", "", "")
+        self.panel.online = offer
+        self.panel.executable = self.exe
+        def download(*args, **kwargs):
+            return updates.import_package(self.zip, application.APP_VERSION, cache=self.folder / "cache", **kwargs)
+        with patch.object(update_ui, "download_github_update", side_effect=download) as fetch, \
+                patch.object(update_ui, "launch_install") as install:
+            self.panel.download_online()
+            self.wait_worker()
+        self.assertEqual(fetch.call_args.args[0], offer)
+        self.assertIsNotNone(self.panel.staged)
+        self.assertEqual(str(self.panel.install_button.cget("state")), "normal")
+        install.assert_not_called()
+        self.assertTrue(self.root.winfo_exists())
+
+    def test_manual_upload_blocks_install_and_channel_change_invalidates_offer(self):
+        self.stage()
+        self.app.literature.github_setup.manual = Mock(busy=True)
+        with patch.object(update_ui.messagebox, "showwarning") as warning, patch.object(update_ui, "launch_install") as install:
+            self.panel.install()
+        warning.assert_called_once()
+        install.assert_not_called()
+        self.panel.online = Mock()
+        self.panel.reset_online()
+        self.assertIsNone(self.panel.online)
+        self.assertEqual(str(self.panel.download_button.cget("state")), "disabled")
 
 
 if __name__ == "__main__":

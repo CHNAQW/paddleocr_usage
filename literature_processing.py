@@ -550,6 +550,123 @@ class GitHubSetupClient:
             folder = "" if parent == "." else parent
         return True
 
+    def remote_paths(self, options):
+        """Read the complete tree; a truncated recursive response is never treated as complete."""
+        options.validate()
+        branch = self.get(f"/repos/{options.repository}/branches/{quote(options.branch, safe='')}")
+        tree_sha = branch["commit"]["commit"]["tree"]["sha"]
+        route = f"/repos/{options.repository}/git/trees/"
+        tree = self.get(route + quote(tree_sha, safe=""), {"recursive": "1"})
+        paths = set()
+        if not tree.get("truncated"):
+            return {item["path"] for item in tree["tree"]}
+        pending = [("", tree_sha)]
+        while pending:
+            prefix, sha = pending.pop()
+            value = self.get(route + quote(sha, safe=""))
+            if value.get("truncated"):
+                raise RuntimeError(tr("远端目录过大，无法完整比较；本次未上传，请缩小目标目录后重试。"))
+            for item in value["tree"]:
+                name = prefix + item["path"]
+                paths.add(name)
+                if item.get("type") == "tree":
+                    pending.append((name + "/", item["sha"]))
+        return paths
+
+
+UPLOAD_KINDS = ("仅上传原文", "仅上传翻译稿", "同时上传")
+
+
+def upload_kind_allows(selection, role):
+    return selection == "同时上传" or selection == {"original": "仅上传原文", "translation": "仅上传翻译稿"}.get(role)
+
+
+@dataclass(frozen=True)
+class UploadCandidate:
+    path: Path
+    relative: str
+    role: str
+    status: str
+    sha256: str
+
+
+def review_text_sha256(text):
+    return hashlib.sha256(text.replace("\r\n", "\n").replace("\r", "\n").strip().encode("utf-8")).hexdigest()
+
+
+def document_upload_evidence(path):
+    """Bind positive local review evidence to the current bytes/text, including old reports."""
+    report_path = path.with_suffix(".translation.json")
+    translated = report_path.exists() or path.stem.upper().startswith("TRANSLATED_") or path.stem.upper().endswith("_TRANSLATED")
+    if path.stat().st_size > 20 * 1024 * 1024:
+        return ("translation" if translated else "original"), "oversize", ""
+    content = path.read_bytes()
+    digest = hashlib.sha256(content).hexdigest()
+    def load(report):
+        value = json.loads(report.read_text(encoding="utf-8-sig"))
+        if not isinstance(value, dict):
+            raise ValueError("invalid report")
+        return value
+    if report_path.exists():
+        translated = True
+        report = load(report_path)
+        ok = (report.get("verified") is True and report.get("status") == "verified"
+              and report.get("upstreamVerified", True) is True and not report.get("pendingReasons"))
+        matches = report.get("outputSHA256") == digest
+    else:
+        review_path = path.with_suffix(".llm-review.json")
+        if not review_path.exists():
+            return ("translation" if translated else "original"), "unverified", digest
+        review = load(review_path)
+        ok = review.get("hasProblem") is False
+        # read_text normalizes CRLF just as the manual OCR review does.
+        text_digest = review_text_sha256(path.read_text(encoding="utf-8"))
+        matches = review.get("textSHA256") == text_digest
+        if not translated:
+            for suffix in (".raw.json", ".json"):
+                raw_path = path.with_suffix(suffix)
+                if raw_path.exists():
+                    raw = load(raw_path)
+                    def warning(value):
+                        return (isinstance(value, dict) and (bool(value.get("qualityWarning"))
+                                or any(warning(v) for v in value.values()))) or (isinstance(value, list) and any(warning(v) for v in value))
+                    ok = ok and not warning(raw)
+    status = "ready" if ok and matches else "changed" if ok and not matches else "unverified"
+    if len(content) > 20 * 1024 * 1024:
+        status = "oversize"
+    return ("translation" if translated else "original"), status, digest
+
+
+def scan_missing_documents(root, selection, options, recursive=True, stop=lambda: False, client=None):
+    if not str(root).strip():
+        raise ValueError(tr("请选择有效的文档文件夹和上传类型。"))
+    root = Path(root).expanduser().resolve()
+    if not root.is_dir() or selection not in UPLOAD_KINDS:
+        raise ValueError(tr("请选择有效的文档文件夹和上传类型。"))
+    options.validate()
+    client = client or GitHubSetupClient(options.token, stop)
+    remote = client.remote_paths(options)
+    candidates = []
+    for path in sorted(root.rglob("*") if recursive else root.iterdir()):
+        _cancel(stop)
+        relative = path.relative_to(root)
+        if (path.suffix.lower() != ".md" or not path.is_file() or any(p.startswith(".") for p in relative.parts)
+                or any(p.is_symlink() for p in (path, *path.parents))):
+            continue
+        role = "translation" if path.with_suffix(".translation.json").exists() or path.stem.upper().startswith("TRANSLATED_") or path.stem.upper().endswith("_TRANSLATED") else "original"
+        if not upload_kind_allows(selection, role):
+            continue
+        name = str(PurePosixPath(options.folder) / relative.as_posix())
+        if name in remote:
+            status, digest = "existing", ""
+        else:
+            try:
+                role, status, digest = document_upload_evidence(path)
+            except (OSError, ValueError, UnicodeError):
+                status, digest = "unverified", ""
+        candidates.append(UploadCandidate(path, relative.as_posix(), role, status, digest))
+    return candidates
+
 
 def upload_verified_file(path: Path, relative_name: str, verified: bool, options: GitHubOptions,
                          expected_sha256: str, stop=lambda: False) -> str:
@@ -570,7 +687,7 @@ def upload_verified_file(path: Path, relative_name: str, verified: bool, options
     url = f"https://api.github.com/repos/{options.repository}/contents/{quote(remote, safe='/')}"
     headers = {"Authorization": f"Bearer {options.token}", "Accept": "application/vnd.github+json",
                "X-GitHub-Api-Version": "2022-11-28"}
-    response = requests.get(url, headers=headers, params={"ref": options.branch}, timeout=(15, 60))
+    response = requests.get(url, headers=headers, params={"ref": options.branch}, timeout=(15, 60), allow_redirects=False)
     if response.status_code == 200:
         raise FileExistsError(tr('GitHub 已存在 {arg0}；为避免覆盖，未上传。', arg0=remote))
     if response.status_code != 404:
@@ -579,7 +696,7 @@ def upload_verified_file(path: Path, relative_name: str, verified: bool, options
     response = requests.put(url, headers=headers, json={
         "message": f"Add reviewed literature: {remote}", "branch": options.branch,
         "content": base64.b64encode(content).decode("ascii"),
-    }, timeout=(15, 60))
+    }, timeout=(15, 60), allow_redirects=False)
     if response.status_code != 201:
         raise RuntimeError(tr('GitHub 上传失败：HTTP {arg0}。请检查分支和 Contents 写入权限。', arg0=response.status_code))
     return remote

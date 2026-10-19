@@ -599,6 +599,76 @@ EN_MESSAGES.update({"当前运行时未包含模块 {arg0}，请使用完整 EXE
 
 EN_MESSAGES.update({"更新助手未能启动，当前程序保持运行。请查看日志：{arg0}": "The update helper did not start. This program remains open. See the log: {arg0}"})
 
+EN_MESSAGES.update({
+    "仅上传原文": "Originals only",
+    "仅上传翻译稿": "Translations only",
+    "同时上传": "Originals and translations",
+    "正式发行版（Release）": "Official releases",
+    "最新代码（main）": "Latest code (main)",
+    "上传内容": "Upload content",
+    "手动扫描与补传": "Scan and upload missing documents",
+    "手动补传会比较目标仓库，仅上传远端缺少且核验通过的 Markdown。上传内容选项也适用于自动上传。": "Compare the destination and upload missing, verified Markdown. This content choice also applies to automatic uploads.",
+    "先比较，再补传": "Compare, then upload",
+    "选择包含原文和译文的本地文件夹。列表默认选中远端缺少且核验通过的文档；可按 Ctrl / Shift 调整选择。": "Choose a local folder containing originals and translations. Missing, verified documents are selected automatically. Use Ctrl / Shift to adjust the selection.",
+    "本地文档位置": "Local document folder",
+    "相对路径": "Document relative path",
+    "文档类型": "Document type",
+    "处理状态": "Upload status",
+    "扫描缺失文档": "Scan missing documents",
+    "上传选中文档": "Upload selected documents",
+    "点击扫描，将只读取远端目录，尚不会上传。": "Scan reads the remote directory without uploading anything.",
+    "设置已变化，请重新扫描后上传。": "Settings changed. Scan again before uploading.",
+    "可以补传": "Ready to upload",
+    "远端已有，跳过": "Already on GitHub; skipped",
+    "尚未核验通过": "Review not yet passed",
+    "文件已改变或缺少指纹，请重新核验": "Changed or missing fingerprint; review again",
+    "超过 20 MB": "Larger than 20 MB",
+    "上传完成": "Upload completed",
+    "上传失败，文件保留本地": "Upload failed; kept locally",
+    "翻译稿": "Translated document",
+    "正在比较本地文档与远端目录……": "Comparing local documents with the remote directory…",
+    "请选择文档": "Select upload documents",
+    "请先选择可以补传的文档。": "Select documents marked ready to upload.",
+    "确认手动上传": "Confirm manual upload",
+    "将向 {arg0}（{arg1} / {arg2}）上传 {arg3} 个选中文档。\n上传内容：{arg4}\n远端已有文件会跳过。是否继续？": "Upload {arg3} selected documents to {arg0} ({arg1} / {arg2})?\nContent: {arg4}\nExisting remote files will be skipped.",
+    "无法开始上传：{arg0}": "Could not start uploading: {arg0}",
+    "正在上传选中文档……": "Uploading selected documents…",
+    "扫描完成：共 {arg0} 个文档，{arg1} 个可以补传。": "Scan complete: {arg0} documents; {arg1} ready to upload.",
+    "本次上传：成功 {arg0}，远端已有 {arg1}，失败 {arg2}。": "Uploads: {arg0} succeeded, {arg1} already present, {arg2} failed.",
+    "已停止。": "Stopped.",
+    "GitHub 操作失败：{arg0}": "GitHub operation failed: {arg0}",
+    "远端目录过大，无法完整比较；本次未上传，请缩小目标目录后重试。": "The remote tree is too large for a complete comparison. Nothing was uploaded. Try a smaller destination.",
+    "请选择有效的文档文件夹和上传类型。": "Choose a valid document folder and upload content option.",
+    "可选择本地 ZIP，或主动从 GitHub 检查并下载新版。支持源码包和完整 EXE 更新包。": "Choose a local ZIP, or check GitHub and download an update. Source archives and full EXE packages are supported.",
+    "从 GitHub 获取新版": "Get updates from GitHub",
+    "来源固定为 CHNAQW/paddleocr_usage。最新代码可能尚未经过正式发布验证；仅在点击检查或下载时联网。": "Updates come from CHNAQW/paddleocr_usage. Latest code may not have release validation. Network access starts only when you check or download.",
+    "选择渠道后检查新版。": "Select a channel, then check for updates.",
+    "检查 GitHub 更新": "Check GitHub for updates",
+    "下载此版本": "Download this version",
+    "正在检查 GitHub 新版……": "Checking GitHub for updates…",
+    "发现新版：{arg0}\n{arg1}\n{arg2}": "New version: {arg0}\n{arg1}\n{arg2}",
+    "可下载新版；校验通过后再确认安装。": "Download the update, then confirm installation after validation.",
+    "所选渠道暂无更高版本。": "No newer version is available on this channel.",
+    "安装软件更新": "Install software update",
+    "更新下载地址不属于受支持的 GitHub HTTPS 地址。": "The update URL is not a supported GitHub HTTPS address.",
+    "GitHub 尚无可用发行版或找不到目标代码，请切换更新渠道后重试。": "No GitHub release or target code is available. Try the other update channel.",
+    "GitHub 更新检查或下载失败（HTTP {arg0}），请稍后重试。": "GitHub update check or download failed (HTTP {arg0}). Try again later.",
+    "GitHub 下载重定向次数过多。": "Too many GitHub download redirects.",
+    "GitHub 更新元数据过大。": "GitHub update metadata is too large.",
+    "GitHub 返回的提交标识无效。": "GitHub returned an invalid commit ID.",
+    "GitHub 源码入口无法读取。": "Could not read the GitHub source entry point.",
+    "在线更新包大小超出支持范围。": "The online update package exceeds the supported size limit.",
+    "GitHub 更新包校验值无效。": "The GitHub update checksum is invalid.",
+    "请选择有效的更新渠道。": "Choose a valid update channel.",
+    "没有可下载的新版。": "No newer version is available to download.",
+    "下载大小或 SHA-256 校验失败，请重新下载。": "Download size or SHA-256 verification failed. Download again.",
+    "下载内容的版本与检查结果不一致，未安装。": "The downloaded version differs from the checked version. Nothing was installed."
+})
+
+EN_MESSAGES.update({"目标：{arg0} · {arg1} / {arg2}": "Destination: {arg0} · {arg1} / {arg2}", "需重新核验文件指纹": "Review fingerprint again"})
+
+EN_MESSAGES.update({"正在下载并校验，请稍候……": "Downloading and validating. Please wait…"})
+
 _language = "zh"
 _sources = {value: key for key, value in EN_MESSAGES.items()}
 

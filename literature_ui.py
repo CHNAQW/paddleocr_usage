@@ -186,6 +186,8 @@ class LiteratureControls:
         self.arbitration = ChoiceVar(value=saved.get("arbitration", "用户自行裁决"))
         self.input_percent = tk.StringVar(value=str(saved.get("input_percent", 50)))
         self.upload = tk.BooleanVar(value=saved.get("upload", False))
+        self.upload_kind = ChoiceVar(value=saved.get("upload_kind", "同时上传"))
+        self.upload_root = tk.StringVar(value=saved.get("upload_root", ""))
         self.repository = tk.StringVar(value=saved.get("repository", ""))
         self.branch = tk.StringVar(value=saved.get("branch", "main"))
         self.folder = tk.StringVar(value=saved.get("folder", ""))
@@ -220,7 +222,8 @@ class LiteratureControls:
                 "same_folder": self.same_folder.get(), "recursive": self.recursive.get(), "filename_position": self.prefix.get(),
                 "source": self.source.get(), "target": self.target.get(), "secondary": self.secondary.get(),
                 "proofreading": self.proofreading.get(), "arbitration": self.arbitration.get(), "upload": self.upload.get(),
-                "repository": self.repository.get(), "branch": self.branch.get(), "folder": self.folder.get()}
+                "repository": self.repository.get(), "branch": self.branch.get(), "folder": self.folder.get(),
+                "upload_kind": self.upload_kind.get(), "upload_root": self.upload_root.get()}
         data["input_percent"] = self.chunk_percent()
         data.update({key: value.config_data() for key, value in self.profiles.items()})
         return data
@@ -266,7 +269,7 @@ class LiteratureControls:
                     self.secondary.get(), self.proofreading.get(), self.arbitration.get(), self.chunk_percent()),
                 "output": None if self.same_folder.get() else Path(self.output.get()).expanduser().resolve(),
                 "prefix": self.prefix.get().startswith("前缀"), "github": github,
-                "auto_translate": self.auto_translate.get()}
+                "auto_translate": self.auto_translate.get(), "upload_kind": self.upload_kind.get()}
 
     def input_paths(self):
         if not self.input.get().strip() or not Path(self.input.get()).is_dir():
@@ -326,7 +329,10 @@ class LiteratureControls:
                 continue
         raise ProcessingCancelled(tr('用户已停止。'))
 
-    def maybe_upload(self, path, root, verified, snapshot, expected_hash=None):
+    def maybe_upload(self, path, root, verified, snapshot, expected_hash=None, role="original"):
+        from literature_processing import upload_kind_allows
+        if not upload_kind_allows(snapshot.get("upload_kind", "同时上传"), role):
+            return
         if not snapshot["github"]:
             return
         if not verified:
@@ -356,8 +362,10 @@ class LiteratureControls:
         self.log(tr('{arg0}：{arg1}', arg0=path.name, arg1=labels[result['status']]))
         self.events.put(("status", tr('{arg0}：{arg1}', arg0=path.name, arg1=labels[result['status']])))
         if result["status"] in {"verified", "needs_review", "unverified"}:
+            result["upstreamVerified"] = upstream_ok
+            destination.with_suffix(".translation.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
             upload_root = root if snapshot["output"] is None else snapshot["output"]
-            self.maybe_upload(destination, upload_root, result["verified"] and upstream_ok, snapshot, result["outputSHA256"])
+            self.maybe_upload(destination, upload_root, result["verified"] and upstream_ok, snapshot, result["outputSHA256"], role="translation")
         return result
 
     def after_ocr(self, path, root, raw_data, reviewed_markdown=None):

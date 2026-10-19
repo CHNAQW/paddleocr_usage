@@ -1,4 +1,4 @@
-"""Offline update packages and the Windows hand-off; never downloads code."""
+"""Validated local/GitHub update packages and the Windows installation hand-off."""
 from __future__ import annotations
 
 import hashlib
@@ -442,3 +442,164 @@ def last_result(cache=None):
         return result if isinstance(result, dict) and result.get("status") in {"installed", "failed"} else None
     except (OSError, ValueError):
         return None
+
+
+GITHUB_REPOSITORY = "CHNAQW/paddleocr_usage"
+DOWNLOAD_HOSTS = {"api.github.com", "github.com", "codeload.github.com",
+                  "release-assets.githubusercontent.com", "objects.githubusercontent.com"}
+
+
+@dataclass(frozen=True)
+class OnlineUpdate:
+    version: str
+    url: str
+    notes: str
+    page: str
+    sha256: str = ""
+    size: int = 0
+
+
+def _github_response(url, *, stream=False, stop=lambda: False):
+    """Follow only GitHub HTTPS redirects, without forwarding application credentials."""
+    from urllib.parse import urlsplit, urljoin
+    import requests
+    for _ in range(6):
+        _cancel(stop)
+        parsed = urlsplit(url)
+        if (parsed.scheme != "https" or parsed.hostname not in DOWNLOAD_HOSTS or parsed.username
+                or parsed.password or parsed.port not in {None, 443}):
+            raise ValueError(tr("更新下载地址不属于受支持的 GitHub HTTPS 地址。"))
+        try:
+            response = requests.get(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "PaddleOCR-Updater"},
+                                    timeout=(10, 30), stream=stream, allow_redirects=False)
+        except requests.RequestException:
+            raise RuntimeError(tr("无法连接 GitHub，请检查网络或代理后重试。")) from None
+        if response.status_code in {301, 302, 303, 307, 308}:
+            location = response.headers.get("Location", "")
+            response.close()
+            if not location:
+                break
+            url = urljoin(url, location)
+            continue
+        if response.status_code != 200:
+            status = response.status_code
+            response.close()
+            if status == 404:
+                raise ValueError(tr("GitHub 尚无可用发行版或找不到目标代码，请切换更新渠道后重试。"))
+            raise RuntimeError(tr("GitHub 更新检查或下载失败（HTTP {arg0}），请稍后重试。", arg0=status))
+        return response
+    raise RuntimeError(tr("GitHub 下载重定向次数过多。"))
+
+
+def _github_json(path, stop):
+    response = _github_response("https://api.github.com/repos/" + GITHUB_REPOSITORY + path, stream=True, stop=stop)
+    try:
+        data = bytearray()
+        for block in response.iter_content(64 * 1024):
+            _cancel(stop)
+            data.extend(block)
+            if len(data) > 4 * BLOCK_SIZE:
+                raise ValueError(tr("GitHub 更新元数据过大。"))
+        return json.loads(data)
+    finally:
+        response.close()
+
+
+def check_github_update(current_version, channel="release", stop=lambda: False):
+    """Only explicit checks perform network I/O. Pin source downloads to an immutable commit."""
+    base = f"https://api.github.com/repos/{GITHUB_REPOSITORY}"
+    page = f"https://github.com/{GITHUB_REPOSITORY}"
+    if channel == "main":
+        commit = _github_json("/commits/main", stop)
+        sha = commit.get("sha", "")
+        if not re.fullmatch(r"[0-9a-f]{40}", sha):
+            raise ValueError(tr("GitHub 返回的提交标识无效。"))
+        entry = _github_json("/contents/paddleocr_pdf_to_md_gui.py?ref=" + sha, stop)
+        import base64
+        if entry.get("encoding") != "base64" or entry.get("size", MAX_PAYLOAD) > BLOCK_SIZE:
+            raise ValueError(tr("GitHub 源码入口无法读取。"))
+        tree = ast.parse(base64.b64decode(entry["content"]).decode("utf-8-sig"))
+        versions = [node.value.value for node in tree.body if isinstance(node, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == "APP_VERSION" for t in node.targets)
+                    and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)]
+        if len(versions) != 1:
+            raise ValueError(tr("GitHub 源码入口无法读取。"))
+        version = versions[0]
+        offer = OnlineUpdate(version, base + "/zipball/" + sha,
+                             str(commit.get("commit", {}).get("message", ""))[:1500], page + "/commit/" + sha)
+    elif channel == "release":
+        release = _github_json("/releases/latest", stop)
+        if release.get("draft") or release.get("prerelease"):
+            raise ValueError(tr("GitHub 尚无可用发行版或找不到目标代码，请切换更新渠道后重试。"))
+        version = str(release.get("tag_name", "")).removeprefix("v")
+        if version_tuple(version) <= version_tuple(current_version):
+            return None
+        expected = "PaddleOCR_Update_" + version + ".zip"
+        assets = [a for a in release.get("assets", []) if a.get("name") == expected and a.get("state", "uploaded") == "uploaded"]
+        notes = str(release.get("body") or "")[:1500]
+        tag = str(release.get("tag_name", ""))
+        from urllib.parse import quote
+        if assets:
+            asset = assets[0]
+            size = asset.get("size", 0)
+            if not isinstance(size, int) or not 0 < size <= MAX_PAYLOAD:
+                raise ValueError(tr("在线更新包大小超出支持范围。"))
+            digest = str(asset.get("digest") or "")
+            if digest and not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
+                raise ValueError(tr("GitHub 更新包校验值无效。"))
+            url = page + "/releases/download/" + quote(tag, safe="") + "/" + quote(expected, safe="")
+            offer = OnlineUpdate(version, url, notes, page + "/releases/tag/" + quote(tag, safe=""), digest[7:].lower(), size)
+        else:
+            commit = _github_json("/commits/" + quote(tag, safe=""), stop)
+            sha = commit.get("sha", "")
+            if not re.fullmatch(r"[0-9a-f]{40}", sha):
+                raise ValueError(tr("GitHub 返回的提交标识无效。"))
+            offer = OnlineUpdate(version, base + "/zipball/" + sha, notes, page + "/releases/tag/" + quote(tag, safe=""))
+    else:
+        raise ValueError(tr("请选择有效的更新渠道。"))
+    return offer if version_tuple(offer.version) > version_tuple(current_version) else None
+
+
+def download_github_update(offer, current_version, cache=None, stop=lambda: False, progress=lambda done, total: None):
+    """Bound streaming download, verify transport digest, then reuse the local ZIP validator."""
+    if not isinstance(offer, OnlineUpdate) or version_tuple(offer.version) <= version_tuple(current_version):
+        raise ValueError(tr("没有可下载的新版。"))
+    cache = Path(cache) if cache is not None else update_cache()
+    cache.mkdir(parents=True, exist_ok=True)
+    directory = Path(tempfile.mkdtemp(prefix="download-", dir=cache))
+    package, response = None, None
+    try:
+        response = _github_response(offer.url, stream=True, stop=stop)
+        declared = int(response.headers.get("Content-Length", 0))
+        if declared < 0 or declared > MAX_PAYLOAD or (offer.size and declared and declared != offer.size):
+            raise ValueError(tr("在线更新包大小超出支持范围。"))
+        source = directory / "github-update.zip"
+        digest, size = hashlib.sha256(), 0
+        with source.open("xb") as output:
+            for block in response.iter_content(256 * 1024):
+                _cancel(stop)
+                size += len(block)
+                if size > MAX_PAYLOAD:
+                    raise ValueError(tr("在线更新包大小超出支持范围。"))
+                output.write(block)
+                digest.update(block)
+                progress(size, declared or offer.size or MAX_PAYLOAD)
+        if (not size or (declared and size != declared) or (offer.size and size != offer.size)
+                or (offer.sha256 and digest.hexdigest() != offer.sha256)):
+            raise ValueError(tr("下载大小或 SHA-256 校验失败，请重新下载。"))
+        package = import_package(source, current_version, cache=cache, stop=stop, progress=progress)
+        if package.version != offer.version:
+            raise ValueError(tr("下载内容的版本与检查结果不一致，未安装。"))
+        # Keep the downloaded ZIP alongside the staged payload until installation/discard.
+        target = package.directory / "download.zip"
+        shutil.move(str(source), target)
+        from dataclasses import replace
+        return replace(package, source=target)
+    except BaseException:
+        if package:
+            discard_package(package)
+        raise
+    finally:
+        if response is not None:
+            response.close()
+        shutil.rmtree(directory, ignore_errors=True)

@@ -456,6 +456,10 @@ class WorkspaceLayout:
         self.app.ui_language_var.set("English" if language() == "en" else "中文")
         self.refresh_model_summary(self.app.literature)
         self.select()
+        self.resize()
+        manual = getattr(self.app.literature.github_setup, "manual", None)
+        if manual and not manual.closed:
+            manual.render()
 
     def sync_output(self):
         controls = self.app.literature
@@ -556,11 +560,17 @@ class WorkspaceLayout:
     def resize(self, event=None):
         if event is not None and event.widget != self.root:
             return
-        compact = self.root.winfo_width() < 850
+        nav_font = tkfont.Font(master=self.root, font=self.nav_buttons[0].cget("font"))
+        padding = max(32, nav_font.metrics("linespace") * 3)
+        rail_width = max(148, *(nav_font.measure(str(text)) + padding for text in
+            ("01   PDF OCR", tr('02   外文翻译'), tr('偏好设置'), self.version.cget("text"))))
+        compact = (self.root.winfo_width() < rail_width + max(650, nav_font.metrics("linespace") * 35)
+                   or self.root.winfo_height() < 520)
         self.reflow_forms()
-        if compact == self.compact:
+        if compact == self.compact and getattr(self, "rail_width", None) == rail_width:
             return
         self.compact = compact
+        self.rail_width = rail_width
         self.rail.grid_forget()
         self.workspace.grid_forget()
         for widget in (self.brand, self.nav_area, self.rail_footer):
@@ -595,20 +605,21 @@ class WorkspaceLayout:
             self.header.configure(padding=(20, 8, 20, 8))
             self.app.workspace_panes.paneconfigure(self.log_frame, height=100)
         else:
-            self.root.columnconfigure(0, weight=0, minsize=184)
+            self.root.columnconfigure(0, weight=0, minsize=rail_width)
             self.root.columnconfigure(1, weight=1)
             self.root.rowconfigure(0, weight=1)
             self.root.rowconfigure(1, weight=0)
             self.rail.grid_propagate(False)
-            self.rail.configure(width=184)
+            self.rail.configure(width=rail_width)
             self.rail.grid(row=0, column=0, rowspan=2, sticky="nsew")
             self.rail.columnconfigure(0, weight=1)
             self.rail.columnconfigure(1, weight=0)
             self.rail.rowconfigure(1, weight=1)
             self.brand_name.pack(anchor="w", pady=(8, 0))
+            self.brand_name.configure(wraplength=rail_width - 40)
             self.mark.configure(image=self.brand_icons.get(48, ""),
                                 text="" if self.brand_icons else tr('文献'), font=(self.family, 23, "bold"))
-            self.brand.grid(row=0, column=0, sticky="nw", padx=22, pady=(28, 30))
+            self.brand.grid(row=0, column=0, sticky="nw", padx=20, pady=(22, 22))
             self.nav_area.grid(row=1, column=0, sticky="new", padx=10)
             self.nav_area.columnconfigure(0, weight=1)
             self.nav_area.columnconfigure(1, weight=0)

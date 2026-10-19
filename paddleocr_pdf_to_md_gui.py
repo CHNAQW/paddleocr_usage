@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from workspace_ui import WorkspaceLayout, configure_workspace_theme
-from literature_processing import ProcessingCancelled
+from literature_processing import ProcessingCancelled, review_text_sha256
 from model_budget import ModelCatalog
 
 import tkinter as tk
@@ -58,7 +58,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "文献处理软件"
-APP_VERSION = "26.10.18.04"
+APP_VERSION = "26.10.19.01"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -772,6 +772,7 @@ def process_split_pdf_async(
             merged_review = {
                 "programVersion": APP_VERSION,
                 "reviewedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "textSHA256": review_text_sha256(output_md_path.read_text(encoding="utf-8")),
                 "filename": output_md_path.name,
                 "model": llm_model,
                 "hasProblem": any(bool(review.get("hasProblem")) for review in part_reviews),
@@ -1136,6 +1137,7 @@ def review_markdown_with_llm(
         "reviewedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "filename": filename,
         "model": model,
+        "textSHA256": review_text_sha256(markdown),
         "hasProblem": any(item["has_problem"] for item in reviews),
         "chunks": reviews,
     }
