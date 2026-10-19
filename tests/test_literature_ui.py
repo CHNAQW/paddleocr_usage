@@ -154,7 +154,7 @@ class DesktopLayoutTests(unittest.TestCase):
                 for size in ("540x420", "1100x780"):
                     self.root.geometry(size)
                     self.root.update()
-                    self.assertEqual(len(layout.toolbar.buttons), 7)
+                    self.assertEqual(len(layout.toolbar.buttons), 8)
                     for button in layout.toolbar.buttons:
                         self.assertTrue(button.winfo_viewable())
                         self.assertLessEqual(button.winfo_x() + button.winfo_width(), layout.toolbar.winfo_width())
@@ -617,7 +617,7 @@ class DesktopLayoutTests(unittest.TestCase):
                 if isinstance(child, application.ttk.Button):
                     yield child
                 yield from buttons(child)
-        accept = next(button for button in buttons(dialog) if button.cget("text") == "接受二次译文")
+        accept = next(button for button in buttons(dialog) if button.cget("text") == "保留第二稿")
         accept.invoke()
         self.assertEqual(result.get_nowait(), "second")
 

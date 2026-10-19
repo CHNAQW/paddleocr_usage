@@ -7,7 +7,7 @@ from pathlib import Path
 
 from source_bootstrap import requirements, run_installed_source
 
-APP_VERSION = "26.10.19.01"
+APP_VERSION = "26.10.19.02"
 
 
 def main():

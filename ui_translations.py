@@ -669,6 +669,75 @@ EN_MESSAGES.update({"目标：{arg0} · {arg1} / {arg2}": "Destination: {arg0} �
 
 EN_MESSAGES.update({"正在下载并校验，请稍候……": "Downloading and validating. Please wait…"})
 
+EN_MESSAGES.update({
+    "LLM 服务": "LLM service",
+    "MD 整理": "Format MD",
+    "Markdown 整理": "Markdown formatting",
+    "Markdown 整理与核验": "Format and verify Markdown",
+    "Markdown 文件为空，无法整理。": "The Markdown file is empty and cannot be formatted.",
+    "Markdown 文件或文件夹": "Markdown file or folder",
+    "{arg0}：整理第 {arg1}/{arg2} 段（仅整理一次）。": "{arg0}: formatting chunk {arg1}/{arg2} (one pass per attempt).",
+    "{arg0}：第 {arg1} 段独立核验，不再次整理。": "{arg0}: independent verification of chunk {arg1}; no second formatting pass.",
+    "与翻译共用分段比例；同时按整理和核验模型预算规划，完整代码块、公式和表格不拆开。": "Shares the translation budget percentage. Both models determine chunk sizes; complete code blocks, equations and tables stay together.",
+    "仅整理一次，再独立核验；保留原文，不翻译、不润色，不生成第二份整理稿。": "Format once, then verify independently. Keep the source; no translation, rewriting or second formatting draft.",
+    "保留稿件会标记待处理；重试将丢弃本次生成稿，重做当前分段／文件，不删除原文。": "Kept drafts remain pending review. Retry discards generated drafts and repeats this chunk or file, preserving the source.",
+    "保留第一稿": "Keep first draft",
+    "保留第二稿": "Keep second draft",
+    "第一稿": "First draft",
+    "第二稿": "Second draft",
+    "修改整理稿位置": "Change formatted output location",
+    "共享 OCR 的 LLM 核验、翻译、二次核对、校对、裁决及 Markdown 整理与核验的连接。各任务仍可分别选择模型；PaddleOCR 的服务与 Token 独立配置。": "Share the connection for OCR quality checks, translation, review, proofreading, decisions, Markdown formatting and verification. Each task can select its own model. PaddleOCR uses a separate service and Token.",
+    "删除并重试上一步": "Discard and retry previous step",
+    "发现 {arg0} 个可整理 Markdown；原文和译文均可，跳过已有整理稿。": "Found {arg0} Markdown files to format. Sources and translations are supported; existing formatted copies are skipped.",
+    "发现问题：{arg0}": "Problem detected: {arg0}",
+    "启用后各任务的服务商、地址和密钥由此处管理。关闭后保留当前连接，可再分别修改；更换服务后请拉取并选择适配的模型。": "When enabled, provider, URL and key are managed here. Disabling keeps current connections and allows separate editing. Fetch and select compatible models after changing providers.",
+    "处理问题：{arg0}": "Resolve processing issue: {arg0}",
+    "完整代码块、公式或表格超出整理／核验模型预算，请提高上限或改用更大模型。": "A complete code block, equation or table exceeds the formatting or verification budget. Increase the limit or choose a larger model.",
+    "已丢弃当前整理稿，按用户选择重试此分段。": "Discarded the formatted draft; retrying this chunk at your request.",
+    "已丢弃当前译文草稿，按用户选择重试此分段。": "Discarded the translation drafts; retrying this chunk at your request.",
+    "已选择与原文件同目录，是否改用指定输出文件夹？": "Output is set beside the source. Switch to a separate output folder?",
+    "开始整理并核验": "Start formatting and verification",
+    "您已选择“所有服务共用一个LLM服务商”，是否需要强制覆盖设置？": "You selected “Use one LLM provider for all services”. Override this setting?",
+    "所有 LLM 共用同一服务商与 API Key": "Use one LLM provider and API key for all services",
+    "扫描失败：{arg0}": "Scan failed: {arg0}",
+    "整理与核验已开始；本次设置已固定。": "Formatting and verification started using the captured settings.",
+    "整理失败，原文已保留：{arg0}；{arg1}": "Formatting failed; source preserved: {arg0}; {arg1}",
+    "整理完成：通过 {arg0}，待处理 {arg1}，已有 {arg2}，失败 {arg3}。": "Formatting complete: {arg0} passed, {arg1} pending, {arg2} existing, {arg3} failed.",
+    "整理核验通过": "Formatting verified",
+    "整理模型": "Formatting model",
+    "整理稿不能覆盖原文。": "Formatted output cannot overwrite the source.",
+    "整理稿中的代码块内容发生变化。": "Code block content changed in the formatted draft.",
+    "整理稿中的图片或链接地址发生变化。": "Image or link destinations changed in the formatted draft.",
+    "整理稿中的数字发生变化。": "Numbers changed in the formatted draft.",
+    "整理稿中的数学公式发生变化。": "Mathematical expressions changed in the formatted draft.",
+    "整理稿中的行内代码发生变化。": "Inline code changed in the formatted draft.",
+    "整理稿位置": "Formatted output folder",
+    "整理稿保存在原文件夹": "Save formatted copies beside source files",
+    "整理稿已存在，跳过": "Formatted output already exists; skipped",
+    "整理稿待核验处理": "Formatted draft needs review",
+    "整理稿的文字内容或顺序发生变化。": "Text content or order changed in the formatted draft.",
+    "文档与输出": "Documents and output",
+    "无法保存整理设置：{arg0}": "Could not save formatting settings: {arg0}",
+    "无法开始整理": "Could not start formatting",
+    "核验只返回问题与结论。疑点或核验失败会保留整理稿及 .formatting.json 报告并标记待处理，不自动重新整理或上传。": "Verification returns findings only. Issues or failed checks keep the draft and .formatting.json report pending review. No automatic reformatting or upload.",
+    "核验模型（只校对）": "Verification model (review only)",
+    "正在整理 {arg0}/{arg1}：{arg2}": "Formatting {arg0}/{arg1}: {arg2}",
+    "没有发现待整理的 Markdown。": "No Markdown files to format were found.",
+    "统一 LLM 服务设置": "Shared LLM service settings",
+    "覆盖统一 LLM 设置": "Override shared LLM settings",
+    "请等待 OCR、翻译或整理任务结束。": "Wait for OCR, translation or formatting to finish.",
+    "请选择整理稿输出文件夹。": "Choose a folder for formatted output.",
+    "请选择有效的 Markdown 文件或文件夹。": "Choose a valid Markdown file or folder.",
+    "跳过此文件": "Skip this file",
+    "选择 MD": "Choose MD",
+    "选择 Markdown 文件": "Choose a Markdown file",
+    "选择 Markdown 文件或文件夹，配置整理及核验模型后开始。": "Choose a Markdown file or folder, configure formatting and verification models, then start."
+})
+
+EN_MESSAGES.update({"整理核验缺少有效的问题列表，不能视为通过。": "Formatting verification lacks a valid issue list and cannot be approved."})
+
+EN_MESSAGES.update({"前缀 FORMATTED_": "Prefix FORMATTED_", "后缀 _FORMATTED": "Suffix _FORMATTED"})
+
 _language = "zh"
 _sources = {value: key for key, value in EN_MESSAGES.items()}
 

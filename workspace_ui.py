@@ -4,7 +4,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import font as tkfont, ttk
 
-from literature_processing import LANGUAGES
+from literature_processing import LANGUAGES, PROVIDERS
 from literature_ui import LiteratureControls, ModelControls, scrollable_page
 from ui_i18n import LocalizedVar, language, localize_widgets, messagebox, tr, ui_text
 from responsive_ui import AdaptiveLabel, ButtonToolbar, ResponsiveForm
@@ -40,7 +40,9 @@ def configure_workspace_theme(root):
               fieldbackground=[("disabled", "#e8eae5")], foreground=[("disabled", COLORS["muted"])])
     style.configure("TSpinbox", fieldbackground=COLORS["canvas"], bordercolor=COLORS["border"], padding=6)
     style.configure("TCombobox", fieldbackground=COLORS["paper"], arrowsize=12, padding=6)
-    style.map("TCombobox", fieldbackground=[("readonly", COLORS["paper"])])
+    style.map("TCombobox", fieldbackground=[("disabled", "#e8eae5"), ("readonly", COLORS["paper"])],
+              background=[("disabled", "#e8eae5")], foreground=[("disabled", COLORS["muted"])],
+              arrowcolor=[("disabled", COLORS["muted"])])
     root.option_add("*TCombobox*Listbox.background", COLORS["canvas"])
     root.option_add("*TCombobox*Listbox.foreground", COLORS["ink"])
     style.configure("Treeview", background=COLORS["canvas"], fieldbackground=COLORS["canvas"],
@@ -285,6 +287,7 @@ class WorkspaceLayout:
         self.toolbar = ButtonToolbar(header, (
             (tr('扫描 PDF'), app.scan_pdfs), (tr('扫描 Markdown'), lambda: app.literature.scan()),
             (tr('修复 JSON'), app.repair_json_to_md),
+            (tr('MD 整理'), lambda: app.literature.open_formatting()),
             (tr('字数检验'), app.manual_wordcount_check), (tr('LLM 检验'), app.manual_llm_check),
             (tr('OCR 输出目录'), app.open_output_dir), (tr('配置位置'), app.show_config_path)))
         self.toolbar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
@@ -382,7 +385,9 @@ class WorkspaceLayout:
         form = ResponsiveForm(review, style="TFrame")
         form.grid(row=0, column=0, columnspan=2, sticky="ew")
         for row, title, variable in ((0, "Base URL", app.llm_base_url_var), (1, "API Key", app.llm_api_key_var)):
-            form.add(title, ttk.Entry(form, textvariable=variable, show="*" if row == 1 else ""))
+            entry = ttk.Entry(form, textvariable=variable, show="*" if row == 1 else "")
+            form.add(title, entry)
+            setattr(app, "shared_review_key_entry" if row == 1 else "shared_review_url_entry", entry)
         app.llm_model_combo = ttk.Combobox(form, textvariable=app.llm_model_var)
         form.add(tr('模型'), app.llm_model_combo)
         app.fetch_models_btn = ttk.Button(review, text=tr('拉取模型列表'), command=app.fetch_llm_models)
@@ -402,6 +407,7 @@ class WorkspaceLayout:
                       style="Subtitle.TLabel").grid(row=1, column=0, sticky="ew", pady=(6, 0))
         AdaptiveLabel(budget, text=tr("兼容接口没有统一 tokenizer；使用 UTF-8 字节数加消息开销保守估算 token，优先保留完整段落。"),
                       style="Subtitle.TLabel").grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        ttk.Button(budget, text=tr("统一 LLM 服务设置"), command=lambda: self.show_settings(4)).grid(row=3, column=0, sticky="w", pady=6)
         roles = ttk.Notebook(models)
         roles.grid(row=1, column=0, sticky="ew", padx=8, pady=8)
         for key, title in (("translator", tr('翻译')), ("reviewer", tr('二次核对')), ("proofreader", tr('校对')), ("arbiter", tr('裁决'))):
@@ -418,6 +424,24 @@ class WorkspaceLayout:
         controls.github_setup = GitHubSetup(github, controls)
         from update_ui import UpdatePanel
         app.updates = UpdatePanel(updates, app, self.app.app_version, self.app.compiled_application)
+        shared = scrollable_page(self.settings_tabs, tr("LLM 服务"))
+        group = ttk.LabelFrame(shared, text=tr("统一 LLM 服务设置"), padding=14)
+        group.grid(row=0, column=0, sticky="ew", padx=10, pady=8)
+        group.columnconfigure(0, weight=1)
+        ttk.Checkbutton(group, text=tr("所有 LLM 共用同一服务商与 API Key"), variable=controls.shared_llm).grid(row=0, column=0, sticky="w", pady=6)
+        shared_form = ResponsiveForm(group)
+        shared_form.grid(row=1, column=0, sticky="ew")
+        preset = ttk.Combobox(shared_form, textvariable=controls.shared_provider, values=[tr(v) for v in PROVIDERS], state="readonly")
+        preset.localized_choices = True
+        preset.bind("<<ComboboxSelected>>", controls.shared_preset)
+        shared_form.add(tr("服务商预设"), preset)
+        controls.shared_selector = preset
+        shared_form.add("Base URL", ttk.Entry(shared_form, textvariable=controls.shared_url))
+        shared_form.add("API Key", ttk.Entry(shared_form, textvariable=controls.shared_key, show="*"))
+        AdaptiveLabel(group, text=tr("共享 OCR 的 LLM 核验、翻译、二次核对、校对、裁决及 Markdown 整理与核验的连接。各任务仍可分别选择模型；PaddleOCR 的服务与 Token 独立配置。"),
+                      style="Subtitle.TLabel").grid(row=2, column=0, sticky="ew", pady=8)
+        AdaptiveLabel(group, text=tr("启用后各任务的服务商、地址和密钥由此处管理。关闭后保留当前连接，可再分别修改；更换服务后请拉取并选择适配的模型。"),
+                      style="Subtitle.TLabel").grid(row=3, column=0, sticky="ew", pady=8)
         footer = ttk.Frame(self.settings, padding=12)
         footer.grid(row=2, column=0, sticky="ew")
         footer.columnconfigure(0, weight=1)

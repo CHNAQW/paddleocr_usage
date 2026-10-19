@@ -60,6 +60,22 @@ class ChoiceVar(tk.StringVar):
 
 
 def localize_widgets(widget):
+    if isinstance(widget, ttk.Combobox) and not getattr(widget, "_wheel_guard", False):
+        def wheel(event, combo=widget):
+            popup = str(combo) + ".popdown"
+            if combo.tk.call("winfo", "exists", popup) and combo.tk.call("winfo", "ismapped", popup):
+                return
+            parent = combo.master
+            while parent is not None:
+                if isinstance(parent, tk.Canvas):
+                    up = getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0
+                    parent.yview_scroll(-3 if up else 3, "units")
+                    break
+                parent = getattr(parent, "master", None)
+            return "break"
+        for event in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            widget.bind(event, wheel, add="+")
+        widget._wheel_guard = True
     """Update captions, menus and enumerated choices in place; never rebuild jobs."""
     options = widget.keys()
     if "text" in options and not ("textvariable" in options and widget.cget("textvariable")):
