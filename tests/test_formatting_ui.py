@@ -239,7 +239,9 @@ class FormattingAndServiceTests(unittest.TestCase):
     def test_problem_dialog_and_override_prompt_have_full_english_captions(self):
         self.app.change_ui_language('en')
         dialog, response, buttons = self.dialog(True)
-        self.assertEqual([b.cget('text') for b in buttons], ['Keep first draft', 'Discard and retry previous step', 'Keep second draft'])
+        self.assertEqual([b.cget('text') for b in buttons if b.cget('text') != 'Copy full text'],
+                         ['Keep first draft', 'Discard and retry previous step', 'Keep second draft'])
+        self.assertEqual(sum(b.cget('text') == 'Copy full text' for b in buttons), 4)
         next(b for b in buttons if b.cget('text') == 'Keep second draft').invoke()
         self.assertEqual(response.get_nowait(), 'second')
         self.c.shared_llm.set(True)

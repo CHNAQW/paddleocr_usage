@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import ast
+import base64
 import importlib.util
 import json
 import os
@@ -273,7 +274,8 @@ def launch_install(package, current_exe, current_version, cache=None):
             "log": str(package.directory / "install.log"), "version": package.version,
             "previous_version": current_version, "sha256": package.sha256, "size": package.size,
             "health_timeout": 120, "cwd": str(Path.cwd()),
-            "handshake": str(package.directory / ("helper-ready-" + stamp))}
+            "handshake": str(package.directory / ("helper-ready-" + stamp)),
+            "helper_output": str(package.directory / ("helper-output-" + stamp + ".log"))}
     plan.update(kind="source" if source_update else "exe", active=str(cache / "active-source.json"),
                 source_record=package.record if source_update else None,
                 source_backup=str(package.directory / "previous-source.json"))
@@ -284,20 +286,41 @@ def launch_install(package, current_exe, current_version, cache=None):
     environment["PADDLEOCR_UPDATE_PLAN"] = str(plan_path)
     # Paths and package data are passed as JSON, never interpolated into shell code.
     powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    log_path = Path(plan["log"])
+    output_path = Path(plan["helper_output"])
+    with log_path.open("a", encoding="utf-8") as log:
+        log.write("Starting Windows update helper.\nProcess output: " + str(output_path) + "\n")
+    # PowerShell does not share the C runtime's command-line quoting rules.
+    # Encode the entire Unicode script instead of passing multiline -Command
+    # text through list2cmdline. No user path is interpolated into the script.
+    command = base64.b64encode(script.encode("utf-16le")).decode("ascii")
     try:
-        process = subprocess.Popen([str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-                         env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, close_fds=True, creationflags=0x08000008)
-        deadline = time.monotonic() + 5
-        while not Path(plan["handshake"]).is_file():
-            if process.poll() is not None or time.monotonic() >= deadline:
-                if process.poll() is None:
-                    process.terminate()
-                raise RuntimeError(tr("更新助手未能启动，当前程序保持运行。请查看日志：{arg0}", arg0=plan["log"]))
-            time.sleep(.05)
-    except (OSError, RuntimeError):
+        with output_path.open("xb") as output:
+            process = subprocess.Popen([str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand", command],
+                             env=environment, stdin=subprocess.DEVNULL, stdout=output,
+                             stderr=subprocess.STDOUT, close_fds=True, creationflags=0x08000000)
+            deadline = time.monotonic() + 15
+            while not Path(plan["handshake"]).is_file():
+                code = process.poll()
+                if code is not None or time.monotonic() >= deadline:
+                    if code is None:
+                        process.terminate()
+                    raise RuntimeError("PowerShell exit code: " + str(code) if code is not None else "PowerShell startup timed out (15 seconds).")
+                time.sleep(.05)
+    except (OSError, RuntimeError) as exc:
         plan_path.unlink(missing_ok=True)
-        raise
+        diagnostic = str(exc)
+        try:
+            # Bound the displayed tail; the full process output remains on disk.
+            with output_path.open("rb") as output:
+                output.seek(max(0, output_path.stat().st_size - 4096))
+                diagnostic += "\n" + output.read().decode("utf-8", errors="replace").strip()
+        except OSError:
+            pass
+        with log_path.open("a", encoding="utf-8") as log:
+            log.write(diagnostic + "\nProcess output: " + str(output_path) + "\n")
+        raise RuntimeError(tr("更新助手未能启动，当前程序保持运行。日志：{arg0}\n详情：{arg1}",
+                              arg0=log_path, arg1=diagnostic.strip())) from exc
     return plan
 
 
@@ -445,7 +468,7 @@ def last_result(cache=None):
 
 
 GITHUB_REPOSITORY = "CHNAQW/paddleocr_usage"
-DOWNLOAD_HOSTS = {"api.github.com", "github.com", "codeload.github.com",
+DOWNLOAD_HOSTS = {"api.github.com", "github.com", "codeload.github.com", "raw.githubusercontent.com",
                   "release-assets.githubusercontent.com", "objects.githubusercontent.com"}
 
 
@@ -459,7 +482,16 @@ class OnlineUpdate:
     size: int = 0
 
 
-def _github_response(url, *, stream=False, stop=lambda: False):
+class GitHubHTTPError(RuntimeError):
+    def __init__(self, status, url):
+        self.status, self.url = status, url
+        message = (tr("GitHub 拒绝了更新请求（HTTP {arg0}），可能遇到 API 限流或网络／代理拦截。请稍后重试；正式发行版检查失败时可尝试 main 渠道。\n地址：{arg1}", arg0=status, arg1=url)
+                   if status in {403, 429} else
+                   tr("GitHub 更新请求失败（HTTP {arg0}）。请稍后重试。\n地址：{arg1}", arg0=status, arg1=url))
+        super().__init__(message)
+
+
+def _github_response(url, *, stream=False, stop=lambda: False, accept="application/vnd.github+json"):
     """Follow only GitHub HTTPS redirects, without forwarding application credentials."""
     from urllib.parse import urlsplit, urljoin
     import requests
@@ -470,7 +502,7 @@ def _github_response(url, *, stream=False, stop=lambda: False):
                 or parsed.password or parsed.port not in {None, 443}):
             raise ValueError(tr("更新下载地址不属于受支持的 GitHub HTTPS 地址。"))
         try:
-            response = requests.get(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "PaddleOCR-Updater"},
+            response = requests.get(url, headers={"Accept": accept, "User-Agent": "PaddleOCR-Updater"},
                                     timeout=(10, 30), stream=stream, allow_redirects=False)
         except requests.RequestException:
             raise RuntimeError(tr("无法连接 GitHub，请检查网络或代理后重试。")) from None
@@ -486,47 +518,98 @@ def _github_response(url, *, stream=False, stop=lambda: False):
             response.close()
             if status == 404:
                 raise ValueError(tr("GitHub 尚无可用发行版或找不到目标代码，请切换更新渠道后重试。"))
-            raise RuntimeError(tr("GitHub 更新检查或下载失败（HTTP {arg0}），请稍后重试。", arg0=status))
+            raise GitHubHTTPError(status, url)
         return response
     raise RuntimeError(tr("GitHub 下载重定向次数过多。"))
 
 
-def _github_json(path, stop):
-    response = _github_response("https://api.github.com/repos/" + GITHUB_REPOSITORY + path, stream=True, stop=stop)
+def _github_bytes(url, stop, limit=4 * BLOCK_SIZE, accept="application/vnd.github+json"):
+    response = _github_response(url, stream=True, stop=stop, accept=accept)
     try:
         data = bytearray()
         for block in response.iter_content(64 * 1024):
             _cancel(stop)
             data.extend(block)
-            if len(data) > 4 * BLOCK_SIZE:
+            if len(data) > limit:
                 raise ValueError(tr("GitHub 更新元数据过大。"))
-        return json.loads(data)
+        return bytes(data)
     finally:
         response.close()
 
 
-def check_github_update(current_version, channel="release", stop=lambda: False):
-    """Only explicit checks perform network I/O. Pin source downloads to an immutable commit."""
-    base = f"https://api.github.com/repos/{GITHUB_REPOSITORY}"
-    page = f"https://github.com/{GITHUB_REPOSITORY}"
-    if channel == "main":
-        commit = _github_json("/commits/main", stop)
-        sha = commit.get("sha", "")
-        if not re.fullmatch(r"[0-9a-f]{40}", sha):
-            raise ValueError(tr("GitHub 返回的提交标识无效。"))
-        entry = _github_json("/contents/paddleocr_pdf_to_md_gui.py?ref=" + sha, stop)
-        import base64
-        if entry.get("encoding") != "base64" or entry.get("size", MAX_PAYLOAD) > BLOCK_SIZE:
-            raise ValueError(tr("GitHub 源码入口无法读取。"))
-        tree = ast.parse(base64.b64decode(entry["content"]).decode("utf-8-sig"))
+def _github_json(path, stop):
+    return json.loads(_github_bytes("https://api.github.com/repos/" + GITHUB_REPOSITORY + path, stop))
+
+
+def _main_commit_from_feed(stop):
+    """Public Atom metadata does not consume the unauthenticated REST API quota."""
+    from xml.etree import ElementTree
+    data = _github_bytes(f"https://github.com/{GITHUB_REPOSITORY}/commits/main.atom", stop,
+                         accept="application/atom+xml")
+    try:
+        root = ElementTree.fromstring(data)
+        entry = root.find("{http://www.w3.org/2005/Atom}entry")
+        identifier = entry.findtext("{http://www.w3.org/2005/Atom}id", "")
+        match = re.fullmatch(r"tag:github\.com,2008:Grit::Commit/([0-9a-f]{40})", identifier)
+        if not match:
+            raise ValueError()
+        return match.group(1), entry.findtext("{http://www.w3.org/2005/Atom}title", "")[:1500]
+    except (ElementTree.ParseError, AttributeError, ValueError) as exc:
+        raise ValueError(tr("GitHub 返回的提交标识无效。")) from exc
+
+
+def _main_source_version(sha, stop, use_api=True):
+    if use_api:
+        try:
+            entry = _github_json("/contents/paddleocr_pdf_to_md_gui.py?ref=" + sha, stop)
+            if entry.get("encoding") != "base64" or entry.get("size", MAX_PAYLOAD) > BLOCK_SIZE:
+                raise ValueError(tr("GitHub 源码入口无法读取。"))
+            code = base64.b64decode(entry["content"])
+        except GitHubHTTPError as exc:
+            if exc.status not in {403, 429}:
+                raise
+            use_api = False
+    if not use_api:
+        code = _github_bytes(f"https://raw.githubusercontent.com/{GITHUB_REPOSITORY}/{sha}/paddleocr_pdf_to_md_gui.py",
+                             stop, BLOCK_SIZE, accept="text/plain")
+    try:
+        if len(code) > BLOCK_SIZE:
+            raise ValueError()
+        tree = ast.parse(code.decode("utf-8-sig"))
         versions = [node.value.value for node in tree.body if isinstance(node, ast.Assign)
                     and any(isinstance(t, ast.Name) and t.id == "APP_VERSION" for t in node.targets)
                     and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)]
         if len(versions) != 1:
-            raise ValueError(tr("GitHub 源码入口无法读取。"))
-        version = versions[0]
-        offer = OnlineUpdate(version, base + "/zipball/" + sha,
-                             str(commit.get("commit", {}).get("message", ""))[:1500], page + "/commit/" + sha)
+            raise ValueError()
+        version_tuple(versions[0])
+        return versions[0]
+    except (SyntaxError, UnicodeError, ValueError) as exc:
+        raise ValueError(tr("GitHub 源码入口无法读取。")) from exc
+
+
+def _source_archive(sha):
+    # REST zipball downloads also consume the API quota and can return 403
+    # after a successful version check. Use GitHub's archive host directly.
+    return f"https://codeload.github.com/{GITHUB_REPOSITORY}/zip/{sha}"
+
+
+def check_github_update(current_version, channel="release", stop=lambda: False):
+    """Only explicit checks perform network I/O. Pin source downloads to an immutable commit."""
+    page = f"https://github.com/{GITHUB_REPOSITORY}"
+    if channel == "main":
+        use_api = True
+        try:
+            commit = _github_json("/commits/main", stop)
+            sha, notes = commit.get("sha", ""), str(commit.get("commit", {}).get("message", ""))[:1500]
+        except GitHubHTTPError as exc:
+            if exc.status not in {403, 429}:
+                raise
+            use_api = False
+            sha, notes = _main_commit_from_feed(stop)
+        if not re.fullmatch(r"[0-9a-f]{40}", sha):
+            raise ValueError(tr("GitHub 返回的提交标识无效。"))
+        version = _main_source_version(sha, stop, use_api)
+        offer = OnlineUpdate(version, _source_archive(sha), notes, page + "/commit/" + sha)
     elif channel == "release":
         release = _github_json("/releases/latest", stop)
         if release.get("draft") or release.get("prerelease"):
@@ -554,7 +637,7 @@ def check_github_update(current_version, channel="release", stop=lambda: False):
             sha = commit.get("sha", "")
             if not re.fullmatch(r"[0-9a-f]{40}", sha):
                 raise ValueError(tr("GitHub 返回的提交标识无效。"))
-            offer = OnlineUpdate(version, base + "/zipball/" + sha, notes, page + "/releases/tag/" + quote(tag, safe=""))
+            offer = OnlineUpdate(version, _source_archive(sha), notes, page + "/releases/tag/" + quote(tag, safe=""))
     else:
         raise ValueError(tr("请选择有效的更新渠道。"))
     return offer if version_tuple(offer.version) > version_tuple(current_version) else None
@@ -569,7 +652,7 @@ def download_github_update(offer, current_version, cache=None, stop=lambda: Fals
     directory = Path(tempfile.mkdtemp(prefix="download-", dir=cache))
     package, response = None, None
     try:
-        response = _github_response(offer.url, stream=True, stop=stop)
+        response = _github_response(offer.url, stream=True, stop=stop, accept="application/zip")
         declared = int(response.headers.get("Content-Length", 0))
         if declared < 0 or declared > MAX_PAYLOAD or (offer.size and declared and declared != offer.size):
             raise ValueError(tr("在线更新包大小超出支持范围。"))

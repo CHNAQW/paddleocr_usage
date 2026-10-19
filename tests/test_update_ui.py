@@ -33,7 +33,7 @@ class UpdatePanelTests(unittest.TestCase):
         self.exe.write_bytes(pe_payload())
         new = self.folder / "new.exe"
         new.write_bytes(pe_payload())
-        self.zip = updates.build_package(new, "26.10.19.04", self.folder)
+        self.zip = updates.build_package(new, "26.10.19.05", self.folder)
         self.root.update()
 
     def tearDown(self):
@@ -61,7 +61,7 @@ class UpdatePanelTests(unittest.TestCase):
                 self.root.update()
                 time.sleep(.01)
         self.assertIsNotNone(self.panel.staged)
-        self.assertIn("26.10.19.04", self.panel.details.get())
+        self.assertIn("26.10.19.05", self.panel.details.get())
         self.assertEqual(str(self.panel.install_button.cget("state")), "disabled")
         self.assertTrue(self.zip.is_file())
 
@@ -122,7 +122,7 @@ class UpdatePanelTests(unittest.TestCase):
         self.assertIsNone(self.panel.thread)
 
     def test_explicit_online_check_never_downloads_or_installs_and_uses_selected_channel(self):
-        offer = updates.OnlineUpdate("26.10.19.04", "https://github.com/update.zip", "Changes", "https://github.com/release")
+        offer = updates.OnlineUpdate("26.10.19.05", "https://github.com/update.zip", "Changes", "https://github.com/release")
         self.panel.channel.set("最新代码（main）")
         with patch.object(update_ui, "check_github_update", return_value=offer) as check, \
                 patch.object(update_ui, "download_github_update") as download, patch.object(update_ui, "launch_install") as install:
@@ -135,7 +135,7 @@ class UpdatePanelTests(unittest.TestCase):
         self.assertEqual(str(self.panel.download_button.cget("state")), "normal")
 
     def test_online_download_reuses_package_validation_and_waits_for_install_confirmation(self):
-        offer = updates.OnlineUpdate("26.10.19.04", "https://github.com/update.zip", "", "")
+        offer = updates.OnlineUpdate("26.10.19.05", "https://github.com/update.zip", "", "")
         self.panel.online = offer
         self.panel.executable = self.exe
         def download(*args, **kwargs):

@@ -11,7 +11,7 @@ from dataclasses import asdict
 from pathlib import Path
 from tkinter import ttk
 
-from ui_i18n import ChoiceVar, LocalizedVar, filedialog, localize_widgets, messagebox, tr, ui_text
+from ui_i18n import ChoiceVar, LocalizedVar, copy_text, filedialog, localize_widgets, messagebox, tr, ui_text
 from responsive_ui import AdaptiveLabel, ResponsiveForm
 from model_budget import DEFAULT_CONTEXT_LIMIT, ModelLimits, positive_integer
 
@@ -557,6 +557,8 @@ class LiteratureControls:
             scrollbar = ttk.Scrollbar(frame, command=body.yview)
             scrollbar.grid(row=0, column=1, sticky="ns")
             body.configure(yscrollcommand=scrollbar.set)
+            ttk.Button(frame, text=tr("复制全文"), command=lambda value=text: copy_text(dialog, value)).grid(
+                row=1, column=0, sticky="w", pady=(8, 0))
             notebook.add(frame, text=title)
         chosen = False
         timer = None

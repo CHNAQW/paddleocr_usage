@@ -192,8 +192,14 @@ class UpdateTests(unittest.TestCase):
                 self.assertEqual(plan["kind"], "source" if source else "exe")
                 self.assertEqual(plan["target"], str(current))
                 arguments = popen.call_args.args[0]
+                self.assertEqual(arguments[-2], '-EncodedCommand')
+                import base64
+                decoded_script = base64.b64decode(arguments[-1]).decode('utf-16le')
+                self.assertEqual(decoded_script, Path(updates.__file__).with_name('update_helper.ps1').read_text(encoding='utf-8-sig'))
                 self.assertNotIn(str(current), arguments[-1])
                 self.assertNotIn("Bypass", arguments)
+                self.assertEqual(popen.call_args.kwargs['stderr'], updates.subprocess.STDOUT)
+                self.assertEqual(popen.call_args.kwargs['creationflags'], 0x08000000)
                 actual = json.loads(Path(popen.call_args.kwargs["env"]["PADDLEOCR_UPDATE_PLAN"]).read_text())
                 self.assertEqual(actual["target"], str(current))
 
@@ -220,6 +226,42 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(self.exe.read_bytes(), original)
         self.assertFalse((package.directory / "install.json").exists())
         self.assertTrue(package.payload.is_file())
+        self.assertTrue((package.directory / 'install.log').is_file())
+        self.assertIn('PowerShell exit code: 1', (package.directory / 'install.log').read_text())
+        self.assertEqual(len(list(package.directory.glob('helper-output-*.log'))), 1)
+
+    def test_helper_stderr_survives_early_failure_and_a_second_attempt(self):
+        package = updates.import_package(self.package(), self.current, cache=self.cache)
+        def failed_helper(*args, **kwargs):
+            kwargs['stdout'].write(b'ParserError: Unexpected token & in command line.\n')
+            kwargs['stdout'].flush()
+            return Mock(poll=Mock(return_value=1))
+        for _attempt in range(2):
+            with patch.object(sys, 'platform', 'win32'), patch.object(updates.subprocess, 'Popen', side_effect=failed_helper):
+                with self.assertRaisesRegex(RuntimeError, 'ParserError'):
+                    updates.launch_install(package, self.exe, self.current, cache=self.cache)
+        self.assertEqual(len(list(package.directory.glob('helper-output-*.log'))), 2)
+        self.assertIn('ParserError', (package.directory / 'install.log').read_text())
+        self.assertTrue(package.payload.is_file())
+        self.assertFalse((package.directory / 'install.json').exists())
+
+    def test_missing_powershell_and_timeout_leave_real_diagnostics_and_original_exe(self):
+        for timeout in (False, True):
+            with self.subTest(timeout=timeout):
+                package = updates.import_package(self.package(), self.current, cache=self.cache)
+                original = self.exe.read_bytes()
+                process = Mock(poll=Mock(return_value=None))
+                with patch.object(sys, 'platform', 'win32'), \
+                        patch.object(updates.time, 'monotonic', side_effect=[0, 16]), \
+                        patch.object(updates.subprocess, 'Popen', return_value=process,
+                                     side_effect=None if timeout else FileNotFoundError('powershell.exe missing')):
+                    with self.assertRaisesRegex(RuntimeError, '更新助手'):
+                        updates.launch_install(package, self.exe, self.current, cache=self.cache)
+                if timeout:
+                    process.terminate.assert_called_once()
+                self.assertTrue((package.directory / 'install.log').stat().st_size)
+                self.assertEqual(self.exe.read_bytes(), original)
+                self.assertTrue(package.payload.is_file())
 
     def test_last_result_handles_powershell_bom_and_invalid_json(self):
         self.cache.mkdir()

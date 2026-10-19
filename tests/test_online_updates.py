@@ -43,7 +43,7 @@ class OnlineUpdateTests(unittest.TestCase):
     def test_release_without_zip_pins_source_archive_to_release_commit(self):
         with patch.object(updates, '_github_json', side_effect=[self.release(), {'sha': 'a' * 40}]):
             offer = updates.check_github_update(CURRENT)
-        self.assertTrue(offer.url.endswith('/zipball/' + 'a' * 40))
+        self.assertEqual(offer.url, f'https://codeload.github.com/{updates.GITHUB_REPOSITORY}/zip/' + 'a' * 40)
 
     def test_main_reads_literal_version_without_executing_code_and_pins_commit(self):
         code = 'APP_VERSION = "' + NEXT + '"\nraise RuntimeError("never execute")\n'
@@ -61,6 +61,53 @@ class OnlineUpdateTests(unittest.TestCase):
                 self.assertIsNone(updates.check_github_update(CURRENT))
             self.assertEqual(get.call_count, 1)
 
+    def test_api_403_and_429_use_public_feed_and_pinned_raw_source(self):
+        sha = 'c' * 40
+        feed = ('<feed xmlns="http://www.w3.org/2005/Atom"><entry>'
+                '<id>tag:github.com,2008:Grit::Commit/' + sha + '</id><title>Fix updates</title>'
+                '</entry></feed>').encode()
+        source = ('APP_VERSION = "' + NEXT + '"\nraise RuntimeError("never execute")\n').encode()
+        for status in (403, 429):
+            with self.subTest(status=status), patch.object(requests, 'get', side_effect=[
+                    response(status=status), response(feed), response(source)]) as get:
+                offer = updates.check_github_update(CURRENT, 'main')
+            self.assertEqual(offer.version, NEXT)
+            self.assertEqual(offer.url, f'https://codeload.github.com/{updates.GITHUB_REPOSITORY}/zip/{sha}')
+            calls = [call.args[0] for call in get.call_args_list]
+            self.assertTrue(calls[1].endswith('/commits/main.atom'))
+            self.assertEqual(calls[2], f'https://raw.githubusercontent.com/{updates.GITHUB_REPOSITORY}/{sha}/paddleocr_pdf_to_md_gui.py')
+            self.assertEqual(get.call_args.kwargs['headers']['Accept'], 'text/plain')
+
+    def test_contents_api_403_reuses_known_commit_without_a_new_branch_lookup(self):
+        sha = 'd' * 40
+        content = ('APP_VERSION = "' + NEXT + '"').encode()
+        with patch.object(requests, 'get', side_effect=[response(json.dumps({'sha': sha}).encode()),
+                          response(status=403), response(content)]) as get:
+            offer = updates.check_github_update(CURRENT, 'main')
+        self.assertTrue(offer.url.endswith('/' + sha))
+        self.assertEqual(get.call_count, 3)
+        self.assertIn('/' + sha + '/', get.call_args.args[0])
+
+    def test_invalid_fallback_metadata_and_cancellation_cannot_offer_an_update(self):
+        for feed in (b'<html>Blocked</html>', b'<feed>',
+                     b'<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>evil</id></entry></feed>'):
+            with patch.object(requests, 'get', side_effect=[response(status=403), response(feed)]) as get:
+                with self.assertRaises(ValueError):
+                    updates.check_github_update(CURRENT, 'main')
+            self.assertEqual(get.call_count, 2)
+        with patch.object(requests, 'get') as get, self.assertRaises(updates.UpdateCancelled):
+            updates.check_github_update(CURRENT, 'main', stop=lambda: True)
+        get.assert_not_called()
+
+    def test_403_diagnostic_names_failed_url_and_never_forwards_application_tokens(self):
+        with patch.object(requests, 'get', return_value=response(status=403)) as get:
+            with self.assertRaises(updates.GitHubHTTPError) as failure:
+                updates.check_github_update(CURRENT, 'release')
+        self.assertEqual(failure.exception.status, 403)
+        self.assertIn('https://api.github.com/repos/' + updates.GITHUB_REPOSITORY, str(failure.exception))
+        self.assertIn('403', str(failure.exception))
+        self.assertNotIn('Authorization', get.call_args.kwargs['headers'])
+
     def test_download_imports_through_existing_validator_and_keeps_original_installation(self):
         executable = self.root / 'next.exe'
         executable.write_bytes(pe_payload())
@@ -75,6 +122,7 @@ class OnlineUpdateTests(unittest.TestCase):
         self.assertTrue(package.payload.is_file())
         self.assertFalse(get.call_args.kwargs['allow_redirects'])
         self.assertNotIn('Authorization', get.call_args.kwargs['headers'])
+        self.assertEqual(get.call_args.kwargs['headers']['Accept'], 'application/zip')
         self.assertEqual(executable.read_bytes(), pe_payload())
         self.assertFalse(list((self.root / 'cache').glob('download-*')))
         updates.discard_package(package)

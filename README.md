@@ -9,8 +9,8 @@ For more information, please read the README. Terms And Condition please read be
 更多信息请参阅 README，使用条件请见下方条款。
 
 
-**Version: 26.10.19.03**
-**版本：26.10.19.03**
+**Version: 26.10.19.04**
+**版本：26.10.19.04**
 
 **Primary platform: Windows 10/11**  
 **主要适用平台：Windows 10/11**
@@ -21,8 +21,8 @@ For more information, please read the README. Terms And Condition please read be
 A Windows desktop tool for batch-converting PDF files to Markdown through the PaddleOCR online asynchronous API.  
 本工具是一个 Windows 桌面程序，用于通过 PaddleOCR 在线异步 API 批量将 PDF 转换为 Markdown。
 
-Version `26.10.19.03` provides two entries: **PDF OCR 转 MD功能** and **外文文献翻译功能**. The OCR features described below are retained, with optional translation, quality checks, and reviewed-file GitHub uploads.  
-`26.10.19.03` 提供 **PDF OCR 转 MD功能** 和 **外文文献翻译功能** 两个入口，保留下方介绍的 OCR 功能，并增加可选翻译、质量检查和核验后 GitHub 上传。
+Version `26.10.19.04` provides two entries: **PDF OCR 转 MD功能** and **外文文献翻译功能**. The OCR features described below are retained, with optional translation, quality checks, and reviewed-file GitHub uploads.  
+`26.10.19.04` 提供 **PDF OCR 转 MD功能** 和 **外文文献翻译功能** 两个入口，保留下方介绍的 OCR 功能，并增加可选翻译、质量检查和核验后 GitHub 上传。
 
 It supports page-level progress reporting, Markdown word-count quality checks with automatic resubmission, manual status checks, automatic retry when the submission queue is full, automatic splitting of PDFs larger than 50 MB, JSON/JSONL recovery, and one-click EXE packaging.  
 本工具支持页级进度显示、Markdown 字数质量检测与自动重新提交、手动查询任务状态、提交队列已满时自动重试、自动拆分超过 50MB 的 PDF、JSON/JSONL 修复，以及一键打包 EXE。
@@ -45,7 +45,7 @@ It supports page-level progress reporting, Markdown word-count quality checks wi
 12. [Privacy and Security   隐私与安全](#privacy)
 13. [Known Limitations   已知限制](#limitations)
 14. [Development and Tests   开发与测试](#development)
-15. [Version 26.10.19.03 Changes   26.10.19.03 更新说明](#release-notes)
+15. [Version 26.10.19.04 Changes   26.10.19.04 更新说明](#release-notes)
 16. [License   许可证](#license)
 
 ---
@@ -194,7 +194,7 @@ build_paddleocr_pdf_to_md_EXE.bat
 README.md
 app_icon.ico
 app_icon.png
-version_info_26.10.19.03.txt
+version_info_26.10.19.04.txt
 requirements.txt
 使用说明.txt
 tests/
@@ -456,6 +456,9 @@ A closed dropdown no longer changes its value when the mouse wheel moves over it
 
 ### Local ZIP and GitHub Updates   本地 ZIP 与 GitHub 联网更新
 
+Use **Copy log** beside the runtime log or **Copy update details** on the Updates page when reporting a failure. Text fields, previews and status labels support right-click copying and Ctrl+C (Ctrl+A selects all text); adaptive status labels copy their full value. Error, warning and information dialogs have selectable text and a **Copy message** button. Draft/report tabs also provide **Copy full text**.  
+反馈问题时，可点击运行日志旁的 **复制日志**，或更新页的 **复制更新信息**。文本框、预览和状态标签支持右键复制及 Ctrl+C（Ctrl+A 全选文本）；自适应状态标签复制完整内容。报错、警告和信息弹窗文字可选择，另有 **复制信息** 按钮；稿件／报告页提供 **复制全文**。
+
 Open **Preferences → Updates**. For offline updates, select **Choose update ZIP**. For online updates, choose **Official releases** or **Latest code (main)**, click **Check GitHub for updates**, review the version and notes, then click **Download this version**. Both routes validate the archive before enabling **Install and restart**. Downloads never install automatically. Finish OCR, translation, checks and manual uploads before installation.  
 打开 **偏好设置 → 软件更新**。离线更新点击 **选择更新 ZIP**；联网更新选择 **正式发行版（Release）** 或 **最新代码（main）**，点击 **检查 GitHub 更新**，查看版本与说明后点击 **下载此版本**。两条路径均须通过更新包校验，再点击 **安装并重启**；下载完成不会自动安装。安装前须结束 OCR、翻译、检查及手动上传任务。
 
@@ -465,17 +468,23 @@ GitHub 更新来源固定为 `CHNAQW/paddleocr_usage`。正式发行版优先使
 Downloads use GitHub HTTPS endpoints with bounded streaming, size checks and cancellation. Published asset SHA-256 is checked when supplied by GitHub, followed by the same version, dependency and file validation as local ZIPs. A failed, cancelled, truncated or mismatched download is discarded and the running application stays open. Anonymous GitHub API limits and network/proxy availability apply.  
 下载使用 GitHub HTTPS 地址，支持流式大小限制和取消；GitHub 提供附件 SHA-256 时先检查下载指纹，再执行与本地 ZIP 相同的版本、依赖和文件校验。下载失败、取消、不完整或版本不一致时清理临时文件，当前程序保持运行；匿名 GitHub API 限额以及网络／代理状况仍会影响检查和下载。
 
+Source ZIPs now download directly from `codeload.github.com` at an immutable commit, without another REST zipball request. Main-channel metadata falls back to GitHub's official public Atom feed and pinned `raw.githubusercontent.com` source after API HTTP 403/429 responses. Release metadata still uses the API. A proxy can also cause 403 responses; check its GitHub routing rules. If the fallback is also blocked, the failed address remains available to copy; no application API key is sent.  
+源码 ZIP 现在直接从 `codeload.github.com` 下载固定提交，省去额外的 REST zipball 请求。main 渠道的 API 元数据返回 403／429 时，尝试 GitHub 官方公开 Atom 订阅与 `raw.githubusercontent.com` 固定提交源码；正式发行版元数据仍使用 API。代理也可能导致 403，请检查 GitHub 的代理规则。备用入口也不可访问时会保留失败地址供复制，不发送应用中的 API Key。
+
 **Ordinary GitHub source ZIP:** download this repository's source ZIP yourself and import it without unpacking or repacking. A single enclosing folder such as `paddleocr_usage-main/` is supported. The updater reads the literal `APP_VERSION`, checks syntax and dependencies, and installs runtime source files in `%LOCALAPPDATA%\PaddleOCR\updates`. On restart, the stable EXE launcher executes the updated application modules through its bundled Python runtime. Importing and validating the archive does not execute its code.  
 **GitHub 原始源码 ZIP：**自行下载本仓库的源码 ZIP，直接导入即可，无须解压或重新打包；支持 `paddleocr_usage-main/` 等单层外目录。程序读取源码中的 `APP_VERSION`，检查语法与依赖，并将运行所需源码安装到 `%LOCALAPPDATA%\PaddleOCR\updates`。重启后由固定 EXE 启动器使用内置 Python 运行时加载新版模块。读取和校验 ZIP 时不会执行其中的代码。
 
 The source version must be newer than the running version. The dependency list must match the bundled runtime, and statically imported external modules must be available. Changes to Python, the protected launcher, or unbundled dependencies require a full program update. Dynamic imports and startup behavior are verified by startup acknowledgement rather than guaranteed by static checks. The program records file hashes and checks them again before activation and on startup.  
 源码版本须高于当前运行版本，依赖清单须与内置运行时一致，静态导入的外部模块也须已具备。更换 Python、修改受保护启动器或增加未打包依赖时，需要完整程序更新包；静态检查不能保证所有动态导入和启动行为，仍会通过启动确认机制验证。安装前及每次启动时会再次检查已安装源码的文件哈希。
 
-**Full program ZIP:** maintainers run `build_paddleocr_pdf_to_md_EXE.bat`, which now builds the stable launcher and generates both the normal EXE and `PaddleOCR_Update_26.10.19.03.zip`. This ZIP contains the new EXE, `update.json` and checksum. It can replace the running program after it exits, while retaining a backup. A publisher can also run `python make_update_package.py <compiled.exe>` to generate it.  
-**完整程序 ZIP：**维护者运行 `build_paddleocr_pdf_to_md_EXE.bat`，现在会编译固定启动器，同时生成普通 EXE 及 `PaddleOCR_Update_26.10.19.03.zip`。ZIP 内包含新版 EXE、`update.json` 和校验文件；当前程序退出后可替换 EXE，并保留旧版备份。也可执行 `python make_update_package.py <已编译的.exe>` 单独生成完整更新包。
+**Full program ZIP:** maintainers run `build_paddleocr_pdf_to_md_EXE.bat`, which now builds the stable launcher and generates both the normal EXE and `PaddleOCR_Update_26.10.19.04.zip`. This ZIP contains the new EXE, `update.json` and checksum. It can replace the running program after it exits, while retaining a backup. A publisher can also run `python make_update_package.py <compiled.exe>` to generate it.  
+**完整程序 ZIP：**维护者运行 `build_paddleocr_pdf_to_md_EXE.bat`，现在会编译固定启动器，同时生成普通 EXE 及 `PaddleOCR_Update_26.10.19.04.zip`。ZIP 内包含新版 EXE、`update.json` 和校验文件；当前程序退出后可替换 EXE，并保留旧版备份。也可执行 `python make_update_package.py <已编译的.exe>` 单独生成完整更新包。
 
 Installation saves the current settings and restarts through a separate Windows helper. The current app exits only after the helper acknowledges startup; if the helper cannot start, the app stays open. The new GUI must acknowledge the expected version within 120 seconds; failed startup triggers a recovery attempt. Source updates restore the previous activation record; full updates restore the old EXE. Unreadable directories, active tasks and invalid packages block installation. Updates do not rewrite literature; configuration stays at its existing location, and unknown future configuration fields survive fallback. Recovery results and logs are available on the Updates page.  
 安装时保存当前设置，并通过独立 Windows 更新助手重启；只有收到助手就绪确认后主程序才会退出，助手无法启动时会保持当前程序运行。新 GUI 须在 120 秒内确认预期版本，启动失败时会尝试恢复：源码更新恢复原激活记录，完整更新恢复旧 EXE。目录不可写、任务未结束或更新包无效时不会安装。更新助手不改写文献，配置沿用原位置，退回内置版本时也保留新版配置中的未知字段。可在软件更新页查看恢复结果和日志位置。
+
+The helper is launched with a UTF-16LE encoded PowerShell command, preserving quotes, line breaks and Unicode paths. `install.log` is created before launch, and `helper-output-<id>.log` captures process output even if the helper exits before acknowledging startup. A failed start leaves the app open and reports the exit/timeout details; a retry keeps earlier process logs. If an older EXE cannot start its own helper, first build and manually replace it with `26.10.19.04`; a new ZIP cannot repair the already-running updater by itself.  
+助手使用 UTF-16LE 编码的 PowerShell 命令启动，保留引号、换行与中文路径。启动前即创建 `install.log`，`helper-output-<id>.log` 单独捕获进程输出，助手尚未确认启动就退出时也有记录。启动失败时保持当前程序运行，显示退出／超时详情，重试保留之前的进程日志。若旧 EXE 无法启动自己的助手，需要先打包并手动换成 `26.10.19.04`；新版 ZIP 无法自行修复正在运行的旧更新器。
 
 Older EXEs do not contain this launcher: manually replace them once with the first update-enabled EXE. After a source update, the GUI reports the source version while the EXE filename and Windows file properties retain the launcher's build version. Copying only that EXE to another computer carries the built-in version, not source updates stored in the previous user's profile. Import only packages from a trusted publisher: SHA-256 detects changes but is not a publisher signature. Automatic installation is for the Windows EXE; source mode and other platforms can preview packages.  
 旧 EXE 没有此启动机制，首次须手动换成支持更新的新 EXE。源码更新后，界面显示源码版本，磁盘 EXE 文件名及 Windows 文件属性仍是启动器的构建版本；仅将该 EXE 拷到另一台电脑，会携带其内置版本，不会携带原用户目录里的后续源码更新。只导入可信发布者提供的包，SHA-256 用于检查完整性，不是发布者数字签名。自动安装仅用于 Windows EXE，源码运行与其他平台可预览更新包。
@@ -522,8 +531,8 @@ Do not share it, upload it publicly, or include it in a public repository.
 The application currently provides the following models.  
 程序当前提供以下模型。
 
-This list is current for version `26.10.19.03`.  
-以下列表对应 `26.10.19.03` 当前版本。
+This list is current for version `26.10.19.04`.  
+以下列表对应 `26.10.19.04` 当前版本。
 
 ```text
 PaddleOCR-VL-1.6
@@ -535,8 +544,8 @@ PP-StructureV3
 The default model is `PaddleOCR-VL-1.6`.  
 默认模型为 `PaddleOCR-VL-1.6`。
 
-Version 26.10.19.03 retains the post-OCR word-count quality check and automatic resubmission, with `PaddleOCR-VL-1.6` as the default OCR model.
-26.10.19.03 版本保留 OCR 后字数质量检测与自动重新提交功能，默认 OCR 模型继续使用 `PaddleOCR-VL-1.6`。
+Version 26.10.19.04 retains the post-OCR word-count quality check and automatic resubmission, with `PaddleOCR-VL-1.6` as the default OCR model.
+26.10.19.04 版本保留 OCR 后字数质量检测与自动重新提交功能，默认 OCR 模型继续使用 `PaddleOCR-VL-1.6`。
 
 Actual availability depends on the PaddleOCR account and server-side API configuration.  
 模型是否实际可用，取决于 PaddleOCR 账户权限和服务端 API 配置。
@@ -651,9 +660,9 @@ For PDFs larger than 50 MB, the check is applied to every automatically split pa
 
 ### Optional OpenAI-Compatible LLM Review   可选 LLM 核验
 
-Version `26.10.19.03` can optionally send each generated Markdown file to an OpenAI-compatible Chat Completions API (for example DeepSeek). Each chunk's raw LLM answer is immediately shown in the runtime log. A fresh OCR job is submitted only when the answer confirms missing pages or a severe logic-breaking error; ordinary OCR, layout, table, formula, ordering, or duplication defects do not trigger reconversion. Before resubmission, the app verifies deletion of the current `.md`, result JSON, review report, and jobId cache and logs the deleted paths. An LLM request failure is logged without deleting a successful OCR result.
+Version `26.10.19.04` can optionally send each generated Markdown file to an OpenAI-compatible Chat Completions API (for example DeepSeek). Each chunk's raw LLM answer is immediately shown in the runtime log. A fresh OCR job is submitted only when the answer confirms missing pages or a severe logic-breaking error; ordinary OCR, layout, table, formula, ordering, or duplication defects do not trigger reconversion. Before resubmission, the app verifies deletion of the current `.md`, result JSON, review report, and jobId cache and logs the deleted paths. An LLM request failure is logged without deleting a successful OCR result.
 
-`26.10.19.03` 可选接入 OpenAI-compatible Chat Completions API（例如 DeepSeek），并在运行日志中逐段即时显示 LLM 原始回答。只有确认缺页、少页、漏页或足以破坏原意的严重逻辑错误时，才会重新转换；普通 OCR、排版、表格、公式、顺序或重复问题不触发重转。重新提交前，程序会核实删除本次 `.md`、结果 JSON、核验报告和 jobId 缓存，并在日志列出已删除路径；LLM 请求失败只记录警告，不删除已成功生成的 OCR 结果。
+`26.10.19.04` 可选接入 OpenAI-compatible Chat Completions API（例如 DeepSeek），并在运行日志中逐段即时显示 LLM 原始回答。只有确认缺页、少页、漏页或足以破坏原意的严重逻辑错误时，才会重新转换；普通 OCR、排版、表格、公式、顺序或重复问题不触发重转。重新提交前，程序会核实删除本次 `.md`、结果 JSON、核验报告和 jobId 缓存，并在日志列出已删除路径；LLM 请求失败只记录警告，不删除已成功生成的 OCR 结果。
 
 1. In the PDF OCR page, enable **Check OCR quality with a model**.
 2. Open **Preferences → OCR & checks** and enter the provider Base URL (the default is `https://api.deepseek.com/v1`) and API Key.
@@ -1175,8 +1184,8 @@ The EXE and its SHA-256 record are generated at the following locations.
 EXE 及其 SHA-256 校验文件会生成在以下位置。
 
 ```text
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.19.03.exe
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.19.03.exe.sha256.txt
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.19.04.exe
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.19.04.exe.sha256.txt
 ```
 
 Publish the EXE directly and provide the checksum alongside it. The script opens File Explorer with the generated EXE selected.
@@ -1213,8 +1222,8 @@ Check whether security software blocked Python or pip.
 
 ### The Model List Still Shows an Older Version  模型列表仍然显示旧版本
 
-Confirm that the application title shows `26.10.19.03`.  
-确认程序标题中显示 `26.10.19.03`。
+Confirm that the application title shows `26.10.19.04`.  
+确认程序标题中显示 `26.10.19.04`。
 
 Check the folder from which you launched `paddleocr_pdf_to_md_gui.py` or the versioned EXE.  
 检查你启动 `paddleocr_pdf_to_md_gui.py` 或带版本号 EXE 的所在文件夹。
@@ -1292,7 +1301,7 @@ Then check the following path.
 随后检查以下路径。
 
 ```text
-PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.19.03.exe
+PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.19.04.exe
 ```
 
 You can also open the following text file.  
@@ -1304,19 +1313,19 @@ EXE位置.txt
 
 ### Bad Image / status 0xc0e90002   DLL 错误 / 状态 0xc0e90002
 
-The release remains one independent EXE. The current one-file build uses a stable per-user cache under `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.19.03` instead of a random `%TEMP%\onefile_*` directory. This avoids races with Temp cleanup and lets security software inspect the extracted runtime once rather than at every launch.  
-发布物仍然是一个独立 EXE。当前单文件构建使用 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.19.03` 下的固定用户缓存，不再使用随机 `%TEMP%\onefile_*` 目录。这样可避免与临时目录清理发生竞争，也无需安全软件在每次启动时重新检查运行组件。
+The release remains one independent EXE. The current one-file build uses a stable per-user cache under `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.19.04` instead of a random `%TEMP%\onefile_*` directory. This avoids races with Temp cleanup and lets security software inspect the extracted runtime once rather than at every launch.  
+发布物仍然是一个独立 EXE。当前单文件构建使用 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.19.04` 下的固定用户缓存，不再使用随机 `%TEMP%\onefile_*` 目录。这样可避免与临时目录清理发生竞争，也无需安全软件在每次启动时重新检查运行组件。
 
 If an older EXE reports this error, delete that old EXE and its old `%TEMP%\onefile_*` folder, rebuild with the current BAT, and send the newly generated EXE together with its SHA-256 record. The recipient should verify that the downloaded EXE hash matches before running it.
 如果旧 EXE 出现此错误，请删除旧 EXE 及其旧 `%TEMP%\onefile_*` 目录，用当前 BAT 重新构建，并将新 EXE 与 SHA-256 记录一起发送。接收者运行前应确认下载所得 EXE 的哈希一致。
 
-If the current build is interrupted during its first extraction, close the application, delete `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.19.03`, and launch the same EXE again so it can recreate a clean cache. Do not disable antivirus protection or add an exclusion.  
-如果当前构建首次释放组件时被中断，请关闭程序，删除 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.19.03`，然后重新启动同一个 EXE，让它重建干净缓存。不要关闭杀毒保护，也不要添加排除项。
+If the current build is interrupted during its first extraction, close the application, delete `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.19.04`, and launch the same EXE again so it can recreate a clean cache. Do not disable antivirus protection or add an exclusion.  
+如果当前构建首次释放组件时被中断，请关闭程序，删除 `%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.19.04`，然后重新启动同一个 EXE，让它重建干净缓存。不要关闭杀毒保护，也不要添加排除项。
 
 ### Antivirus Reports AndroidOS/Multiverze or Another Threat   杀毒软件报告 AndroidOS/Multiverze 或其他威胁
 
-The public artifact is now a single `PaddleOCR_PDF_to_MD_26.10.19.03.exe`, compiled with Nuitka rather than bundled with PyInstaller. It uses uncompressed one-file mode to avoid UPX and compressed PyInstaller bootloader patterns; no code-signing certificate is required.  
-现在的公开发布物就是单个 `PaddleOCR_PDF_to_MD_26.10.19.03.exe`。它改用 Nuitka 编译，不再使用 PyInstaller 打包，并采用无压缩单文件模式，以避开 UPX 和压缩式 PyInstaller 引导器特征；不要求代码签名证书。
+The public artifact is now a single `PaddleOCR_PDF_to_MD_26.10.19.04.exe`, compiled with Nuitka rather than bundled with PyInstaller. It uses uncompressed one-file mode to avoid UPX and compressed PyInstaller bootloader patterns; no code-signing certificate is required.  
+现在的公开发布物就是单个 `PaddleOCR_PDF_to_MD_26.10.19.04.exe`。它改用 Nuitka 编译，不再使用 PyInstaller 打包，并采用无压缩单文件模式，以避开 UPX 和压缩式 PyInstaller 引导器特征；不要求代码签名证书。
 
 The build no longer waits for an antivirus alert and then deletes the EXE. Instead, Python modules are translated to C, compiled with Nuitka's managed MinGW64 toolchain, linked with LTO, and placed in an uncompressed one-file payload. This targets the packaging characteristics that caused the previous alert while preserving direct EXE distribution.
 构建流程不再等杀毒软件告警后删除 EXE。Python 模块会转换为 C，使用 Nuitka 管理的 MinGW64 工具链编译，以 LTO 链接，并放入无压缩单文件载荷中。这样是在保留单 EXE 直接发布的同时，针对旧版告警涉及的打包特征进行处理。
@@ -1325,8 +1334,8 @@ No unsigned build system can guarantee acceptance by every antivirus engine beca
 任何无签名构建方式都无法保证被每个杀毒引擎接受，因为云信誉和启发式规则会独立变化。如果 Microsoft 仍把这一份干净的 Nuitka 构建识别为 `AndroidOS/Multiverze`，请将准确的 EXE 提交给 Microsoft Security Intelligence 并选择“错误检测”。不要关闭杀毒保护，也不要让接收者添加排除项。
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\PaddleOCR_PDF_to_MD_26.10.19.03.exe
-Get-Content .\PaddleOCR_PDF_to_MD_26.10.19.03.exe.sha256.txt
+Get-FileHash -Algorithm SHA256 .\PaddleOCR_PDF_to_MD_26.10.19.04.exe
+Get-Content .\PaddleOCR_PDF_to_MD_26.10.19.04.exe.sha256.txt
 ```
 
 ### Why the Build Environment Is Recreated   为什么构建虚拟环境会被重建
@@ -1441,10 +1450,18 @@ It builds a small probe and verifies built-in code, a source override, tamper re
 
 <a id="release-notes"></a>
 
-## 15. Version 26.10.19.03 Changes   26.10.19.03 更新说明
+## 15. Version 26.10.19.04 Changes   26.10.19.04 更新说明
 
-This release only bumps the version to test remote updates; functionality is unchanged from `26.10.19.02`. The existing features below are retained.  
-本次仅提升版本号，用于测试远程更新；功能与 `26.10.19.02` 相同，下述已有功能保持不变。
+Fixes online source downloads by using GitHub’s official archive host directly. Main-channel checks can use GitHub’s public commit feed and pinned raw source when REST requests return HTTP 403/429. All existing version, dependency, integrity and startup checks remain in place.  
+修复联网源码下载：直接使用 GitHub 官方源码下载地址，main 渠道遇到 REST API 403／429 时尝试公开提交订阅与固定提交的原始源码。保留版本、依赖、完整性及启动核验。
+
+The Windows helper uses a UTF-16LE encoded PowerShell command, with an installation log created before launch and separate captured process output. Early exits, missing PowerShell and timeouts now leave readable diagnostics; failed startup keeps the running app and permits retry.  
+Windows 更新助手改用 UTF-16LE 编码命令，启动前创建安装日志并单独保存进程输出。提前退出、找不到 PowerShell 或超时均保留可读诊断；启动失败时保持当前程序和更新包，允许重试。
+
+Adds copy buttons for logs, update details and document previews, plus selectable error/information dialogs. Text controls, paths and status labels support right-click copying and Ctrl+C; adaptive labels copy their full text. Copy actions are available in Chinese and English.  
+新增日志、更新信息和稿件预览复制按钮，报错／信息弹窗文字可选择复制；文本控件、路径与状态标签支持右键复制和 Ctrl+C，自适应标签复制完整文字。复制操作提供中英界面。
+
+### Retained Features   保留的已有功能
 
 Adds **Format MD**: one formatting pass followed by independent verification, separate model selection, token-budget chunking, protected source/output paths and `.formatting.json` reports. No second formatted candidate or automatic rewrite is generated. Originals and translations can both be formatted.  
 增加 **MD 整理**：一次排版后独立核验，分别指定模型，按 token 预算分段，保护原文／已有输出并生成 `.formatting.json`。不生成第二候选整理稿，也不自动改写；原文和译文均可整理。
@@ -1455,8 +1472,8 @@ Adds an optional shared provider, Base URL and API key for all LLM tasks, keepin
 Unresolved translation/formatting issues show the source, available drafts and findings, with keep-first, discard-and-retry, and keep-second only when it exists. Kept disputed drafts stay pending; model arbitration still runs first when selected, and retries are explicit and scoped to the current chunk/file.  
 翻译／整理疑点弹窗展示原文、已有稿件及问题，提供保留第一稿、删除并重试，以及仅在确有第二稿时显示保留第二稿；保留争议稿仍待处理。已选模型裁决时仍先裁决，重试只由用户触发并限定当前分段／文件。
 
-Version `26.10.19.03` adapts sidebar width to navigation text and font metrics, recalculates it when the interface language changes, and switches to top navigation when width or height is limited. The original icon, shared background, visible tools and compact-window logs remain available.  
-`26.10.19.03` 将侧栏改为按导航文字和字体尺寸计算宽度，切换界面语言后重新适配；宽度或高度不足时使用顶部导航，保留原图标、统一底色、直接显示的工具及小窗口日志。
+Version `26.10.19.04` adapts sidebar width to navigation text and font metrics, recalculates it when the interface language changes, and switches to top navigation when width or height is limited. The original icon, shared background, visible tools and compact-window logs remain available.  
+`26.10.19.04` 将侧栏改为按导航文字和字体尺寸计算宽度，切换界面语言后重新适配；宽度或高度不足时使用顶部导航，保留原图标、统一底色、直接显示的工具及小窗口日志。
 
 GitHub uploads gain manual scanning, a reviewable missing-document list and selective upload. Choose original Markdown only, translations only, or both before uploading; the choice also filters automatic uploads. Existing remote files are skipped, review fingerprints are checked again before upload, and stale or failed reviews are blocked.  
 GitHub 增加手动扫描、可查看的缺失文档列表与选中补传；上传前可选仅原文 Markdown、仅翻译稿或两者同时上传，自动上传也遵循选择。远端已有文件跳过，上传前再次核验指纹，过期或失败记录不能上传。
@@ -1464,8 +1481,8 @@ GitHub 增加手动扫描、可查看的缺失文档列表与选中补传；上�
 Updates support both local ZIPs and explicit GitHub checks/downloads, with official-release and main channels. The stable launcher, archive validation, saved configuration, installation confirmation and startup recovery are shared by both paths. Dependency changes still require a full EXE package; no dependency installation or background update check runs automatically.  
 更新支持本地 ZIP 和主动 GitHub 联网检查／下载，提供正式发行版与 main 两个渠道；两条路径共用固定启动器、更新包校验、配置保存、安装确认和启动恢复机制。依赖改变仍需完整 EXE 包，不会自动安装依赖或后台检查更新。
 
-Display/build version and filenames use `26.10.19.03`; Windows numeric metadata use `26.10.19.3`. A native Nuitka onefile smoke program verified that local source modules can override compiled modules. Windows replacement/restart and the production EXE still require Windows validation; no new EXE is published by this change.  
-显示／构建版本及文件名为 `26.10.19.03`，Windows 数字元数据为 `26.10.19.3`。已用真实 Nuitka 单文件测试程序验证本地源码能覆盖编译模块；Windows 替换／重启和正式 EXE 仍需在 Windows 验证，本次代码变更不代表新版 EXE 已发布。
+Display/build version and filenames use `26.10.19.04`; Windows numeric metadata use `26.10.19.4`. A native Nuitka onefile smoke program verified that local source modules can override compiled modules. Windows replacement/restart and the production EXE still require Windows validation; no new EXE is published by this change.  
+显示／构建版本及文件名为 `26.10.19.04`，Windows 数字元数据为 `26.10.19.4`。已用真实 Nuitka 单文件测试程序验证本地源码能覆盖编译模块；Windows 替换／重启和正式 EXE 仍需在 Windows 验证，本次代码变更不代表新版 EXE 已发布。
 
 ---
 

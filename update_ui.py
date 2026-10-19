@@ -10,7 +10,7 @@ from tkinter import ttk
 from app_updater import (SourcePackage, UpdateCancelled, discard_package, import_package, last_result,
                          launch_install, running_executable, check_github_update, download_github_update)
 from responsive_ui import AdaptiveLabel, ButtonToolbar
-from ui_i18n import ChoiceVar, LocalizedVar, filedialog, messagebox, tr
+from ui_i18n import ChoiceVar, LocalizedVar, copy_text, filedialog, messagebox, tr
 
 
 class UpdatePanel:
@@ -37,9 +37,9 @@ class UpdatePanel:
         self.progress = tk.DoubleVar(master=self.root)
         ttk.Progressbar(self.frame, variable=self.progress, maximum=100).grid(row=5, column=0, sticky="ew", pady=8)
         toolbar = ButtonToolbar(self.frame, ((tr("选择更新 ZIP"), self.choose), (tr("取消读取"), self.cancel.set),
-                                             (tr("安装并重启"), self.install)))
+                                             (tr("安装并重启"), self.install), (tr("复制更新信息"), self.copy_details)))
         toolbar.grid(row=6, column=0, sticky="ew", pady=8)
-        self.choose_button, self.cancel_button, self.install_button = toolbar.buttons
+        self.choose_button, self.cancel_button, self.install_button, self.copy_button = toolbar.buttons
         hint = tr("安装前保存设置。源码更新使用内置 Python 运行时，新代码保存在用户目录；完整更新包替换 EXE。启动失败时尝试恢复旧版。")
         AdaptiveLabel(self.frame, text=hint, style="Subtitle.TLabel").grid(row=7, column=0, sticky="ew", pady=8)
         if self.executable is None:
@@ -78,6 +78,10 @@ class UpdatePanel:
         self.online = None
         self.online_details.set(tr("选择渠道后检查新版。"))
         self.buttons()
+
+    def copy_details(self):
+        copy_text(self.root, "\n\n".join((str(tr("当前版本：{arg0}", arg0=self.version)),
+                  str(tr(self.channel.get())), self.status.get(), self.online_details.get(), self.details.get())))
 
     def check_online(self):
         if self.thread and self.thread.is_alive():
@@ -166,6 +170,8 @@ class UpdatePanel:
                 elif kind == "error":
                     self.status.set(tr("已取消读取更新包。") if isinstance(value, UpdateCancelled)
                                     else tr("读取更新包失败：{arg0}", arg0=value))
+                    if not isinstance(value, UpdateCancelled):
+                        self.app.log(self.status.get())
                 elif kind == "done":
                     self.thread = None
         except queue.Empty:
@@ -192,9 +198,12 @@ class UpdatePanel:
             return
         try:
             self.app.save_current_config()
+            self.status.set(tr("正在启动更新助手，请稍候……"))
+            self.root.update_idletasks()
             launch_install(self.staged, self.executable, self.version)
         except Exception as exc:
             self.status.set(tr("无法开始安装：{arg0}", arg0=exc))
+            self.app.log(self.status.get())
             return
         self.installing = True
         self.root.destroy()

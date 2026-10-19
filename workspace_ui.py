@@ -6,7 +6,7 @@ from tkinter import font as tkfont, ttk
 
 from literature_processing import LANGUAGES, PROVIDERS
 from literature_ui import LiteratureControls, ModelControls, scrollable_page
-from ui_i18n import LocalizedVar, language, localize_widgets, messagebox, tr, ui_text
+from ui_i18n import LocalizedVar, copy_text, language, localize_widgets, messagebox, tr, ui_text
 from responsive_ui import AdaptiveLabel, ButtonToolbar, ResponsiveForm
 
 
@@ -511,6 +511,11 @@ class WorkspaceLayout:
         scrollbar = ttk.Scrollbar(self.log_frame, command=app.log_text.yview)
         scrollbar.grid(row=1, column=1, sticky="ns", pady=(0, 8))
         app.log_text.configure(yscrollcommand=scrollbar.set)
+        self.copy_log_button = tk.Button(self.log_header, text=tr("复制日志"), relief="flat", bd=0,
+            bg=COLORS["log"], fg=COLORS["log_text"], activebackground=COLORS["rail"],
+            activeforeground=COLORS["log_text"], cursor="hand2", font=(self.family, 9),
+            command=lambda: copy_text(app.root, app.log_text.get("1.0", "end-1c")))
+        self.copy_log_button.grid(row=0, column=3, sticky="e")
         app._configure_log_tags()
 
     def build_actions(self):
