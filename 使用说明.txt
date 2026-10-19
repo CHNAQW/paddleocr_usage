@@ -1,4 +1,4 @@
-文献处理软件 26.10.19.06
+文献处理软件 26.10.19.07
 
 启动
 1. 完整解压源码，保留十四个 Python 模块及 update_helper.ps1、requirements.txt 与图标。
@@ -89,6 +89,12 @@ PaddleOCR 的服务／模型／Token 与 GitHub 上传 Token 独立。
 下载失败、取消、指纹或版本不符时清理临时文件，当前程序保持运行。
 源码直接从 codeload.github.com 下载固定提交；main 检查遇 API 403／429 时尝试官方 Atom 与原始源码入口。代理也可能导致 403，请检查其 GitHub 路由规则。
 助手使用编码命令启动，启动前创建 install.log，并捕获 helper-output-<id>.log；失败详情可复制，重试保留旧日志。
+26.10.19.07 修复已有源码版本再次更新时 Replace 报“路径的形式不合法”：使用真实独立备份路径，原子替换，启动失败时恢复旧记录。
+若旧程序已经报此错误，仅导入新版源码 ZIP 无法预先修好旧助手。一次性恢复：
+1. 关闭所有程序窗口，在资源管理器打开 %LOCALAPPDATA%\PaddleOCR\updates。
+2. 如有 active-source.json，重命名为 active-source.before-repair.json；若重名请追加时间，保留已有备份及源码目录。
+3. 重新启动 EXE 使用内置版本，再导入可信的 26.10.19.07 或更高版本 ZIP；不删除配置或文献。
+也可直接换成重新构建的修复版 EXE，或使用完整程序更新 ZIP。
 若旧 EXE 自己的助手无法启动，须先重新打包并手动替换成 26.10.19.04 或更高版本，之后再测试软件内更新。
 首次须手动换成带固定启动器的新 EXE；以后用内置 Python 运行时加载用户目录中的更新源码。
 源码 APP_VERSION 须更高，依赖须匹配内置运行时。新增未打包依赖或更换启动器时需完整程序更新包。
@@ -99,10 +105,10 @@ PaddleOCR 的服务／模型／Token 与 GitHub 上传 Token 独立。
 
 构建 Windows EXE
 双击 build_paddleocr_pdf_to_md_EXE.bat，需 Python 3.9–3.13。
-输出：PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.19.06.exe
+输出：PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.19.07.exe
 校验：同目录下的 .exe.sha256.txt。
-固定运行缓存：%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.19.06
-界面与文件名版本：26.10.19.06；Windows 数字文件/产品版本：26.10.19.6。
+固定运行缓存：%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.19.07
+界面与文件名版本：26.10.19.07；Windows 数字文件/产品版本：26.10.19.7。
 版本更新不代表 EXE 已编译发布；不要关闭安全防护或添加排除项。
 
 详细操作、限制、费用、隐私和使用条件请阅读 README.md 与 License。

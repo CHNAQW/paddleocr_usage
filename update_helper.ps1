@@ -30,9 +30,22 @@ function Retry-FileOperation([scriptblock]$operation) {
     }
 }
 
+function Get-SHA256([string]$path) {
+    # Do not depend on Get-FileHash/module autoloading in the inherited host.
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    $stream = $null
+    try {
+        $stream = [System.IO.File]::OpenRead($path)
+        return [System.BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+        $algorithm.Dispose()
+    }
+}
+
 function Check-File([string]$path) {
     if ((Get-Item -LiteralPath $path).Length -ne [long]$plan.size) { throw 'Update size mismatch.' }
-    if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $plan.sha256) {
+    if ((Get-SHA256 $path) -ne $plan.sha256) {
         throw 'Update SHA-256 mismatch.'
     }
 }
@@ -54,17 +67,18 @@ try {
     if ($plan.kind -eq 'source') {
         foreach ($property in $plan.source_record.files.PSObject.Properties) {
             $path = Join-Path $plan.source_record.directory $property.Name
-            if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $property.Value) {
+            if ((Get-SHA256 $path) -ne $property.Value) {
                 throw 'Source file changed before installation.'
             }
-        }
-        if (Test-Path -LiteralPath $plan.active) {
-            [System.IO.File]::Copy($plan.active, $plan.source_backup, $false)
         }
         $record = $plan.source_record | ConvertTo-Json -Depth 6
         [System.IO.File]::WriteAllText($plan.active + '.tmp', $record, (New-Object System.Text.UTF8Encoding($false)))
         if (Test-Path -LiteralPath $plan.active) {
-            [System.IO.File]::Replace($plan.active + '.tmp', $plan.active, $null)
+            # Windows PowerShell 5.1 can bind $null to an empty .NET string,
+            # which File.Replace rejects as an invalid backup path. A real
+            # backup also keeps replacement and rollback state atomic.
+            Write-Log ('Replacing source activation record: ' + $plan.active + '; backup: ' + $plan.source_backup)
+            [System.IO.File]::Replace($plan.active + '.tmp', $plan.active, $plan.source_backup)
         } else {
             [System.IO.File]::Move($plan.active + '.tmp', $plan.active)
         }
@@ -99,6 +113,8 @@ try {
 } catch {
     $failure = $_.Exception.Message
     Write-Log ('Update failed: ' + $failure)
+    Write-Log ($_.Exception.ToString())
+    if ($_.ScriptStackTrace) { Write-Log $_.ScriptStackTrace }
     $restored = $false
     $restart = $null
     try {
