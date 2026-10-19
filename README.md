@@ -1446,6 +1446,9 @@ python tests/verify_frozen_source.py
 It builds a small probe and verifies built-in code, a source override, tamper rejection and fallback. It does not build the production GUI or test Windows file replacement/restart.  
 该脚本编译小型测试程序，验证内置代码、源码覆盖、篡改拒绝及回退；不构建正式 GUI，也不代替 Windows 文件替换／重启验证。
 
+Copy tests use a real Tk clipboard to verify selection/full-text copying, disabled controls, modal dialogs, full status values and bilingual buttons. The **Windows update helper** GitHub Actions job runs `tests/test_windows_update_helper.py` on Windows: it checks the real PowerShell startup handshake with Unicode/quoted paths and captures an intentional parser failure before the handshake. It stops the helper before replacing or launching an EXE; non-Windows runs explicitly skip these two tests.  
+复制测试使用真实 Tk 剪贴板，覆盖选区／全文、禁用控件、模态弹窗、完整状态值与双语按钮。GitHub Actions 的 **Windows update helper** 任务在 Windows 运行 `tests/test_windows_update_helper.py`：验证真实 PowerShell 在中文／引号路径下的启动握手，并捕获握手前的故意解析失败。测试会在替换或启动 EXE 前停止助手，不代替完整安装／重启实机测试；非 Windows 环境明确跳过这两项。
+
 ---
 
 <a id="release-notes"></a>

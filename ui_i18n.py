@@ -148,10 +148,13 @@ def enable_copy(widget):
             menu.entryconfigure(len(captions) - 2, state="normal" if editable and widget_text(widget, True) else "disabled")
             menu.entryconfigure(len(captions) - 1, state="normal" if editable else "disabled")
         widget.focus_set()
+        previous_grab = widget.grab_current()
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+            if previous_grab is not None and previous_grab.winfo_exists():
+                previous_grab.grab_set()
         return "break"
 
     for event in ("<Control-c>", "<Control-Insert>", "<<Copy>>"):

@@ -97,6 +97,21 @@ class CopyInteractionTests(unittest.TestCase):
         text.event_generate('<<Copy>>')
         self.assertEqual(self.root.clipboard_get(), 'keep me')
 
+    def test_copy_context_menu_preserves_a_modal_dialog_grab(self):
+        dialog = tk.Toplevel(self.root)
+        text = tk.Text(dialog)
+        text.pack()
+        text.insert('1.0', 'diagnostic')
+        ui_i18n.localize_widgets(dialog)
+        self.root.update()
+        dialog.grab_set()
+        text.event_generate('<Button-3>', x=3, y=3)
+        self.assertEqual(self.root.grab_current(), dialog)
+        text._copy_menu.invoke(1)
+        self.assertEqual(self.root.clipboard_get(), 'diagnostic')
+        text._copy_menu.unpost()
+        dialog.destroy()
+
     def test_log_and_update_buttons_copy_full_failure_details_in_both_languages(self):
         app = self.app()
         app.log('HTTP 403: https://api.github.com/example')
