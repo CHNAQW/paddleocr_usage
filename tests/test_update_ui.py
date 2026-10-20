@@ -1,3 +1,4 @@
+import gc
 import tempfile
 import time
 import tkinter as tk
@@ -14,6 +15,8 @@ from ui_i18n import set_language
 
 class UpdatePanelTests(unittest.TestCase):
     def setUp(self):
+        # Tk finalizers must run here, not in the next mocked network worker.
+        gc.collect()
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.folder = Path(self.temporary.name)

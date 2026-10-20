@@ -1,3 +1,5 @@
+import faulthandler
+import gc
 import hashlib
 import json
 import tempfile
@@ -109,6 +111,8 @@ class SyncTests(unittest.TestCase):
 
 class ManualUploadTests(unittest.TestCase):
     def setUp(self):
+        # Reclaim earlier Tk fixtures on their owner thread, before starting workers.
+        gc.collect()
         try:
             self.root = tk.Tk()
         except tk.TclError as exc:
@@ -139,7 +143,10 @@ class ManualUploadTests(unittest.TestCase):
         deadline = time.monotonic() + 3
         while self.panel.busy and time.monotonic() < deadline:
             self.root.update(); time.sleep(.01)
-        self.assertFalse(self.panel.busy)
+        if self.panel.busy:
+            faulthandler.dump_traceback()
+        self.assertFalse(self.panel.busy,
+            f"worker_alive={self.panel.worker_thread.is_alive()}, events={self.panel.events.qsize()}, status={self.panel.status.get()}")
 
     def stage(self):
         items = [lp.UploadCandidate(Path('/tmp/documents/a.md'), 'a.md', 'original', 'ready', 'sha'),
