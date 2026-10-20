@@ -2,6 +2,7 @@ import gc
 import json
 import queue
 import tempfile
+import threading
 import time
 import tkinter as tk
 import unittest
@@ -120,6 +121,14 @@ class OCRIntegrationTests(unittest.TestCase):
 
 
 class DesktopLayoutTests(unittest.TestCase):
+    def setUp(self):
+        # An unexpected modal must fail the case, not wait forever in headless CI.
+        for name in ("showinfo", "showwarning", "showerror", "askyesno"):
+            guard = patch.object(application.messagebox, name,
+                side_effect=AssertionError("Unexpected modal dialog: " + name))
+            guard.start()
+            self.addCleanup(guard.stop)
+
     @classmethod
     def setUpClass(cls):
         try:
@@ -138,7 +147,7 @@ class DesktopLayoutTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         for timer in cls.root.tk.call("after", "info"):
-            cls.root.after_cancel(timer)
+            cls.root.tk.call("after", "cancel", timer)
         cls.root.destroy()
         cls.config_patch.stop()
         cls.save_patch.stop()
@@ -192,7 +201,7 @@ class DesktopLayoutTests(unittest.TestCase):
         try:
             catalog = ModelCatalog([{"id": "large", "context_length": 128000, "max_output_tokens": 16000},
                                     {"id": "small", "max_input_tokens": 32000}])
-            self.app.literature.events.put(("profile_result", (model, False, catalog, None, model.profile())))
+            self.app.literature.events.put(("profile_result", (model, False, catalog, None, model.profile(), model.request_generation)))
             self.app.literature.poll()
             self.assertEqual(model.profile().context_limit, 128000)
             self.assertEqual(model.limit_value.get(), "128000")
@@ -223,13 +232,107 @@ class DesktopLayoutTests(unittest.TestCase):
         model = ModelControls(self.root, "model", {"model": "large"}, self.app.literature.events, Mock(), Mock())
         try:
             requested = model.profile()
+            generation = model.request_generation
             model.url.set("https://other.invalid/v1")
             result = ModelCatalog([{"id": "large", "context_length": 128000}])
-            self.app.literature.events.put(("profile_result", (model, False, result, None, requested)))
+            self.app.literature.events.put(("profile_result", (model, False, result, None, requested, generation)))
             self.app.literature.poll()
             self.assertFalse(model.catalog_limits)
         finally:
             model.box.destroy()
+
+    def test_model_requests_are_single_flight_and_stale_credentials_cannot_publish_results(self):
+        from literature_ui import ModelControls
+        entered, release = threading.Event(), threading.Event()
+        def fetch(*args, **kwargs):
+            entered.set()
+            release.wait(2)
+            return ["stale-model"]
+        fetch = Mock(side_effect=fetch)
+        model = ModelControls(self.root, "model", {"model": "current", "api_key": "old-key"},
+                              self.app.literature.events, fetch, Mock(), app=self.app)
+        try:
+            model.request(False)
+            self.assertTrue(entered.wait(1))
+            for _ in range(10):
+                model.request(False)
+            self.assertEqual(fetch.call_count, 1)
+            self.assertTrue(all(str(button.cget("state")) == "disabled" for button in model.request_buttons))
+            stop = fetch.call_args.kwargs["stop"]
+            model.key.set("replacement-key")
+            model.key.set("old-key")
+            self.assertTrue(stop())
+            release.set()
+            model.request_thread.join(2)
+            self.assertFalse(model.request_thread.is_alive())
+            self.app.literature.poll()
+            self.assertEqual(model.model.get(), "current")
+            self.assertEqual(model.combo.cget("values"), "")
+            self.assertIsNone(model.active_request)
+            self.assertTrue(all(str(button.cget("state")) == "normal" for button in model.request_buttons))
+        finally:
+            release.set()
+            if model.request_thread:
+                model.request_thread.join(2)
+            model.box.destroy()
+
+    def test_destroyed_model_controls_cancel_requests_without_opening_a_late_dialog(self):
+        from literature_ui import ModelControls
+        entered, release = threading.Event(), threading.Event()
+        def fetch(*args, **kwargs):
+            entered.set()
+            release.wait(2)
+            raise RuntimeError("late network failure")
+        fetch = Mock(side_effect=fetch)
+        model = ModelControls(self.root, "model", {"api_key": "key"}, self.app.literature.events, fetch, Mock())
+        try:
+            model.request(False)
+            self.assertTrue(entered.wait(1))
+            model.box.destroy()
+            self.assertTrue(fetch.call_args.kwargs["stop"]())
+            release.set()
+            model.request_thread.join(2)
+            self.app.literature.poll()  # Unexpected dialogs are a test failure.
+            self.assertTrue(model.closed)
+            self.assertIsNone(model.active_request)
+        finally:
+            release.set()
+            if model.request_thread:
+                model.request_thread.join(2)
+            if model.box.winfo_exists():
+                model.box.destroy()
+
+    def test_translation_folder_scan_can_be_stopped_before_file_enumeration_finishes(self):
+        controls = self.app.literature
+        previous = controls.input.get(), self.app.stop_requested, controls.cancel_event.is_set()
+        entered = threading.Event()
+        def scan(*args, stop, **kwargs):
+            entered.set()
+            deadline = time.monotonic() + 2
+            while not stop() and time.monotonic() < deadline:
+                time.sleep(.01)
+            if stop():
+                raise lp.ProcessingCancelled("cancelled scan")
+            raise AssertionError("Stop did not reach the file enumeration")
+        try:
+            with tempfile.TemporaryDirectory() as directory, patch("literature_ui.find_markdown_files", side_effect=scan):
+                controls.input.set(directory)
+                controls.scan()
+                self.assertTrue(entered.wait(1))
+                self.assertTrue(controls.busy())
+                self.assertEqual(str(self.app.workspace_layout.translation_stop.cget("state")), "normal")
+                controls.stop()
+                deadline = time.monotonic() + 3
+                while controls.scanning and time.monotonic() < deadline:
+                    self.root.update()
+                    time.sleep(.01)
+                self.assertFalse(controls.scanning)
+                self.assertIn("已停止", controls.status.get())
+                self.assertEqual(str(controls.start_button.cget("state")), "normal")
+        finally:
+            controls.input.set(previous[0])
+            self.app.stop_requested = previous[1]
+            controls.cancel_event.set() if previous[2] else controls.cancel_event.clear()
 
     def test_logs_remain_visible_at_small_window_sizes(self):
         for width, height in ((1100, 780), (640, 480), (540, 420)):
@@ -438,19 +541,21 @@ class DesktopLayoutTests(unittest.TestCase):
 
     def test_running_page_and_split_progress_do_not_push_logs_out_of_small_window(self):
         self.root.geometry("540x420")
-        self.app.worker_thread = Mock()
-        self.app.worker_thread.is_alive.return_value = True
-        self.app.page_progress_text_var.set("当前文件页数进度：128/900 页，14.22%")
-        self.app.page_progress_var.set(14.22)
-        self.app.split_progress_text_var.set("大文件分段进度：当前文件已处理 1/12 段")
-        self.app.split_progress_label.grid()
-        self.root.update()
-        self.assertGreaterEqual(self.app.log_text.winfo_height(), 40)
-        self.assertLessEqual(self.app.log_text.winfo_rooty() + self.app.log_text.winfo_height(),
-                             self.root.winfo_rooty() + self.root.winfo_height())
-        self.app.worker_thread = None
-        self.app.page_progress_var.set(0)
-        self.app.split_progress_label.grid_remove()
+        previous_worker = self.app.worker_thread
+        try:
+            self.app.worker_thread = Mock(is_alive=Mock(return_value=True))
+            self.app.page_progress_text_var.set("当前文件页数进度：128/900 页，14.22%")
+            self.app.page_progress_var.set(14.22)
+            self.app.split_progress_text_var.set("大文件分段进度：当前文件已处理 1/12 段")
+            self.app.split_progress_label.grid()
+            self.root.update()
+            self.assertGreaterEqual(self.app.log_text.winfo_height(), 40)
+            self.assertLessEqual(self.app.log_text.winfo_rooty() + self.app.log_text.winfo_height(),
+                                 self.root.winfo_rooty() + self.root.winfo_height())
+        finally:
+            self.app.worker_thread = previous_worker
+            self.app.page_progress_var.set(0)
+            self.app.split_progress_label.grid_remove()
 
     def test_keyboard_navigation_and_long_values_keep_actions_reachable(self):
         self.root.geometry("640x480")
@@ -698,7 +803,7 @@ class EnglishStartupTests(unittest.TestCase):
                     self.assertEqual(app.config.ui_language, locale)
         finally:
             for timer in root.tk.call("after", "info"):
-                root.after_cancel(timer)
+                root.tk.call("after", "cancel", timer)
             root.destroy()
             set_language("zh")
 

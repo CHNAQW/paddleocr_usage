@@ -237,6 +237,7 @@ class WorkspaceLayout:
         self.app, self.root = app, app.root
         self.family = tkfont.nametofont("TkDefaultFont").actual("family")
         self.compact = None
+        self.base_minimum = self.root.minsize()
         self.settings = None
         self.forms = []
         self.form_columns = {}
@@ -388,8 +389,10 @@ class WorkspaceLayout:
         settings_header = ttk.Frame(self.settings, padding=(18, 14))
         settings_header.grid(row=0, column=0, sticky="ew")
         settings_header.columnconfigure(0, weight=1)
-        AdaptiveLabel(settings_header, text=tr('连接你的处理服务'), style="CardTitle.TLabel").grid(row=0, column=0, columnspan=2, sticky="ew")
-        AdaptiveLabel(settings_header, text=tr('界面语言 / Interface language'), style="Subtitle.TLabel").grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        settings_title = AdaptiveLabel(settings_header, text=tr('偏好设置'), style="CardTitle.TLabel")
+        settings_title.grid(row=0, column=0, columnspan=2, sticky="ew")
+        language_caption = AdaptiveLabel(settings_header, text=tr('界面语言 / Interface language'), style="Subtitle.TLabel")
+        language_caption.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         app.ui_language_var = tk.StringVar(value="English" if language() == "en" else "中文")
         self.language_selector = ttk.Combobox(settings_header, textvariable=app.ui_language_var,
                                               values=("中文", "English"), state="readonly", width=10)
@@ -446,7 +449,7 @@ class WorkspaceLayout:
             tab = ttk.Frame(roles)
             tab.columnconfigure(0, weight=1)
             roles.add(tab, text=title)
-            model = ModelControls(tab, title + tr('模型'), saved.get(key, {}), controls.events, fetch, test)
+            model = ModelControls(tab, title + tr('模型'), saved.get(key, {}), controls.events, fetch, test, app=self.app)
             model.box.grid(row=0, column=0, sticky="ew", padx=6, pady=8)
             controls.profiles[key] = model
             if key == "translator":
@@ -477,11 +480,36 @@ class WorkspaceLayout:
                       style="Subtitle.TLabel").grid(row=2, column=0, sticky="ew", pady=8)
         AdaptiveLabel(group, text=tr("启用后各任务的服务商、地址和密钥由此处管理。关闭后保留当前连接，可再分别修改；更换服务后请拉取并选择适配的模型。"),
                       style="Subtitle.TLabel").grid(row=3, column=0, sticky="ew", pady=8)
+        from advanced_settings import AdvancedPromptSettings, LegalNotice
+        advanced = scrollable_page(self.settings_tabs, tr("高级"))
+        legal = scrollable_page(self.settings_tabs, tr("法律声明"))
+        controls.advanced = AdvancedPromptSettings(advanced, saved.get("prompts", {}))
+        self.legal_notice = LegalNotice(legal)
         footer = ttk.Frame(self.settings, padding=12)
         footer.grid(row=2, column=0, sticky="ew")
         footer.columnconfigure(0, weight=1)
-        AdaptiveLabel(footer, text=tr('模型密钥保存在本机配置，请勿共享。'), style="Subtitle.TLabel").grid(row=0, column=0, sticky="ew")
+        privacy_hint = AdaptiveLabel(footer, text=tr('模型密钥保存在本机配置，请勿共享。'), style="Subtitle.TLabel")
+        privacy_hint.grid(row=0, column=0, sticky="ew")
         ttk.Button(footer, text=tr('保存并返回'), style="Accent.TButton", command=self.close_settings).grid(row=0, column=1, padx=(8, 0))
+        compact_settings = None
+        def fit_settings(event):
+            nonlocal compact_settings
+            if event.widget != self.settings:
+                return
+            compact = self.settings.winfo_height() < 480
+            if compact == compact_settings:
+                return
+            compact_settings = compact
+            settings_header.configure(padding=(12, 8) if compact else (18, 14))
+            footer.configure(padding=(12, 6) if compact else 12)
+            for widget in (settings_title, language_caption, privacy_hint):
+                widget.grid_remove() if compact else widget.grid()
+            self.language_selector.grid_configure(row=0 if compact else 1,
+                pady=0 if compact else (8, 0), padx=(8, 0) if compact else (12, 0))
+            self.settings_selector.grid_configure(row=0 if compact else 2,
+                columnspan=1 if compact else 2, pady=0 if compact else (10, 0))
+            self.settings_selector.schedule()
+        self.settings.bind("<Configure>", fit_settings, add="+")
         self.settings.protocol("WM_DELETE_WINDOW", self.close_settings)
         self.settings.bind("<Escape>", lambda event: self.close_settings())
 
@@ -537,6 +565,7 @@ class WorkspaceLayout:
         app.workspace_panes.add(self.log_frame, minsize=86, height=155, stretch="never")
         self.log_header = tk.Frame(self.log_frame, bg=COLORS["log"])
         self.log_header.grid(row=0, column=0, sticky="ew", padx=16, pady=7)
+        self.log_header.bind("<Configure>", self.constrain_panes, add="+")
         self.log_header.columnconfigure(1, weight=1)
         self.log_header.columnconfigure(2, weight=1)
         tk.Label(self.log_header, text=tr('运行日志'), bg=COLORS["log"], fg="#adbcaf", font=(self.family, 9),
@@ -545,13 +574,14 @@ class WorkspaceLayout:
                               fg=COLORS["log_text"], relief="flat", bd=0, highlightthickness=0,
                               padx=16, pady=3, spacing3=3, font="TkTextFont", state="disabled")
         app.log_text.grid(row=1, column=0, sticky="nsew", pady=(0, 8))
+        app.log_text._copy_full_text = app.copyable_log_text
         scrollbar = ttk.Scrollbar(self.log_frame, command=app.log_text.yview)
         scrollbar.grid(row=1, column=1, sticky="ns", pady=(0, 8))
         app.log_text.configure(yscrollcommand=scrollbar.set)
         self.copy_log_button = tk.Button(self.log_header, text=tr("复制日志"), relief="flat", bd=0,
             bg=COLORS["log"], fg=COLORS["log_text"], activebackground=COLORS["rail"],
             activeforeground=COLORS["log_text"], cursor="hand2", font=(self.family, 9),
-            command=lambda: copy_text(app.root, app.log_text.get("1.0", "end-1c")))
+            command=lambda: copy_text(app.root, app.copyable_log_text()))
         self.copy_log_button.grid(row=0, column=3, sticky="e")
         app._configure_log_tags()
 
@@ -650,15 +680,30 @@ class WorkspaceLayout:
         panes = self.app.workspace_panes
         if len(panes.panes()) < 2:
             return
+        # Tool labels can need an extra row on another platform/font/DPI. Give
+        # that row real window space instead of stealing the log's text area.
+        required_log = max(92, self.log_header.winfo_reqheight() + 14 + 8 + 40)
+        sash = int(panes.cget("sashwidth")) + 2 * int(panes.cget("sashpad"))
+        required_content = 64 + required_log + sash
+        minimum_height = self.base_minimum[1]
+        if self.compact:
+            fixed_height = (self.rail.winfo_reqheight() + self.header.winfo_reqheight()
+                            + self.actions.winfo_reqheight())
+            minimum_height = max(minimum_height, fixed_height + required_content)
+        minimum_window = (self.base_minimum[0], minimum_height)
+        if self.root.minsize() != minimum_window:
+            self.root.minsize(*minimum_window)
         height = panes.winfo_height()
-        if height < 100:
+        if height < required_content:
+            # minsize changes are applied by Tk's next geometry pass.
             return
-        log_minimum = min(92, max(42, height - 70))
-        minimum = min(220, max(64, int(height * .30)), height - log_minimum - 6)
+        # Header/button font metrics vary with Tk DPI. Reserve actual text space.
+        log_minimum = required_log
+        minimum = min(220, max(64, int(height * .30)), height - log_minimum - sash)
         panes.paneconfigure(self.app.notebook, minsize=minimum)
         panes.paneconfigure(self.log_frame, minsize=log_minimum)
         top = panes.sash_coord(0)[1]
-        bounded = min(max(top, minimum), max(minimum, height - log_minimum - 6))
+        bounded = min(max(top, minimum), max(minimum, height - log_minimum - sash))
         if bounded != top:
             panes.sash_place(0, 0, bounded)
 
@@ -711,7 +756,9 @@ class WorkspaceLayout:
             self.workspace.grid(row=1, column=0, columnspan=2, sticky="nsew")
             self.title.configure(font=(self.family, 17, "bold"))
             self.subtitle.grid_remove()
-            self.header.configure(padding=(20, 8, 20, 8))
+            self.header.configure(padding=(20, 6, 20, 6))
+            self.toolbar.grid_configure(pady=(6, 0))
+            self.actions.configure(padding=(20, 8, 20, 8))
             self.app.workspace_panes.paneconfigure(self.log_frame, height=100)
         else:
             self.root.columnconfigure(0, weight=0, minsize=rail_width)
@@ -742,6 +789,8 @@ class WorkspaceLayout:
             self.title.configure(font=(self.family, 23, "bold"))
             self.subtitle.grid()
             self.header.configure(padding=(24, 16, 20, 8))
+            self.toolbar.grid_configure(pady=(10, 0))
+            self.actions.configure(padding=(20, 10, 20, 12))
             self.app.workspace_panes.paneconfigure(self.log_frame, height=155)
         for _, files, options, service in self.forms:
             for box in (files, options, service):

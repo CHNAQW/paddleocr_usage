@@ -1,4 +1,5 @@
 import ast
+import gc
 import json
 import string
 import tempfile
@@ -9,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import paddleocr_pdf_to_md_gui as application
+import ui_i18n
 from ui_i18n import ChoiceVar, LocalizedVar, join_text, set_language, tr
 from ui_translations import EN_MESSAGES
 
@@ -29,13 +31,14 @@ class TranslationTests(unittest.TestCase):
 
     def test_every_literal_ui_message_has_an_english_translation(self):
         root = Path(__file__).resolve().parents[1]
-        for name in ("workspace_ui.py", "literature_ui.py", "literature_processing.py", "paddleocr_pdf_to_md_gui.py", "github_ui.py", "model_budget.py", "app_updater.py", "update_ui.py", "task_runtime.py"):
+        for name in ("workspace_ui.py", "literature_ui.py", "literature_processing.py", "paddleocr_pdf_to_md_gui.py", "github_ui.py", "model_budget.py", "app_updater.py", "update_ui.py", "task_runtime.py", "advanced_settings.py", "prompt_templates.py"):
             for node in ast.walk(ast.parse((root / name).read_text(encoding="utf-8-sig"))):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "tr" and node.args:
                     source = node.args[0]
                     if isinstance(source, ast.Constant) and isinstance(source.value, str):
                         with self.subTest(file=name, line=node.lineno):
-                            self.assertIn(source.value, EN_MESSAGES)
+                            self.assertTrue(source.value in EN_MESSAGES,
+                                            f"Missing English translation: {source.value!r}")
 
     def test_dynamic_messages_can_be_rendered_again_without_changing_document_data(self):
         filename = "中文原件.md"
@@ -66,6 +69,18 @@ class TranslationTests(unittest.TestCase):
         set_language("zh")
         self.assertEqual(interpreter.getvar(source._name), "英语 (en)")
         self.assertIn("正在处理 1/2", status.get())
+
+    def test_destroyed_localized_variables_leave_no_registry_tombstones(self):
+        gc.collect()
+        initial = len(ui_i18n._variables)
+        interpreter = tk.Tcl()
+        for _ in range(500):
+            choice = ChoiceVar(master=interpreter, value="自动检测")
+            status = LocalizedVar(master=interpreter, value="完成")
+        self.assertEqual(len(ui_i18n._variables), initial + 2)
+        del choice, status
+        gc.collect()
+        self.assertEqual(len(ui_i18n._variables), initial)
 
     def test_language_setting_round_trips_and_old_configs_default_to_chinese(self):
         with tempfile.TemporaryDirectory() as directory, \

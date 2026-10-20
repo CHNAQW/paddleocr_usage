@@ -1,3 +1,5 @@
+import faulthandler
+import gc
 import hashlib
 import json
 import tempfile
@@ -109,6 +111,8 @@ class SyncTests(unittest.TestCase):
 
 class ManualUploadTests(unittest.TestCase):
     def setUp(self):
+        # Reclaim earlier Tk fixtures on their owner thread, before starting workers.
+        gc.collect()
         try:
             self.root = tk.Tk()
         except tk.TclError as exc:
@@ -132,14 +136,17 @@ class ManualUploadTests(unittest.TestCase):
 
     def cleanup_root(self):
         for timer in self.root.tk.call('after', 'info'):
-            self.root.after_cancel(timer)
+            self.root.tk.call("after", "cancel", timer)
         self.root.destroy()
 
     def wait(self):
         deadline = time.monotonic() + 3
         while self.panel.busy and time.monotonic() < deadline:
             self.root.update(); time.sleep(.01)
-        self.assertFalse(self.panel.busy)
+        if self.panel.busy:
+            faulthandler.dump_traceback()
+        self.assertFalse(self.panel.busy,
+            f"worker_alive={self.panel.worker_thread.is_alive()}, events={self.panel.events.qsize()}, status={self.panel.status.get()}")
 
     def stage(self):
         items = [lp.UploadCandidate(Path('/tmp/documents/a.md'), 'a.md', 'original', 'ready', 'sha'),
@@ -178,6 +185,76 @@ class ManualUploadTests(unittest.TestCase):
             self.panel.upload(); self.wait()
         upload.assert_not_called()
         self.assertEqual(self.panel.candidates[0].status, 'failed')
+
+    def test_upload_waits_until_all_eligible_rows_have_been_rendered_and_selected(self):
+        self.panel.checked = self.panel.signature()
+        self.panel.candidates = [
+            lp.UploadCandidate(Path(f'/tmp/documents/{index}.md'), f'{index}.md', 'original', 'ready', 'sha')
+            for index in range(250)]
+        self.panel.render(auto_select=True)
+        self.assertIsNotNone(self.panel.render_timer)
+        self.assertEqual(len(self.panel.tree.selection()), 100)
+        self.assertEqual(str(self.panel.upload_button.cget('state')), 'disabled')
+        with patch.object(github_ui.messagebox, 'askyesno') as confirm, \
+             patch.object(self.panel, 'launch') as launch:
+            self.panel.upload()
+            confirm.assert_not_called()
+            launch.assert_not_called()
+        deadline = time.monotonic() + 3
+        while self.panel.render_timer is not None and time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(.01)
+        self.assertIsNone(self.panel.render_timer)
+        self.assertEqual(len(self.panel.tree.selection()), 250)
+        self.assertEqual(str(self.panel.upload_button.cget('state')), 'normal')
+
+    def test_update_handoff_blocks_new_scan_and_upload_work(self):
+        self.stage()
+        with patch.object(self.app.updates, 'handoff', True), \
+             patch.object(self.panel, 'launch') as launch, \
+             patch.object(github_ui.messagebox, 'askyesno') as confirm:
+            self.panel.scan()
+            self.panel.upload()
+            launch.assert_not_called()
+            confirm.assert_not_called()
+
+    def test_rebuilding_a_large_table_yields_during_deletion_and_retains_selection(self):
+        self.panel.candidates = [
+            lp.UploadCandidate(Path(f'/tmp/documents/{index}.md'), f'{index}.md', 'original', 'ready', 'sha')
+            for index in range(1200)]
+        self.panel.render(auto_select=True)
+        deadline = time.monotonic() + 3
+        while self.panel.render_timer is not None and time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(.005)
+        self.assertIsNone(self.panel.render_timer)
+        self.assertEqual(len(self.panel.tree.get_children()), 1200)
+        ticks = []
+        self.root.after(0, lambda: ticks.append(len(self.panel.tree.get_children())))
+        with patch.object(self.panel.tree, 'delete', wraps=self.panel.tree.delete) as delete:
+            self.panel.render()
+            self.assertEqual(len(self.panel.tree.get_children()), 1100)
+            self.assertEqual(str(self.panel.upload_button.cget('state')), 'disabled')
+            deadline = time.monotonic() + 3
+            while self.panel.render_timer is not None and time.monotonic() < deadline:
+                self.root.update()
+                time.sleep(.005)
+            self.assertIsNone(self.panel.render_timer)
+            self.assertTrue(ticks)
+            self.assertGreater(ticks[0], 0)
+            self.assertLessEqual(max(len(call.args) for call in delete.call_args_list), 100)
+        self.assertEqual(len(self.panel.tree.selection()), 1200)
+        self.assertEqual(str(self.panel.upload_button.cget('state')), 'normal')
+
+    def test_idle_polls_do_not_reconfigure_controls_or_multiply_timers(self):
+        self.stage()
+        timers = len(self.root.tk.call('after', 'info'))
+        with patch.object(self.panel.upload_button, 'configure', wraps=self.panel.upload_button.configure) as configure:
+            for _ in range(30):
+                self.panel.poll()
+                self.c.poll()
+            configure.assert_not_called()
+        self.assertEqual(len(self.root.tk.call('after', 'info')), timers)
 
     def test_bilingual_small_workspace_and_sidebar_follow_font_metrics(self):
         self.stage()

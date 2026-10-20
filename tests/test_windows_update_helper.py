@@ -168,7 +168,7 @@ public class UpdateProbe {
             finally:
                 kernel.CloseHandle(handle)
 
-    def install(self, current='26.10.19.06', fail_health=False, tamper=False):
+    def install(self, current='26.10.19.06', fail_health=False, tamper=False, exit_during_wait=False):
         import os
         import time
         old_process = self.native_popen([sys.executable, '-c', 'import time; time.sleep(120)'])
@@ -176,15 +176,32 @@ public class UpdateProbe {
         environment = {'PADDLEOCR_TEST_ACTIVE': str(self.active), 'PADDLEOCR_TEST_VERSION': self.package.version,
                        'PADDLEOCR_TEST_RESTARTED': str(self.restarted), 'PADDLEOCR_TEST_PIDS': str(self.probe_pids),
                        'PADDLEOCR_TEST_FAIL_HEALTH': '1' if fail_health else '0'}
+        def spawn(arguments, **kwargs):
+            if exit_during_wait:
+                arguments = list(arguments)
+                script = base64.b64decode(arguments[-1]).decode('utf-16le')
+                lookup = '$oldProcess = Get-Process -Id $plan.pid -ErrorAction SilentlyContinue'
+                self.assertEqual(script.count(lookup), 1)
+                script = script.replace(lookup, lookup + '''
+    if ($null -ne $oldProcess) {
+        Stop-Process -Id $plan.pid -Force
+        while ($null -ne (Get-Process -Id $plan.pid -ErrorAction SilentlyContinue)) {
+            Start-Sleep -Milliseconds 10
+        }
+    }
+''')
+                arguments[-1] = base64.b64encode(script.encode('utf-16le')).decode('ascii')
+            return self.spawn(arguments, **kwargs)
         with patch.dict(os.environ, environment), patch.object(updates.os, 'getpid', return_value=old_process.pid), \
-                patch.object(updates.subprocess, 'Popen', side_effect=self.spawn):
+                patch.object(updates.subprocess, 'Popen', side_effect=spawn):
             plan = updates.launch_install(self.package, self.exe, current, cache=self.cache)
         helper = self.processes[-1]
         self.assertEqual(Path(plan['handshake']).read_text(), 'ready')
         if tamper:
             (Path(self.package.record['directory']) / 'literature_ui.py').write_bytes(b'changed after handoff')
-        time.sleep(.2)  # Let Wait-Process subscribe before the old process exits.
-        old_process.terminate()
+        time.sleep(.2)
+        if not exit_during_wait and old_process.poll() is None:
+            old_process.terminate()
         old_process.wait(timeout=10)
         helper.wait(timeout=30)
         diagnostic = Path(plan['log']).read_text(encoding='utf-8-sig', errors='replace')
@@ -203,6 +220,12 @@ public class UpdateProbe {
         self.assertEqual(result['status'], 'installed', log)
         self.assertEqual(json.loads(self.active.read_text(encoding='utf-8-sig'))['version'], '26.10.19.07')
         self.assertFalse(Path(plan['source_backup']).exists())
+
+    def test_application_exit_between_lookup_and_wait_does_not_fail_installation(self):
+        _, result, log = self.install(exit_during_wait=True)
+        self.assertEqual(result['status'], 'installed', log)
+        self.assertIn('Application exited before the process wait was registered.', log)
+        self.assertEqual(json.loads(self.active.read_text(encoding='utf-8-sig'))['version'], '26.10.19.07')
 
     def test_successive_source_updates_atomically_replace_and_back_up_previous_record(self):
         previous = self.previous_installation()

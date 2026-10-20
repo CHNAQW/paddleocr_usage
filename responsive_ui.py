@@ -5,7 +5,7 @@ import re
 import tkinter as tk
 from tkinter import font as tkfont, ttk
 
-from ui_i18n import LocalizedVar
+from ui_i18n import LocalizedVar, enable_copy
 
 
 class ButtonToolbar(ttk.Frame):
@@ -13,6 +13,7 @@ class ButtonToolbar(ttk.Frame):
     def __init__(self, parent, actions):
         super().__init__(parent, height=30)
         self.scheduler, self.pending = self._root(), None
+        self.layout = None
         self.buttons = [ttk.Button(self, text=caption, command=command, style="Tool.TButton", width=0)
                         for caption, command in actions]
         self.bind("<Configure>", self.schedule, add="+")
@@ -27,15 +28,20 @@ class ButtonToolbar(ttk.Frame):
     def reflow(self):
         self.pending = None
         width = max(1, self.winfo_width())
+        sizes = tuple((button.winfo_reqwidth(), button.winfo_reqheight()) for button in self.buttons)
+        layout = (width, sizes)
+        if layout == self.layout:
+            return
+        self.layout = layout
         x, y, row_height = 0, 0, 0
-        for button in self.buttons:
-            size, height = button.winfo_reqwidth(), button.winfo_reqheight()
+        for button, (size, height) in zip(self.buttons, sizes):
             if x and x + size > width:
                 x, y, row_height = 0, y + row_height + 4, 0
             button.place(x=x, y=y, width=min(size, width), height=height)
             x += size + 6
             row_height = max(row_height, height)
-        self.configure(height=y + row_height)
+        if int(self.cget("height")) != y + row_height:
+            self.configure(height=y + row_height)
 
     def cleanup(self, _event=None):
         if self.pending is not None:
@@ -49,6 +55,7 @@ class AdaptiveCheckbutton(ttk.Checkbutton):
         self.source = LocalizedVar(master=parent, value=text)
         self.display = tk.StringVar(master=parent, value=str(text))
         super().__init__(parent, textvariable=self.display, **kwargs)
+        enable_copy(self)
         self.scheduler, self.pending = self._root(), None
         self.trace = self.source.trace_add("write", self.schedule)
         self.bind("<Configure>", self.schedule, add="+")
@@ -117,6 +124,7 @@ class AdaptiveLabel(ttk.Label):
         # available width; wrapping determines height, so long captions stay visible.
         kwargs.setdefault("width", 1)
         super().__init__(parent, textvariable=self.display, **kwargs)
+        enable_copy(self)
         self.scheduler = self._root()
         self.pending = None
         self.trace = self.source.trace_add("write", self.schedule)
@@ -148,7 +156,8 @@ class AdaptiveLabel(ttk.Label):
             if self.max_lines:
                 font = tkfont.Font(self, font=self.cget("font") or ttk.Style(self).lookup(self.cget("style"), "font"))
                 text = fit_lines(text, width, self.max_lines, font)
-            self.display.set(text)
+            if self.display.get() != text:
+                self.display.set(text)
 
     def cleanup(self, _event=None):
         if self.pending is not None:
@@ -161,26 +170,44 @@ class AdaptiveLabel(ttk.Label):
 
 def fit_lines(text, width, maximum, font):
     """Keep compact status labels bounded; their original value remains available."""
-    lines, used, end = 1, 0, 0
-    for token in re.findall(r"\n|[^\S\n]+|[^\s]+", text):
+    # A remote error or path can be arbitrarily long. Never measure the complete
+    # token just to display two lines; the label's source remains fully copyable.
+    original_length = len(text)
+    text = text[:8192]
+    lines, used, end, line_start = 1, 0, 0, 0
+    def shortened():
+        prefix = text[:end].rstrip()
+        # A line break hides following lines; it does not consume space on the
+        # visible line. Keep complete identifiers when the ellipsis already fits.
+        while len(prefix) > line_start and font.measure(prefix[line_start:] + "…") > width:
+            prefix = prefix[:-1].rstrip()
+        return prefix + "…"
+
+    for match in re.finditer(r"\n|[^\S\n]+|[^\s]+", text):
+        token = match.group()
         if token == "\n":
+            if lines == maximum:
+                return shortened()
             lines, used = lines + 1, 0
-            if lines > maximum:
-                break
             end += 1
+            line_start = end
             continue
         size = font.measure(token)
         if used and used + size > width and not token.isspace():
+            if lines == maximum:
+                return shortened()
             lines, used = lines + 1, 0
+            line_start = end
         for char in token:
             size = font.measure(char)
             if used + size > width:
+                if lines == maximum:
+                    return shortened()
                 lines, used = lines + 1, 0
-            if lines > maximum:
-                return text[:max(0, end - 2)].rstrip() + "…"
+                line_start = end
             used += size
             end += 1
-    return text if end == len(text) else text[:max(0, end - 2)].rstrip() + "…"
+    return text if end == original_length else shortened()
 
 
 class ResponsiveForm(ttk.Frame):
@@ -192,6 +219,7 @@ class ResponsiveForm(ttk.Frame):
         self.traces = []
         self.pending = None
         self.stacked = None
+        self.layout = None
         self.bind("<Configure>", self.schedule, add="+")
         self.bind("<Destroy>", self.cleanup, add="+")
 
@@ -229,6 +257,10 @@ class ResponsiveForm(ttk.Frame):
                 value = str(field.cget("show")) * min(len(value), 32)
             field_width = max(field_width, font.measure(value) + 40)
         stacked = width < label_width + field_width + 16
+        layout = (width, stacked, tuple(str(label.cget("text")) for label, _ in self.rows))
+        if layout == self.layout:
+            return
+        self.layout = layout
         self.columnconfigure(0, weight=1 if stacked else 0)
         self.columnconfigure(1, weight=0 if stacked else 1)
         for index, (label, field) in enumerate(self.rows):

@@ -28,7 +28,11 @@ def positive_integer(value):
     if isinstance(value, int) and value > 0:
         return value
     if isinstance(value, str) and value.isascii() and value.isdecimal():
-        return int(value) if int(value) > 0 else 0
+        try:
+            return max(0, int(value))
+        except ValueError:
+            # A malformed metadata entry must not break the entire model list.
+            return 0
     return 0
 
 
@@ -45,7 +49,7 @@ def read_limits(item):
         smallest(("context_length", "context_window", "contextWindow", "max_model_len", "max_context_length")),
         smallest(("max_output_tokens", "output_token_limit", "max_completion_tokens")),
     )
-    return limits if limits.input_limit or limits.context_limit else None
+    return limits if limits.input_limit or limits.context_limit or limits.output_limit else None
 
 
 class ModelCatalog(list):
@@ -70,7 +74,7 @@ class ResponseTooLong(RuntimeError):
 def effective_limits(profile):
     if profile.input_limit or profile.context_limit:
         return ModelLimits(profile.input_limit, profile.context_limit, profile.output_limit, profile.limit_source)
-    return ModelLimits(0, DEFAULT_CONTEXT_LIMIT, DEFAULT_OUTPUT_LIMIT, "fallback")
+    return ModelLimits(0, DEFAULT_CONTEXT_LIMIT, profile.output_limit or DEFAULT_OUTPUT_LIMIT, "fallback")
 
 
 def input_budget(profile, percent=50):
@@ -97,27 +101,69 @@ def request_size(instruction, data):
     Compatible APIs do not expose a universal tokenizer. Do not claim exact token
     counts or use English-only character/token ratios for multilingual papers.
     """
-    return sum(len(message["content"].encode("utf-8")) + 64 for message in messages(instruction, data))
+    return _messages_size(messages(instruction, data))
+
+
+def _messages_size(payload):
+    return sum(len(message["content"].encode("utf-8")) + 64 for message in payload)
+
+
+def prepare_request(profile, instruction, data, percent=50):
+    """Serialize once; return the checked API messages and their byte estimate."""
+    payload = messages(instruction, data)
+    size = _messages_size(payload)
+    if size > input_budget(profile, percent):
+        raise BudgetExceeded(tr("请求超出模型输入预算，将继续拆分原文。"))
+    return payload, size
 
 
 def check_request(profile, instruction, data, percent=50):
-    if request_size(instruction, data) > input_budget(profile, percent):
-        raise BudgetExceeded(tr("请求超出模型输入预算，将继续拆分原文。"))
+    prepare_request(profile, instruction, data, percent)
+
+
+def _fenced_ranges(text):
+    """Index complete and unterminated CommonMark fences in one pass."""
+    ranges, opening, start = [], None, 0
+    markers = re.finditer(r"(?m)^ {0,3}(`{3,}|~{3,})([^\r\n]*)(?:\r?\n|$)", text)
+    for match in markers:
+        mark, tail = match.groups()
+        if opening is None:
+            # Backtick info strings cannot themselves contain a backtick.
+            if mark[0] == "`" and "`" in tail:
+                continue
+            opening, start = mark, match.start()
+        elif mark[0] == opening[0] and len(mark) >= len(opening) and not tail.strip():
+            ranges.append((start, match.end()))
+            opening = None
+    if opening is not None:
+        ranges.append((start, len(text)))
+    return ranges
 
 
 def budget_chunks(text, fits):
     """Fill each request, preserving paragraphs/fences where they fit; lose no text."""
     if not text:
         return []
-    chunks = []
-    while text:
-        if fits(text):
-            chunks.append(text)
+    chunks, offset = [], 0
+    fences, fence_index = _fenced_ranges(text), 0
+    while offset < len(text):
+        # Probe bounded prefixes instead of serializing the entire remaining
+        # document for every chunk. The latter becomes quadratic when a long
+        # document uses a model with a small input budget.
+        remaining = len(text) - offset
+        low, probe = 0, min(1024, remaining)
+        while fits(text[offset:offset + probe]):
+            low = probe
+            if low == remaining:
+                break
+            probe = min(probe * 2, remaining)
+        if low == remaining:
+            chunks.append(text[offset:])
             break
-        low, high = 0, len(text)
+        high = probe - 1
         while low < high:
             middle = (low + high + 1) // 2
-            if fits(text[:middle]):
+            if fits(text[offset:offset + middle]):
                 low = middle
             else:
                 high = middle - 1
@@ -125,8 +171,9 @@ def budget_chunks(text, fits):
             raise BudgetExceeded(tr("模型输入预算不足以容纳提示词和原文，请检查模型上限设置。"))
         # Prefer complete Markdown blocks outside code fences, then line/sentence
         # boundaries. Only a single oversized block needs an internal split.
+        prefix = text[offset:offset + low]
         boundaries, position, fence = [], 0, None
-        for line in text[:low].splitlines(keepends=True):
+        for line in prefix.splitlines(keepends=True):
             position += len(line)
             marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
             if marker:
@@ -141,10 +188,21 @@ def budget_chunks(text, fits):
         minimum = low // 2
         end = next((value for value in reversed(boundaries) if minimum <= value <= low), 0)
         if not end:
-            end = text.rfind("\n", minimum, low) + 1
+            end = prefix.rfind("\n", minimum, low) + 1
         if not end:
-            candidates = list(re.finditer(r"[.!?。！？]\s+", text[minimum:low]))
+            candidates = list(re.finditer(r"[.!?。！？]\s+", prefix[minimum:]))
             end = minimum + candidates[-1].end() if candidates else low
-        chunks.append(text[:end])
-        text = text[end:]
+        while fence_index < len(fences) and fences[fence_index][1] <= offset + end:
+            fence_index += 1
+        if fence_index < len(fences):
+            start, finish = fences[fence_index]
+            if start < offset + end < finish and start >= offset:
+                if finish <= offset + low:
+                    end = finish - offset
+                elif start > offset and fits(text[start:finish]):
+                    # A short introduction must not force a fitting code block
+                    # to be split just to keep the first chunk half full.
+                    end = start - offset
+        chunks.append(prefix[:end])
+        offset += end
     return chunks

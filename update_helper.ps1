@@ -63,7 +63,15 @@ try {
     [System.IO.File]::WriteAllText($plan.handshake, 'ready')
     Write-Log 'Waiting for the current application to exit.'
     $oldProcess = Get-Process -Id $plan.pid -ErrorAction SilentlyContinue
-    if ($null -ne $oldProcess) { Wait-Process -Id $plan.pid -Timeout 120 }
+    if ($null -ne $oldProcess) {
+        try { Wait-Process -Id $plan.pid -Timeout 120 }
+        catch {
+            # The application may exit between the lookup and Wait-Process.
+            # Keep real timeout/access errors when the process still exists.
+            if ($null -ne (Get-Process -Id $plan.pid -ErrorAction SilentlyContinue)) { throw }
+            Write-Log 'Application exited before the process wait was registered.'
+        }
+    }
     if ($plan.kind -eq 'source') {
         foreach ($property in $plan.source_record.files.PSObject.Properties) {
             $path = Join-Path $plan.source_record.directory $property.Name

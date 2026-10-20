@@ -30,9 +30,11 @@ import queue
 import re
 import shutil
 import sys
+import tempfile
 import threading
 import time
 import traceback
+import uuid
 from task_runtime import drain_events, cancellable_call
 
 from dataclasses import dataclass, field
@@ -43,6 +45,7 @@ from typing import Any, Iterable, Optional
 from workspace_ui import WorkspaceLayout, configure_workspace_theme
 from literature_processing import ProcessingCancelled, review_text_sha256
 from model_budget import ModelCatalog
+from prompt_templates import resolve_prompt
 
 import tkinter as tk
 from tkinter import font as tkfont, ttk
@@ -60,7 +63,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "文献处理软件"
-APP_VERSION = "26.10.20.01"
+APP_VERSION = "26.10.20.03"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -73,20 +76,13 @@ DEFAULT_POLL_INTERVAL = 3.0
 QUEUE_FULL_RETRY_SECONDS = 20.0
 QUEUE_FULL_MAX_ATTEMPTS = 3
 RATE_LIMIT_RETRY_SECONDS = 20.0
+RATE_LIMIT_MAX_ATTEMPTS = 3
+JOB_QUERY_MAX_RETRIES = 3
+JOB_MAX_RESUBMISSIONS = 3
 REQUEST_TIMEOUT_SECONDS = 300.0
 TOKEN_CHECK_TIMEOUT_SECONDS = 20.0
 DEFAULT_LLM_BASE_URL = "https://api.deepseek.com/v1"
 LLM_REVIEW_CHUNK_CHARS = 50000
-LLM_REVIEW_PROMPT = """你是文档转换质量核验员。has_problem=true 会触发成本很高的整份 PDF 重新转换，因此只有确认存在缺页、少页、漏页，或使原意无法成立的严重逻辑错误时，才可设为 true。普通 OCR 错别字、乱码、排版或表格/公式瑕疵、段落顺序小问题、局部重复、文风和原文自身的问题都必须设为 false；证据不足或不确定时也必须设为 false。不要润色、改写或评价原文内容。
-
-请仅返回一个 JSON 对象，不要使用 Markdown 代码围栏：
-{{"has_problem": true或false, "severity": "none|low|medium|high", "summary": "简短中文结论", "issues": ["具体问题"], "evidence": ["简短证据"]}}
-
-文件名：{filename}
-分段：{chunk_index}/{chunk_count}
-Markdown 内容：
-{markdown}
-"""
 MIN_WORDS_OR_CJK_PER_PAGE = 150
 MAX_OCR_QUALITY_ATTEMPTS = 3
 OCR_QUALITY_WARNING = "请核验原件字数，PaddleOCR返回结果可能存在问题。"
@@ -105,25 +101,11 @@ APP_ICON_ICO_NAME = "app_icon.ico"
 WINDOWS_APP_USER_MODEL_ID = "PaddleOCR.PDFToMarkdown.GUI"
 
 DESIGN_COLORS = {
-    "canvas": "#f6f7fb",
-    "surface": "#ffffff",
-    "surface_muted": "#f1f3f8",
-    "border": "#d9deea",
-    "text": "#172033",
-    "muted": "#667085",
-    "accent": "#2563eb",
-    "accent_active": "#1d4ed8",
-    "accent_soft": "#dbeafe",
-    "danger": "#dc2626",
-    "danger_active": "#b91c1c",
-    "log_bg": "#0b1020",
-    "log_fg": "#d7e1f5",
     "log_timestamp": "#7c8aa5",
     "log_info": "#bfdbfe",
     "log_success": "#86efac",
     "log_warning": "#fde68a",
     "log_error": "#fca5a5",
-    "log_panel_border": "#1e293b",
 }
 
 
@@ -478,6 +460,11 @@ class QueueFullSkipped(RuntimeError):
     pass
 
 
+class JobRecoverySkipped(RuntimeError):
+    """The current file exhausted its bounded job recovery budget."""
+    pass
+
+
 @dataclass
 class SplitPdfPart:
     path: Path
@@ -680,6 +667,7 @@ def process_split_pdf_async(
     llm_base_url: str = DEFAULT_LLM_BASE_URL,
     llm_api_key: str = "",
     llm_model: str = "",
+    prompts=None,
 ) -> tuple[str, dict[str, Any]]:
     """拆分超限 PDF、逐段 OCR，并合并为一个 .md 和一个 .json。"""
     parts, work_dir, total_pages = split_pdf_for_upload(pdf_path, output_root, log_callback)
@@ -731,6 +719,7 @@ def process_split_pdf_async(
             llm_base_url=llm_base_url,
             llm_api_key=llm_api_key,
             llm_model=llm_model,
+            prompts=prompts,
         )
         merged_markdown_parts.append(
             f"<!-- 自动拆分 OCR：原 PDF 第 {part.page_start}-{part.page_end} 页 -->\n\n{markdown.strip()}"
@@ -813,30 +802,56 @@ def load_config() -> AppConfig:
 
 
 def save_config(config: AppConfig) -> None:
+    # A failed write must not destroy the only copy of saved service settings.
+    payload = json.dumps(config.__dict__, ensure_ascii=False, indent=2)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(
-        json.dumps(config.__dict__, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=CONFIG_DIR,
+                                         prefix=".config-", suffix=".tmp", delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, CONFIG_PATH)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def safe_filename(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*]+', "_", name).strip() or "output"
 
 
-def find_pdf_files(input_dir: Path, recursive: bool) -> list[Path]:
-    files = list(input_dir.rglob("*.pdf")) if recursive else list(input_dir.glob("*.pdf"))
-    return sorted([p for p in files if p.is_file()], key=lambda p: str(p).lower())
+def find_pdf_files(input_dir: Path, recursive: bool, stop_checker=lambda: False) -> list[Path]:
+    """Scan incrementally, including upper-case PDF suffixes, without following directory links."""
+    files, directories = [], [input_dir]
+    while directories:
+        if stop_checker():
+            raise StopRequested(tr('用户请求停止。'))
+        with os.scandir(directories.pop()) as entries:
+            for entry in entries:
+                if stop_checker():
+                    raise StopRequested(tr('用户请求停止。'))
+                if entry.is_dir(follow_symlinks=False):
+                    if recursive:
+                        directories.append(Path(entry.path))
+                elif entry.name.lower().endswith(".pdf") and entry.is_file():
+                    files.append(Path(entry.path))
+    return sorted(files, key=lambda path: str(path).lower())
 
 
 def get_file_size_mb(path: Path) -> float:
     return path.stat().st_size / 1024 / 1024
 
 
-def split_oversized_pdfs(pdfs: list[Path], max_mb: float = MAX_LOCAL_UPLOAD_MB) -> tuple[list[Path], list[tuple[Path, float]]]:
+def split_oversized_pdfs(pdfs: list[Path], max_mb: float = MAX_LOCAL_UPLOAD_MB,
+                         stop_checker=lambda: False) -> tuple[list[Path], list[tuple[Path, float]]]:
     valid: list[Path] = []
     oversized: list[tuple[Path, float]] = []
     for pdf in pdfs:
+        if stop_checker():
+            raise StopRequested(tr('用户请求停止。'))
         try:
             size_mb = get_file_size_mb(pdf)
         except OSError:
@@ -1002,6 +1017,14 @@ def require_requests() -> None:
         raise RuntimeError(tr('缺少 requests，请先运行：python -m pip install --upgrade requests'))
 
 
+def _close_response(response) -> None:
+    """Cleanup must not turn usable output into a failed job or hide cancellation."""
+    try:
+        response.close()
+    except Exception:
+        pass
+
+
 def auth_headers(token: str, json_content: bool = False) -> dict[str, str]:
     headers = {"Authorization": f"Bearer {token.strip()}"}
     if json_content:
@@ -1018,25 +1041,29 @@ def openai_compatible_url(base_url: str, endpoint: str) -> str:
 
 
 def fetch_openai_compatible_models(
-    base_url: str, api_key: str, timeout: float = TOKEN_CHECK_TIMEOUT_SECONDS
+    base_url: str, api_key: str, timeout: float = TOKEN_CHECK_TIMEOUT_SECONDS,
+    *, stop=lambda: False,
 ) -> list[str]:
     """Fetch model IDs from an OpenAI-compatible GET /models endpoint."""
     require_requests()
-    response = requests.get(
+    response = cancellable_call(lambda: requests.get(
         openai_compatible_url(base_url, "models"),
         headers=auth_headers(api_key),
         timeout=timeout,
-    )
-    if not response.ok:
-        raise RuntimeError(tr('拉取 LLM 模型列表失败：{arg0}', arg0=api_error_message(parse_response_json(response), response.status_code)))
-    payload = parse_response_json(response)
-    items = payload.get("data")
-    if not isinstance(items, list):
-        raise RuntimeError(tr('LLM /models 响应中没有 data 数组。'))
-    models = ModelCatalog(items)
-    if not models:
-        raise RuntimeError(tr('LLM /models 没有返回可用模型。'))
-    return models
+    ), stop, timeout=max(1, float(timeout)) + 20)
+    try:
+        if not response.ok:
+            raise RuntimeError(tr('拉取 LLM 模型列表失败：{arg0}', arg0=api_error_message(parse_response_json(response), response.status_code)))
+        payload = parse_response_json(response)
+        items = payload.get("data")
+        if not isinstance(items, list):
+            raise RuntimeError(tr('LLM /models 响应中没有 data 数组。'))
+        models = ModelCatalog(items)
+        if not models:
+            raise RuntimeError(tr('LLM /models 没有返回可用模型。'))
+        return models
+    finally:
+        _close_response(response)
 
 
 def check_openai_compatible_api(
@@ -1044,12 +1071,13 @@ def check_openai_compatible_api(
     api_key: str,
     model: str,
     timeout: float = TOKEN_CHECK_TIMEOUT_SECONDS,
+    *, stop=lambda: False,
 ) -> str:
     """Send a minimal chat request to verify URL, key, and selected model end to end."""
     require_requests()
     if not api_key.strip() or not model.strip():
         raise ValueError(tr('测试 LLM API 前必须填写 API Key 并选择或输入模型。'))
-    response = requests.post(
+    response = cancellable_call(lambda: requests.post(
         openai_compatible_url(base_url, "chat/completions"),
         headers=auth_headers(api_key, json_content=True),
         json={
@@ -1058,25 +1086,28 @@ def check_openai_compatible_api(
             "messages": [{"role": "user", "content": "只回复 OK"}],
         },
         timeout=timeout,
-    )
-    if not response.ok:
-        raise RuntimeError(
-            tr('LLM API 测试失败：{arg0}', arg0=api_error_message(parse_response_json(response), response.status_code))
-        )
-    payload = parse_response_json(response)
+    ), stop, timeout=max(1, float(timeout)) + 20)
     try:
-        choice = payload["choices"][0]
-        content_value = choice["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError(tr('LLM API 已响应，但缺少 choices[0].message.content。')) from exc
-    content = content_value.strip() if isinstance(content_value, str) else ""
-    if not content:
-        finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
-        suffix = f"（finish_reason={finish_reason}）" if finish_reason else ""
-        raise RuntimeError(
-            tr('LLM API 已响应，但返回内容为空{arg0}。测试请求已不再限制 max_tokens；如果仍出现此错误，请确认所选模型支持 chat/completions 文本输出，而不是仅支持推理、嵌入或图像输出的模型。', arg0=suffix)
-        )
-    return content
+        if not response.ok:
+            raise RuntimeError(
+                tr('LLM API 测试失败：{arg0}', arg0=api_error_message(parse_response_json(response), response.status_code))
+            )
+        payload = parse_response_json(response)
+        try:
+            choice = payload["choices"][0]
+            content_value = choice["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError(tr('LLM API 已响应，但缺少 choices[0].message.content。')) from exc
+        content = content_value.strip() if isinstance(content_value, str) else ""
+        if not content:
+            finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+            suffix = f"（finish_reason={finish_reason}）" if finish_reason else ""
+            raise RuntimeError(
+                tr('LLM API 已响应，但返回内容为空{arg0}。测试请求已不再限制 max_tokens；如果仍出现此错误，请确认所选模型支持 chat/completions 文本输出，而不是仅支持推理、嵌入或图像输出的模型。', arg0=suffix)
+            )
+        return content
+    finally:
+        _close_response(response)
 
 
 def _parse_llm_json(content: str) -> dict[str, Any]:
@@ -1100,6 +1131,7 @@ def review_markdown_with_llm(
     timeout: float = REQUEST_TIMEOUT_SECONDS,
     response_callback=None,
     stop_checker=lambda: False,
+    prompts=None,
 ) -> dict[str, Any]:
     """Ask an OpenAI-compatible chat-completions API to review every Markdown chunk."""
     require_requests()
@@ -1107,10 +1139,10 @@ def review_markdown_with_llm(
         raise ValueError(tr('启用 LLM 核验时必须填写 API Key 并选择模型。'))
     chunks = [markdown[i : i + LLM_REVIEW_CHUNK_CHARS] for i in range(0, len(markdown), LLM_REVIEW_CHUNK_CHARS)] or [""]
     reviews: list[dict[str, Any]] = []
+    instruction = resolve_prompt("ocr_review", prompts)
     for index, chunk in enumerate(chunks, start=1):
-        prompt = LLM_REVIEW_PROMPT.format(
-            filename=filename, chunk_index=index, chunk_count=len(chunks), markdown=chunk
-        )
+        content = json.dumps({"filename": filename, "chunk_index": index,
+                              "chunk_count": len(chunks), "markdown": chunk}, ensure_ascii=False)
         response = cancellable_call(lambda: requests.post(
             openai_compatible_url(base_url, "chat/completions"),
             headers=auth_headers(api_key, json_content=True),
@@ -1118,17 +1150,21 @@ def review_markdown_with_llm(
                 "model": model,
                 "temperature": 0,
                 "response_format": {"type": "json_object"},
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [{"role": "system", "content": instruction},
+                             {"role": "user", "content": content}],
             },
             timeout=timeout,
         ), stop_checker, timeout=max(1, float(timeout)) + 20, cancelled=StopRequested)
-        if not response.ok:
-            raise RuntimeError(tr('LLM 核验失败：{arg0}', arg0=api_error_message(parse_response_json(response), response.status_code)))
-        payload = parse_response_json(response)
         try:
-            content = payload["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise RuntimeError(tr('LLM chat/completions 响应缺少 choices[0].message.content。')) from exc
+            if not response.ok:
+                raise RuntimeError(tr('LLM 核验失败：{arg0}', arg0=api_error_message(parse_response_json(response), response.status_code)))
+            payload = parse_response_json(response)
+            try:
+                content = payload["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError) as exc:
+                raise RuntimeError(tr('LLM chat/completions 响应缺少 choices[0].message.content。')) from exc
+        finally:
+            _close_response(response)
         content = str(content)
         if response_callback is not None:
             response_callback(index, len(chunks), content)
@@ -1197,7 +1233,8 @@ def build_optional_payload(model_name: str) -> dict[str, Any]:
     }
 
 
-def validate_access_token(token: str, base_url: str = DEFAULT_BASE_URL) -> tuple[bool, str, dict[str, Any]]:
+def validate_access_token(token: str, base_url: str = DEFAULT_BASE_URL,
+                          *, stop_checker=lambda: False) -> tuple[bool, str, dict[str, Any]]:
     """轻量检测 token。使用不存在的 jobId 查询：有效 token 通常返回 11001/jobId 不存在；无效 token 返回 401。"""
     if requests is None:
         return False, tr('缺少 requests 包。请运行：python -m pip install requests'), {}
@@ -1206,22 +1243,28 @@ def validate_access_token(token: str, base_url: str = DEFAULT_BASE_URL) -> tuple
 
     url = f"{get_job_url(base_url)}/ocrjob-token-check-probe"
     try:
-        resp = requests.get(url, headers=auth_headers(token, json_content=True), timeout=TOKEN_CHECK_TIMEOUT_SECONDS)
+        resp = cancellable_call(lambda: requests.get(url, headers=auth_headers(token, json_content=True),
+            timeout=TOKEN_CHECK_TIMEOUT_SECONDS), stop_checker,
+            timeout=TOKEN_CHECK_TIMEOUT_SECONDS + 20, cancelled=StopRequested)
+    except StopRequested:
+        raise
     except Exception as e:
         return False, tr('检测请求失败：{arg0}', arg0=e), {}
 
-    data = parse_response_json(resp)
-    code = data.get("code")
-    msg = str(data.get("msg") or data.get("message") or "")
+    try:
+        data = parse_response_json(resp)
+        code = data.get("code")
 
-    if resp.status_code == 401 or code == 401:
-        return False, tr('Token 无效：接口返回 401。'), data
-    if code in {11001, 11002} or resp.status_code == 404:
-        return True, tr('API Key/Access Token 有效：接口已通过鉴权。'), data
-    if resp.status_code in {200, 400} and code not in {401, None}:
-        # 只要不是鉴权失败，多数情况下说明 token 已通过鉴权；保守提示具体返回。
-        return True, tr('API Key/Access Token 基本有效：接口返回 {arg0}。', arg0=api_error_message(data, resp.status_code)), data
-    return False, tr('无法确认 Token 是否有效：{arg0}。', arg0=api_error_message(data, resp.status_code)), data
+        if resp.status_code == 401 or code == 401:
+            return False, tr('Token 无效：接口返回 401。'), data
+        if code in {11001, 11002} or resp.status_code == 404:
+            return True, tr('API Key/Access Token 有效：接口已通过鉴权。'), data
+        if resp.status_code in {200, 400} and code not in {401, None}:
+            # 只要不是鉴权失败，多数情况下说明 token 已通过鉴权；保守提示具体返回。
+            return True, tr('API Key/Access Token 基本有效：接口返回 {arg0}。', arg0=api_error_message(data, resp.status_code)), data
+        return False, tr('无法确认 Token 是否有效：{arg0}。', arg0=api_error_message(data, resp.status_code)), data
+    finally:
+        _close_response(resp)
 
 
 def submit_document_job_once(
@@ -1248,22 +1291,27 @@ def submit_document_job_once(
         with open(pdf_path, "rb") as f:
             files = {"file": f}
             resp = requests.post(job_url, headers=headers, data=data, files=files, timeout=float(request_timeout))
+    except StopRequested:
+        raise
     except Exception as e:
         raise PaddleOCRAPIError(tr('提交任务请求失败：{arg0}', arg0=e)) from e
 
-    payload = parse_response_json(resp)
-    if resp.status_code == 401 or payload.get("code") == 401:
-        raise PaddleOCRAPIError(tr('Token 无效：接口返回 401。'), code=401, payload=payload)
-    if resp.status_code not in {200, 201} or payload.get("code") not in {0, None}:
-        code = payload.get("code")
-        raise PaddleOCRAPIError(api_error_message(payload, resp.status_code), code=code, payload=payload)
+    try:
+        payload = parse_response_json(resp)
+        if resp.status_code == 401 or payload.get("code") == 401:
+            raise PaddleOCRAPIError(tr('Token 无效：接口返回 401。'), code=401, payload=payload)
+        if resp.status_code not in {200, 201} or (type(payload.get("code")) is not int or payload["code"] != 0):
+            code = payload.get("code") or resp.status_code
+            raise PaddleOCRAPIError(api_error_message(payload, resp.status_code), code=code, payload=payload)
 
-    job_id = None
-    if isinstance(payload.get("data"), dict):
-        job_id = payload["data"].get("jobId")
-    if not job_id:
-        raise PaddleOCRAPIError(tr('提交成功但没有返回 jobId：{arg0}', arg0=payload), payload=payload)
-    return payload
+        job_id = None
+        if isinstance(payload.get("data"), dict):
+            job_id = payload["data"].get("jobId")
+        if not job_id:
+            raise PaddleOCRAPIError(tr('提交成功但没有返回 jobId：{arg0}', arg0=payload), payload=payload)
+        return payload
+    finally:
+        _close_response(resp)
 
 
 def submit_document_job_with_retry(
@@ -1302,7 +1350,9 @@ def submit_document_job_with_retry(
                 )
                 wait_with_stop(QUEUE_FULL_RETRY_SECONDS, stop_checker)
                 continue
-            if is_rate_limit_error(payload):
+            if is_rate_limit_error(payload, e.code):
+                if attempt >= RATE_LIMIT_MAX_ATTEMPTS:
+                    raise
                 log_callback(
                     tr('请求频率过高，{arg0:.0f} 秒后自动重试提交：{arg1}', arg0=RATE_LIMIT_RETRY_SECONDS, arg1=pdf_path.name)
                 )
@@ -1312,24 +1362,29 @@ def submit_document_job_with_retry(
 
 
 def wait_with_stop(seconds: float, stop_checker) -> None:
-    end = time.time() + max(0.0, seconds)
-    while time.time() < end:
+    deadline = time.monotonic() + max(0.0, seconds)
+    while True:
         if stop_checker():
             raise StopRequested(tr('用户请求停止。'))
-        time.sleep(min(0.5, end - time.time()))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(0.5, remaining))
 
 
 def wait_for_poll_interval(seconds: float, stop_checker, manual_query_event: Optional[threading.Event] = None) -> bool:
-    """等待下一轮自动轮询；如果用户点击“手动查询当前结果”，立即返回 True。"""
-    end = time.time() + max(0.0, seconds)
-    while time.time() < end:
+    """Wait interruptibly without being affected by changes to the system clock."""
+    deadline = time.monotonic() + max(0.0, seconds)
+    while True:
         if stop_checker():
             raise StopRequested(tr('用户请求停止。'))
         if manual_query_event is not None and manual_query_event.is_set():
             manual_query_event.clear()
             return True
-        time.sleep(min(0.2, end - time.time()))
-    return False
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.2, remaining))
 
 
 def get_job_status(job_id: str, token: str, base_url: str, request_timeout: float) -> dict[str, Any]:
@@ -1338,15 +1393,35 @@ def get_job_status(job_id: str, token: str, base_url: str, request_timeout: floa
     url = f"{get_job_url(base_url)}/{job_id}"
     try:
         resp = requests.get(url, headers=auth_headers(token, json_content=True), timeout=float(request_timeout))
+    except StopRequested:
+        raise
     except Exception as e:
         raise PaddleOCRAPIError(tr('查询任务状态失败：{arg0}', arg0=e)) from e
-    payload = parse_response_json(resp)
-    if resp.status_code == 401 or payload.get("code") == 401:
-        raise PaddleOCRAPIError(tr('Token 无效：接口返回 401。'), code=401, payload=payload)
-    if payload.get("code") not in {0, None} or resp.status_code not in {200, 201}:
-        code = payload.get("code")
-        raise PaddleOCRAPIError(api_error_message(payload, resp.status_code), code=code, payload=payload)
-    return payload
+    try:
+        payload = parse_response_json(resp)
+        if resp.status_code not in {200, 201}:
+            raise PaddleOCRAPIError(api_error_message(payload, resp.status_code),
+                                    code=payload.get("code") or resp.status_code, payload=payload)
+        validate_job_status_payload(payload)
+        return payload
+    finally:
+        _close_response(resp)
+
+
+def validate_job_status_payload(payload):
+    """Only documented successful job states count as a healthy response."""
+    if (not isinstance(payload, dict) or type(payload.get("code")) is not int
+            or payload["code"] != 0 or not isinstance(payload.get("data"), dict)):
+        raise PaddleOCRAPIError(tr('jobId 返回异常响应：{arg0}', arg0=payload),
+                                code=payload.get("code") if isinstance(payload, dict) else None)
+    job = payload["data"]
+    state = str(job.get("state") or "").strip().lower()
+    if state == "failed":
+        raise PaddleOCRAPIError(tr('任务解析失败：{arg0}', arg0=job.get("errorMsg") or payload),
+                                code=11003, payload=payload)
+    if state not in {"pending", "running", "done"}:
+        raise PaddleOCRAPIError(tr('jobId 返回未知或缺失状态：{arg0}', arg0=state or tr('未知')), payload=payload)
+    return job, state
 
 
 def int_or_zero(value: Any) -> int:
@@ -1368,19 +1443,18 @@ def poll_job_until_done(
     log_callback,
     manual_query_event: Optional[threading.Event] = None,
 ) -> dict[str, Any]:
-    start = time.time()
+    start = time.monotonic()
     last_done = -1
     last_total = 0
     while True:
         if stop_checker():
             raise StopRequested(tr('用户请求停止，已停止轮询当前任务。'))
-        if poll_timeout and time.time() - start > float(poll_timeout):
+        if poll_timeout and time.monotonic() - start > float(poll_timeout):
             raise TimeoutError(tr('任务 {arg0} 查询超时，超过 {arg1:.0f} 秒。', arg0=job_id, arg1=poll_timeout))
 
         payload = cancellable_call(lambda: get_job_status(job_id, token, base_url, request_timeout),
                                    stop_checker, timeout=max(1, float(request_timeout)) + 20, cancelled=StopRequested)
-        job = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        state = str(job.get("state") or "").lower()
+        job, state = validate_job_status_payload(payload)
 
         if state == "pending":
             progress_callback("pending", 0, 0, 0.0, tr('排队中'))
@@ -1400,34 +1474,88 @@ def poll_job_until_done(
             done_pages = int_or_zero(progress.get("extractedPages")) or total_pages
             progress_callback("done", done_pages or 1, total_pages or 1, 100.0, tr('解析完成'))
             return payload
-        elif state == "failed":
-            err = job.get("errorMsg") or payload.get("msg") or payload
-            raise PaddleOCRAPIError(tr('任务解析失败：{arg0}', arg0=err), code=11003, payload=payload)
-        else:
-            log_callback(tr('当前任务状态：{arg0}', arg0=state or tr('未知')))
-            progress_callback(state or "unknown", 0, 0, 0.0, tr('状态：{arg0}', arg0=state or tr('未知')))
 
         interrupted = wait_for_poll_interval(max(1.0, float(poll_interval)), stop_checker, manual_query_event)
         if interrupted:
             log_callback(tr('收到手动查询请求，立即查询当前任务状态。'))
 
 
-def download_text_url(url: str, timeout: float) -> str:
-    if requests is None:
-        raise RuntimeError(tr('缺少 requests 包。请运行：python -m pip install requests'))
-    resp = requests.get(url, timeout=float(timeout))
-    resp.raise_for_status()
-    if resp.encoding is None:
-        resp.encoding = "utf-8"
-    return resp.text
+def poll_job_with_retries(*, job_id, stop_checker, log_callback, poll_interval,
+                          manual_query_event=None, **kwargs):
+    """Allow three retries after the first anomaly, with one budget per jobId.
+
+    A normal pending/running response continues polling inside the current call;
+    it neither spends nor resets the anomaly budget. Cancellation always escapes.
+    """
+    for attempt in range(JOB_QUERY_MAX_RETRIES + 1):
+        if stop_checker():
+            raise StopRequested(tr('用户请求停止。'))
+        try:
+            return poll_job_until_done(job_id=job_id, stop_checker=stop_checker,
+                log_callback=log_callback, poll_interval=poll_interval,
+                manual_query_event=manual_query_event, **kwargs)
+        except StopRequested:
+            raise
+        except Exception as exc:
+            if stop_checker():
+                raise StopRequested(tr('用户请求停止。')) from exc
+            log_callback(tr('jobId {arg0} 查询异常（{arg1}/{arg2}）：{arg3}',
+                            arg0=job_id, arg1=attempt + 1, arg2=JOB_QUERY_MAX_RETRIES + 1, arg3=exc))
+            if attempt >= JOB_QUERY_MAX_RETRIES:
+                raise
+            wait_for_poll_interval(max(1.0, float(poll_interval)), stop_checker, manual_query_event)
 
 
-def download_binary_url(url: str, timeout: float) -> bytes:
-    if requests is None:
-        raise RuntimeError(tr('缺少 requests 包。请运行：python -m pip install requests'))
-    resp = requests.get(url, timeout=float(timeout))
-    resp.raise_for_status()
-    return resp.content
+def discard_failed_job_cache(path, job_id, log_callback):
+    """Never silently reuse a failed job when its cache cannot be removed."""
+    try:
+        existed = path.exists()
+        path.unlink(missing_ok=True)
+        if path.exists():
+            raise OSError(str(path))
+    except OSError as exc:
+        raise RuntimeError(tr('无法删除异常 jobId 缓存，已停止此文件：{arg0}；{arg1}', arg0=path, arg1=exc)) from exc
+    if existed:
+        log_callback(tr('已删除异常 jobId 缓存：{arg0}；jobId：{arg1}', arg0=path, arg1=job_id or '—'))
+
+
+def write_job_cache(path, record):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=".job-", suffix=".tmp", delete=False) as handle:
+            temporary = Path(handle.name)
+            json.dump(record, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def download_text_url(url: str, timeout: float, *, stop_checker=lambda: False) -> str:
+    require_requests()
+    resp = cancellable_call(lambda: requests.get(url, timeout=float(timeout)),
+                            stop_checker, timeout=max(1, float(timeout)) + 20, cancelled=StopRequested)
+    try:
+        resp.raise_for_status()
+        if resp.encoding is None:
+            resp.encoding = "utf-8"
+        return resp.text
+    finally:
+        _close_response(resp)
+
+
+def download_binary_url(url: str, timeout: float, *, stop_checker=lambda: False) -> bytes:
+    require_requests()
+    resp = cancellable_call(lambda: requests.get(url, timeout=float(timeout)),
+                            stop_checker, timeout=max(1, float(timeout)) + 20, cancelled=StopRequested)
+    try:
+        resp.raise_for_status()
+        return resp.content
+    finally:
+        _close_response(resp)
 
 
 def iter_dicts(data: Any) -> Iterable[dict[str, Any]]:
@@ -1666,6 +1794,7 @@ def save_result_resources(
     output_md_path: Path,
     raw_json_path: Path,
     request_timeout: float,
+    *, stop_checker=lambda: False,
 ) -> tuple[str, dict[str, Any]]:
     job = done_payload.get("data") if isinstance(done_payload.get("data"), dict) else {}
     result_url = job.get("resultUrl") if isinstance(job.get("resultUrl"), dict) else {}
@@ -1680,21 +1809,25 @@ def save_result_resources(
     # 关键字段通常是 result.layoutParsingResults[*].markdown.text。
     if json_url:
         try:
-            json_text = download_text_url(json_url, request_timeout)
+            json_text = download_text_url(json_url, request_timeout, stop_checker=stop_checker)
             raw_data["resultJsonText"] = json_text
             raw_data["resultJsonParsed"] = parse_json_or_jsonl_text(json_text)
+        except StopRequested:
+            raise
         except Exception as e:
             raw_data["jsonDownloadError"] = str(e)
 
     if markdown_url:
         try:
-            markdown_text = download_text_url(markdown_url, request_timeout).strip()
+            markdown_text = download_text_url(markdown_url, request_timeout, stop_checker=stop_checker).strip()
             raw_data["markdownUrlTextHead"] = markdown_text[:1000]
             # 有些返回虽然叫 markdownUrl，但内容仍可能是 JSON/JSONL；先判断再写。
             if markdown_text and not text_looks_like_json_or_jsonl(markdown_text):
                 markdown = markdown_text
             elif markdown_text:
                 raw_data["markdownUrlParsed"] = parse_json_or_jsonl_text(markdown_text)
+        except StopRequested:
+            raise
         except Exception as e:
             raw_data["markdownDownloadError"] = str(e)
 
@@ -1709,6 +1842,8 @@ def save_result_resources(
             + "\n```\n"
         )
 
+    if stop_checker():
+        raise StopRequested(tr('用户请求停止。'))
     output_md_path.parent.mkdir(parents=True, exist_ok=True)
     output_md_path.write_text(markdown.strip() + "\n", encoding="utf-8")
     raw_json_path.write_text(json.dumps(raw_data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1735,103 +1870,88 @@ def process_one_pdf_async(
     llm_base_url: str = DEFAULT_LLM_BASE_URL,
     llm_api_key: str = "",
     llm_model: str = "",
+    prompts=None,
 ) -> tuple[str, dict[str, Any]]:
     job_cache_path = get_job_cache_path(output_root, pdf_path)
     raw_json_path = output_md_path.with_suffix(".raw.json")
-    batch_id = (
-        f"batch-{datetime.now():%Y%m%d-%H%M%S}-{file_identity_key(pdf_path)}"
-        f"-quality{quality_attempt}"
-    )
-
+    batch_id = (f"batch-{datetime.now():%Y%m%d-%H%M%S}-{file_identity_key(pdf_path)}"
+                f"-quality{quality_attempt}-{uuid.uuid4().hex[:12]}")
     job_id = ""
     if job_cache_path.exists() and not overwrite:
         try:
             cached = json.loads(job_cache_path.read_text(encoding="utf-8"))
-            job_id = str(cached.get("jobId") or "")
-            if job_id:
-                log_callback(tr('发现已保存 jobId，继续查询：{arg0}', arg0=job_id))
-        except Exception:
-            job_id = ""
+            candidate = cached.get("jobId") if isinstance(cached, dict) else None
+            if not isinstance(candidate, str) or not candidate.strip():
+                raise ValueError(tr('缓存中没有有效 jobId。'))
+            job_id = candidate.strip()
+            log_callback(tr('发现已保存 jobId，继续查询：{arg0}', arg0=job_id))
+        except Exception as exc:
+            if stop_checker():
+                raise StopRequested(tr('用户请求停止。')) from exc
+            log_callback(tr('jobId 缓存无法读取：{arg0}', arg0=exc))
+            discard_failed_job_cache(job_cache_path, "", log_callback)
 
-    if not job_id:
-        submitted = submit_document_job_with_retry(
-            pdf_path=pdf_path,
-            token=token,
-            model_name=model_name,
-            batch_id=batch_id,
-            base_url=base_url,
-            request_timeout=request_timeout,
-            stop_checker=stop_checker,
-            log_callback=log_callback,
-        )
-        data = submitted.get("data") if isinstance(submitted.get("data"), dict) else {}
-        job_id = str(data.get("jobId") or "")
+    retired_ids = set()
+    for generation in range(JOB_MAX_RESUBMISSIONS + 1):
+        if stop_checker():
+            raise StopRequested(tr('用户请求停止。'))
+        failure = None
         if not job_id:
-            raise PaddleOCRAPIError(tr('提交任务后未返回 jobId：{arg0}', arg0=submitted), payload=submitted)
-        job_cache_path.write_text(
-            json.dumps(
-                {
-                    "pdf": str(pdf_path),
-                    "output": str(output_md_path),
-                    "jobId": job_id,
-                    "batchId": batch_id,
-                    "model": model_name,
-                    "baseUrl": base_url,
-                    "createdAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        log_callback(tr('任务提交成功，jobId：{arg0}', arg0=job_id))
-
-    try:
-        done_payload = poll_job_until_done(
-            job_id=job_id,
-            token=token,
-            base_url=base_url,
-            request_timeout=request_timeout,
-            poll_timeout=poll_timeout,
-            poll_interval=poll_interval,
-            stop_checker=stop_checker,
-            progress_callback=progress_callback,
-            log_callback=log_callback,
-            manual_query_event=manual_query_event,
-        )
-    except PaddleOCRAPIError as e:
-        # job 过期或不存在时，删除缓存重新提交一次。
-        if e.code in {11001, 11002} and job_cache_path.exists():
-            log_callback(tr('旧 jobId 已失效，删除缓存并重新提交：{arg0}', arg0=job_id))
+            current_batch = f"{batch_id}-submission{generation}"
             try:
-                job_cache_path.unlink()
-            except Exception:
-                pass
-            return process_one_pdf_async(
-                pdf_path=pdf_path,
-                output_md_path=output_md_path,
-                output_root=output_root,
-                token=token,
-                model_name=model_name,
-                base_url=base_url,
-                request_timeout=request_timeout,
-                poll_timeout=poll_timeout,
-                poll_interval=poll_interval,
-                overwrite=overwrite,
-                stop_checker=stop_checker,
-                progress_callback=progress_callback,
-                log_callback=log_callback,
-                manual_query_event=manual_query_event,
-                quality_attempt=quality_attempt,
-                llm_review_enabled=llm_review_enabled,
-                llm_base_url=llm_base_url,
-                llm_api_key=llm_api_key,
-                llm_model=llm_model,
-            )
-        raise
+                submitted = submit_document_job_with_retry(
+                    pdf_path=pdf_path, token=token, model_name=model_name, batch_id=current_batch,
+                    base_url=base_url, request_timeout=request_timeout,
+                    stop_checker=stop_checker, log_callback=log_callback)
+                data = submitted.get("data") if isinstance(submitted, dict) else None
+                candidate = data.get("jobId") if isinstance(data, dict) else None
+                if not isinstance(candidate, str) or not candidate.strip():
+                    raise PaddleOCRAPIError(tr('提交任务后未返回 jobId：{arg0}', arg0=submitted))
+                candidate = candidate.strip()
+                if candidate in retired_ids:
+                    raise PaddleOCRAPIError(tr('重新提交返回了已淘汰的 jobId：{arg0}', arg0=candidate))
+                job_id = candidate
+            except StopRequested:
+                raise
+            except Exception as exc:
+                failure = exc
+            else:
+                # Cache local I/O failures are not job failures: do not create
+                # more remote jobs when their ids cannot be recorded safely.
+                write_job_cache(job_cache_path, {
+                    "pdf": str(pdf_path), "output": str(output_md_path), "jobId": job_id,
+                    "batchId": current_batch, "model": model_name, "baseUrl": base_url,
+                    "createdAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                })
+                log_callback(tr('任务提交成功，jobId：{arg0}', arg0=job_id))
+        if job_id:
+            try:
+                done_payload = poll_job_with_retries(
+                    job_id=job_id, token=token, base_url=base_url, request_timeout=request_timeout,
+                    poll_timeout=poll_timeout, poll_interval=poll_interval, stop_checker=stop_checker,
+                    progress_callback=progress_callback, log_callback=log_callback,
+                    manual_query_event=manual_query_event)
+            except StopRequested:
+                raise
+            except Exception as exc:
+                failure = exc
+            else:
+                break
+        if stop_checker():
+            raise StopRequested(tr('用户请求停止。')) from failure
+        if job_id:
+            retired_ids.add(job_id)
+        discard_failed_job_cache(job_cache_path, job_id, log_callback)
+        job_id = ""
+        if generation >= JOB_MAX_RESUBMISSIONS:
+            raise JobRecoverySkipped(tr('重新提交 {arg0} 次后仍异常，跳过文件：{arg1}；{arg2}',
+                                        arg0=JOB_MAX_RESUBMISSIONS, arg1=pdf_path, arg2=failure)) from failure
+        log_callback(tr('准备重新提交（{arg0}/{arg1}）：{arg2}；{arg3}',
+                        arg0=generation + 1, arg1=JOB_MAX_RESUBMISSIONS, arg2=pdf_path.name, arg3=failure))
+        wait_for_poll_interval(max(1.0, float(poll_interval)), stop_checker, manual_query_event)
 
     markdown, raw_data = save_result_resources(
-        done_payload, output_md_path, raw_json_path, request_timeout
+        done_payload, output_md_path, raw_json_path, request_timeout, stop_checker=stop_checker
     )
     page_count = get_result_page_count(done_payload, pdf_path)
     too_short, word_count = markdown_is_too_short(markdown, page_count)
@@ -1861,6 +1981,7 @@ def process_one_pdf_async(
                 model=llm_model,
                 timeout=request_timeout,
                 stop_checker=stop_checker,
+                prompts=prompts,
                 response_callback=lambda index, total, content: log_callback(
                     tr('LLM 回答（分段 {arg0}/{arg1}）：\n{arg2}', arg0=index, arg1=total, arg2=content)
                 ),
@@ -1918,6 +2039,7 @@ def process_one_pdf_async(
             llm_base_url=llm_base_url,
             llm_api_key=llm_api_key,
             llm_model=llm_model,
+            prompts=prompts,
             quality_attempt=quality_attempt + 1,
         )
     if quality_failed:
@@ -1980,7 +2102,7 @@ class PaddleOCRBatchGUI:
 
         self._build_ui()
         self.root.bind("<Destroy>", self._closed, add="+")
-        self.root.after(100, self._poll_log_queue)
+        self._log_poll_id = self.root.after(100, self._poll_log_queue)
 
         # Translation-only users do not need an OCR token on application startup.
 
@@ -2001,19 +2123,32 @@ class PaddleOCRBatchGUI:
         if event.widget == self.root:
             self.closed = True
             self.stop_requested = True
+            timer = getattr(self, "_log_poll_id", None)
+            if timer is not None:
+                self.root.after_cancel(timer)
+                self._log_poll_id = None
+
+    def _update_in_progress(self):
+        updates = getattr(self, "updates", None)
+        return self.closed or bool(updates and (updates.handoff or updates.installing))
 
     def run_background(self, key, work, completed, failed=None):
-        if key in self.background_jobs:
+        if self.closed or key in self.background_jobs:
             return False
         def worker():
             try:
                 result, error = work(), None
             except Exception as exc:
                 result, error = None, exc
-            self.log_queue.put(("ui_result", (key, completed, failed, result, error)))
+            if not self.closed:
+                self.log_queue.put(("ui_result", (key, completed, failed, result, error)))
         thread = threading.Thread(target=worker, daemon=True)
         self.background_jobs[key] = thread
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            self.background_jobs.pop(key, None)
+            raise
         return True
 
     def _guard_worker(self, *args):
@@ -2031,14 +2166,6 @@ class PaddleOCRBatchGUI:
                         APP_VERSION, resource_path(APP_ICON_PNG_NAME))
         self.log(tr('欢迎使用文献处理软件。选择文件夹即可开始；连接服务请打开偏好设置。'))
         self.log(tr('当前版本：{arg0}。OCR、翻译与质量检查的结果将在这里显示。', arg0=APP_VERSION))
-
-    def _on_resize(self, event: tk.Event) -> None:
-        if event.widget == self.root:
-            try:
-                wrap = max(int(self.root.winfo_width()) - 80, 260)
-                self.status_label.configure(wraplength=wrap)
-            except Exception:
-                pass
 
     def _refresh_file_progress_display(self) -> None:
         total = max(int(self.total_files), 0)
@@ -2087,6 +2214,8 @@ class PaddleOCRBatchGUI:
             self.log(tr('已清除 Access Token/API Key。'))
 
     def check_api_key(self) -> None:
+        if self._update_in_progress():
+            return
         self.save_current_config()
         if not self.config.token:
             self.set_token()
@@ -2098,14 +2227,24 @@ class PaddleOCRBatchGUI:
             return
         self.status_var.set(tr('正在检测 API Key 是否有效……'))
         self.log(tr('开始检测 API Key 是否有效。'))
-        self.check_thread = threading.Thread(target=self._check_api_key_worker, daemon=True)
+        self.check_thread = threading.Thread(target=self._check_api_key_worker,
+            args=((self.config.token, self.config.base_url),), daemon=True)
         self.check_thread.start()
 
-    def _check_api_key_worker(self) -> None:
-        ok, msg, payload = validate_access_token(self.config.token, self.config.base_url)
-        self.log_queue.put(("keycheck", {"ok": ok, "msg": msg, "payload": payload}))
+    def _check_api_key_worker(self, connection=None) -> None:
+        connection = connection or (self.config.token, self.config.base_url)
+        try:
+            ok, msg, payload = validate_access_token(*connection, stop_checker=lambda: self.closed)
+        except StopRequested:
+            return
+        except Exception as exc:
+            ok, msg, payload = False, tr('检测请求失败：{arg0}', arg0=exc), {}
+        if not self.closed:
+            self.log_queue.put(("keycheck", {"ok": ok, "msg": msg, "payload": payload, "connection": connection}))
 
     def fetch_llm_models(self) -> None:
+        if self._update_in_progress():
+            return
         self.save_current_config()
         if not self.config.llm_api_key:
             messagebox.showerror(tr('缺少 API Key'), tr('请先填写 LLM API Key。'), parent=self.root)
@@ -2114,19 +2253,22 @@ class PaddleOCRBatchGUI:
             return
         self.fetch_models_btn.config(state="disabled")
         self.status_var.set(tr('正在拉取 LLM 模型列表……'))
-        self.model_fetch_thread = threading.Thread(target=self._fetch_llm_models_worker, daemon=True)
+        self.model_fetch_thread = threading.Thread(target=self._fetch_llm_models_worker,
+            args=((self.config.llm_base_url, self.config.llm_api_key),), daemon=True)
         self.model_fetch_thread.start()
 
-    def _fetch_llm_models_worker(self) -> None:
+    def _fetch_llm_models_worker(self, connection=None) -> None:
+        connection = connection or (self.config.llm_base_url, self.config.llm_api_key)
         try:
-            models = fetch_openai_compatible_models(
-                self.config.llm_base_url, self.config.llm_api_key
-            )
-            self.log_queue.put(("llm_models", {"models": models}))
+            result = {"models": fetch_openai_compatible_models(*connection, stop=lambda: self.closed)}
         except Exception as exc:
-            self.log_queue.put(("llm_models", {"error": str(exc)}))
+            result = {"error": str(exc)}
+        if not self.closed:
+            self.log_queue.put(("llm_models", {**result, "connection": connection}))
 
     def test_llm_api(self) -> None:
+        if self._update_in_progress():
+            return
         self.save_current_config()
         if not self.config.llm_api_key or not self.config.llm_model:
             messagebox.showerror(
@@ -2139,19 +2281,18 @@ class PaddleOCRBatchGUI:
         self.test_llm_api_btn.config(state="disabled")
         self.status_var.set(tr('正在测试 LLM API 连通性……'))
         self.log(tr('开始测试 LLM API、API Key 和所选模型。'))
-        self.check_thread = threading.Thread(target=self._test_llm_api_worker, daemon=True)
+        self.check_thread = threading.Thread(target=self._test_llm_api_worker,
+            args=((self.config.llm_base_url, self.config.llm_api_key, self.config.llm_model),), daemon=True)
         self.check_thread.start()
 
-    def _test_llm_api_worker(self) -> None:
+    def _test_llm_api_worker(self, connection=None) -> None:
+        connection = connection or (self.config.llm_base_url, self.config.llm_api_key, self.config.llm_model)
         try:
-            reply = check_openai_compatible_api(
-                self.config.llm_base_url,
-                self.config.llm_api_key,
-                self.config.llm_model,
-            )
-            self.log_queue.put(("llm_api_test", {"reply": reply}))
+            result = {"reply": check_openai_compatible_api(*connection, stop=lambda: self.closed)}
         except Exception as exc:
-            self.log_queue.put(("llm_api_test", {"error": str(exc)}))
+            result = {"error": str(exc)}
+        if not self.closed:
+            self.log_queue.put(("llm_api_test", {**result, "connection": connection}))
 
     def _choose_markdown_files(self, title: str) -> list[Path]:
         initial = self.output_var.get() or self.input_var.get() or str(Path.home() / "Desktop")
@@ -2164,6 +2305,8 @@ class PaddleOCRBatchGUI:
         return [Path(path) for path in paths]
 
     def manual_wordcount_check(self) -> None:
+        if self._update_in_progress():
+            return
         paths = self._choose_markdown_files(tr('选择要手动进行字数检验的 Markdown'))
         if not paths:
             return
@@ -2203,11 +2346,12 @@ class PaddleOCRBatchGUI:
         self.stop_btn.configure(state="normal")
         from dataclasses import replace
         self.manual_check_thread = threading.Thread(
-            target=self._manual_llm_check_worker, args=(paths, replace(self.config)), daemon=True
+            target=self._manual_llm_check_worker,
+            args=(paths, replace(self.config), self.literature.prompt_snapshot()), daemon=True
         )
         self.manual_check_thread.start()
 
-    def _manual_llm_check_worker(self, paths: list[Path], config=None) -> None:
+    def _manual_llm_check_worker(self, paths: list[Path], config=None, prompts=None) -> None:
         config = config or self.config
         results = []
         for path in paths:
@@ -2219,6 +2363,7 @@ class PaddleOCRBatchGUI:
                     config.llm_base_url, config.llm_api_key,
                     config.llm_model, config.request_timeout,
                     stop_checker=lambda: self.stop_requested,
+                    prompts=prompts,
                     response_callback=lambda index, total, content: self.log_queue.put(
                         ("log", tr('LLM 回答（分段 {arg0}/{arg1}）：\n{arg2}', arg0=index, arg1=total, arg2=content))
                     ),
@@ -2233,6 +2378,8 @@ class PaddleOCRBatchGUI:
         self.log_queue.put(("manual_llm_done", results))
 
     def repair_json_to_md(self) -> None:
+        if self._update_in_progress():
+            return
         if self.repair_thread and self.repair_thread.is_alive():
             messagebox.showwarning(tr('正在修复'), tr('当前已经有 JSON 修复任务在运行。'), parent=self.root)
             return
@@ -2308,12 +2455,20 @@ class PaddleOCRBatchGUI:
             self.save_current_config()
 
     def open_output_dir(self) -> None:
+        if self._update_in_progress():
+            return
         path = Path(self.output_var.get().strip() or str(Path.home()))
-        path.mkdir(parents=True, exist_ok=True)
-        try:
-            os.startfile(str(path))  # type: ignore[attr-defined]
-        except Exception:
-            messagebox.showinfo(tr('输出文件夹'), str(path), parent=self.root)
+        def work():
+            path.mkdir(parents=True, exist_ok=True)
+            try:
+                os.startfile(str(path))  # type: ignore[attr-defined]
+                return True
+            except Exception:
+                return False
+        def completed(opened):
+            if not opened:
+                messagebox.showinfo(tr('输出文件夹'), str(path), parent=self.root)
+        self.run_background("open_output", work, completed)
 
     def save_current_config(self) -> None:
         self.config.input_dir = self.input_var.get().strip()
@@ -2343,6 +2498,8 @@ class PaddleOCRBatchGUI:
         return input_dir, output_dir
 
     def scan_pdfs(self) -> None:
+        if self._update_in_progress():
+            return
         source = self.input_var.get().strip()
         recursive = self.recursive_var.get()
         self.status_var.set(tr("正在后台扫描或检查文件……"))
@@ -2350,8 +2507,8 @@ class PaddleOCRBatchGUI:
             root = Path(source).expanduser().resolve()
             if not source or not root.is_dir():
                 raise ValueError(tr("请选择有效的 PDF 输入文件夹。"))
-            paths = find_pdf_files(root, recursive)
-            oversized = [(path, get_file_size_mb(path)) for path in paths if get_file_size_mb(path) > MAX_LOCAL_UPLOAD_MB]
+            paths = find_pdf_files(root, recursive, lambda: self.closed)
+            _, oversized = split_oversized_pdfs(paths, stop_checker=lambda: self.closed)
             return paths, oversized
         def finished(result):
             paths, oversized = result
@@ -2406,10 +2563,11 @@ class PaddleOCRBatchGUI:
             if not destination:
                 raise ValueError(tr("请选择 Markdown 输出文件夹。"))
             output_dir.mkdir(parents=True, exist_ok=True)
-            pdfs = find_pdf_files(input_dir, recursive)
+            pdfs = find_pdf_files(input_dir, recursive, lambda: self.stop_requested or self.closed)
             if not pdfs:
                 raise ValueError(tr("输入文件夹中没有找到 PDF 文件。"))
-            oversized = [path for path in pdfs if get_file_size_mb(path) > MAX_LOCAL_UPLOAD_MB]
+            _, sizes = split_oversized_pdfs(pdfs, stop_checker=lambda: self.stop_requested or self.closed)
+            oversized = [path for path, _size in sizes]
             if oversized and (PdfReader is None or PdfWriter is None):
                 raise ValueError(tr("缺少自动拆分组件"))
             return pdfs, input_dir, output_dir, oversized
@@ -2464,7 +2622,7 @@ class PaddleOCRBatchGUI:
             config.base_url or DEFAULT_BASE_URL, config.preserve_subfolders, config.overwrite,
             config.request_timeout, config.poll_timeout, config.poll_interval,
             config.llm_review_enabled, config.llm_base_url,
-            config.llm_api_key, config.llm_model,
+            config.llm_api_key, config.llm_model, snapshot.get("prompts"),
         )
         self.worker_thread = threading.Thread(target=self._guard_worker, args=args, daemon=True)
         self.worker_thread.start()
@@ -2519,6 +2677,7 @@ class PaddleOCRBatchGUI:
         llm_base_url: str,
         llm_api_key: str,
         llm_model: str,
+        prompts=None,
     ) -> None:
         start_time = datetime.now()
         ok = 0
@@ -2560,27 +2719,28 @@ class PaddleOCRBatchGUI:
                 self.log_queue.put(("log", tr('用户请求停止，批处理已中止。')))
                 break
 
-            out_path = build_output_path(pdf, input_dir, output_dir, preserve_subfolders, existing)
-            self.log_queue.put(("file_start", (index, len(pdfs), pdf.name)))
-            self.log_queue.put(("status", tr('正在处理 {arg0}/{arg1}：{arg2}', arg0=index, arg1=len(pdfs), arg2=pdf.name)))
-            self.log_queue.put(("page_progress", ("new", 0, 0, 0.0, tr('当前文件页数进度：等待提交'))))
-            self.log_queue.put(("split_progress", (0, 0)))
-            self.log_queue.put(("log", tr('[{arg0}/{arg1}] 开始：{arg2}', arg0=index, arg1=len(pdfs), arg2=pdf)))
-
-            size_mb = get_file_size_mb(pdf)
-            large_final_json = out_path.with_suffix(".json")
-            output_complete = out_path.exists() and out_path.stat().st_size > 0
-            if size_mb > MAX_LOCAL_UPLOAD_MB:
-                output_complete = output_complete and large_final_json.exists() and large_final_json.stat().st_size > 0
-
-            if output_complete and not overwrite:
-                skipped += 1
-                self.log_queue.put(("log", tr('跳过：输出已存在且完整 {arg0}', arg0=out_path)))
-                write_log_line(tr('SKIP\t{arg0}\t{arg1}\t输出已存在', arg0=pdf, arg1=out_path))
-                self.log_queue.put(("file_progress", index))
-                continue
-
+            out_path = output_dir / (safe_filename(pdf.stem) + ".md")
             try:
+                out_path = build_output_path(pdf, input_dir, output_dir, preserve_subfolders, existing)
+                self.log_queue.put(("file_start", (index, len(pdfs), pdf.name)))
+                self.log_queue.put(("status", tr('正在处理 {arg0}/{arg1}：{arg2}', arg0=index, arg1=len(pdfs), arg2=pdf.name)))
+                self.log_queue.put(("page_progress", ("new", 0, 0, 0.0, tr('当前文件页数进度：等待提交'))))
+                self.log_queue.put(("split_progress", (0, 0)))
+                self.log_queue.put(("log", tr('[{arg0}/{arg1}] 开始：{arg2}', arg0=index, arg1=len(pdfs), arg2=pdf)))
+
+                size_mb = get_file_size_mb(pdf)
+                large_final_json = out_path.with_suffix(".json")
+                output_complete = out_path.exists() and out_path.stat().st_size > 0
+                if size_mb > MAX_LOCAL_UPLOAD_MB:
+                    output_complete = output_complete and large_final_json.exists() and large_final_json.stat().st_size > 0
+
+                if output_complete and not overwrite:
+                    skipped += 1
+                    self.log_queue.put(("log", tr('跳过：输出已存在且完整 {arg0}', arg0=out_path)))
+                    write_log_line(tr('SKIP\t{arg0}\t{arg1}\t输出已存在', arg0=pdf, arg1=out_path))
+                    self.log_queue.put(("file_progress", index))
+                    continue
+
                 if size_mb > MAX_LOCAL_UPLOAD_MB:
                     split_count += 1
                     self.log_queue.put(("log", tr('检测到大文件 {arg0:.2f}MB，开始自动拆分：{arg1}', arg0=size_mb, arg1=pdf.name)))
@@ -2592,7 +2752,7 @@ class PaddleOCRBatchGUI:
                         segment_progress_callback=segment_progress_callback,
                         log_callback=log_callback, manual_query_event=self.manual_query_event,
                         llm_review_enabled=llm_review_enabled, llm_base_url=llm_base_url,
-                        llm_api_key=llm_api_key, llm_model=llm_model,
+                        llm_api_key=llm_api_key, llm_model=llm_model, prompts=prompts,
                     )
                     write_log_line(f"OK_SPLIT\t{pdf}\t{out_path}\t{out_path.with_suffix('.json')}")
                 else:
@@ -2603,7 +2763,7 @@ class PaddleOCRBatchGUI:
                         stop_checker=stop_checker, progress_callback=progress_callback,
                         log_callback=log_callback, manual_query_event=self.manual_query_event,
                         llm_review_enabled=llm_review_enabled, llm_base_url=llm_base_url,
-                        llm_api_key=llm_api_key, llm_model=llm_model,
+                        llm_api_key=llm_api_key, llm_model=llm_model, prompts=prompts,
                     )
                     write_log_line(f"OK\t{pdf}\t{out_path}")
                 if any(
@@ -2627,6 +2787,10 @@ class PaddleOCRBatchGUI:
                 self.log_queue.put(("log", tr('已停止：{arg0}', arg0=e)))
                 write_log_line(f"STOP\t{pdf}\t{out_path}\t{e}")
                 break
+            except JobRecoverySkipped as e:
+                skipped += 1
+                self.log_queue.put(("log", tr('跳过：{arg0}\n{arg1}', arg0=pdf, arg1=e)))
+                write_log_line(f"SKIP_JOB_RECOVERY\t{pdf}\t{out_path}\t{e}")
             except QueueFullSkipped as e:
                 skipped += 1
                 self.log_queue.put(("log", tr('跳过：{arg0}\n{arg1}', arg0=pdf, arg1=e)))
@@ -2656,11 +2820,26 @@ class PaddleOCRBatchGUI:
         write_log_line(summary)
         self.log_queue.put(("done", summary))
 
+    def _stale_service_result(self, payload, current):
+        connection = payload.get("connection")
+        if connection is None or tuple(connection) == tuple(current):
+            return False
+        message = tr('服务设置已变更，已忽略旧请求结果。')
+        self.status_var.set(message)
+        self.log(message)
+        return True
+
     def _poll_log_queue(self) -> None:
+        timer = getattr(self, "_log_poll_id", None)
+        if timer is not None:
+            self.root.after_cancel(timer)
+            self._log_poll_id = None
         if self.closed:
             return
         try:
             for typ, payload in drain_events(self.log_queue):
+                if self.closed:
+                    break
                 if typ == "ui_result":
                     key, completed, failed, result, error = payload
                     self.background_jobs.pop(key, None)
@@ -2720,6 +2899,8 @@ class PaddleOCRBatchGUI:
                         self.split_progress_text_var.set("")
                         self.split_progress_label.grid_remove()
                 elif typ == "keycheck":
+                    if self._stale_service_result(payload, (self.config.token, self.config.base_url)):
+                        continue
                     ok = bool(payload.get("ok"))
                     msg = payload.get("msg") or ""
                     self.log(msg)
@@ -2730,6 +2911,10 @@ class PaddleOCRBatchGUI:
                         messagebox.showerror(tr('API Key 检测'), msg, parent=self.root)
                 elif typ == "llm_models":
                     self.fetch_models_btn.config(state="normal")
+                    if self._stale_service_result(payload, (
+                            self.llm_base_url_var.get().strip() or DEFAULT_LLM_BASE_URL,
+                            self.llm_api_key_var.get().strip())):
+                        continue
                     error = payload.get("error")
                     if error:
                         self.status_var.set(tr('拉取 LLM 模型列表失败。'))
@@ -2746,6 +2931,10 @@ class PaddleOCRBatchGUI:
                         self.log(msg)
                 elif typ == "llm_api_test":
                     self.test_llm_api_btn.config(state="normal")
+                    if self._stale_service_result(payload, (
+                            self.llm_base_url_var.get().strip() or DEFAULT_LLM_BASE_URL,
+                            self.llm_api_key_var.get().strip(), self.llm_model_var.get().strip())):
+                        continue
                     error = payload.get("error")
                     if error:
                         msg = tr('LLM API 测试失败：{arg0}', arg0=error)
@@ -2796,8 +2985,10 @@ class PaddleOCRBatchGUI:
         except queue.Empty:
             pass
         except Exception as exc:
-            self.log(tr("后台事件处理失败：{arg0}", arg0=exc))
-        self.root.after(100, self._poll_log_queue)
+            if not self.closed:
+                self.log(tr("后台事件处理失败：{arg0}", arg0=exc))
+        if not self.closed:
+            self._log_poll_id = self.root.after(100, self._poll_log_queue)
 
     def _configure_log_tags(self) -> None:
         self.log_text.tag_configure("timestamp", foreground=DESIGN_COLORS["log_timestamp"])
@@ -2827,14 +3018,31 @@ class PaddleOCRBatchGUI:
         self.refresh_log_language()
         self.save_current_config()
 
+    def copyable_log_text(self):
+        return "\n".join(f"[{ts}] {tr(message)}" for ts, message in self.log_history)
+
+    @staticmethod
+    def _log_display_message(message):
+        display = str(tr(message))
+        if len(display) > 16000:
+            display = display[:16000] + "\n" + str(tr("日志过长，界面已截短；复制日志可查看保留的完整消息。"))
+        return display
+
     def refresh_log_language(self) -> None:
+        # Prepare only the visible tail before touching Tk; rebuilding the whole
+        # retained history causes expensive text layout for immediately deleted data.
+        entries, characters, lines = [], 0, 0
+        for ts, message in reversed(self.log_history):
+            display = self._log_display_message(message)
+            entries.append((ts, display))
+            characters += len(display) + len(ts) + 4
+            lines += display.count("\n") + 1
+            if characters >= 250000 or lines >= 2000:
+                break
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
-        for ts, message in self.log_history:
+        for ts, display in reversed(entries):
             self.log_text.insert("end", f"[{ts}] ", ("timestamp",))
-            display = str(tr(message))
-            if len(display) > 16000:
-                display = display[:16000] + "\n" + str(tr("日志过长，界面已截短；复制日志可查看保留的完整消息。"))
             self.log_text.insert("end", display + "\n", (self._log_message_tag(display),))
         self._trim_log_display()
         self.log_text.configure(state="disabled")
@@ -2849,6 +3057,8 @@ class PaddleOCRBatchGUI:
             self.log_text.delete("1.0", "end-250001c")
 
     def log(self, message: str) -> None:
+        if self.closed:
+            return
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_history.append((ts, message))
         size = len(str(message))
@@ -2857,9 +3067,7 @@ class PaddleOCRBatchGUI:
         while len(self.log_history) > 1000 or (self.log_characters > 2000000 and len(self.log_history) > 1):
             self.log_history.pop(0)
             self.log_characters -= self.log_sizes.pop(0)
-        message = str(tr(message))
-        if len(message) > 16000:
-            message = message[:16000] + "\n" + str(tr("日志过长，界面已截短；复制日志可查看保留的完整消息。"))
+        message = self._log_display_message(message)
         tag = self._log_message_tag(message)
         self.log_text.configure(state="normal")
         self.log_text.insert("end", f"[{ts}] ", ("timestamp",))
