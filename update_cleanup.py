@@ -22,7 +22,29 @@ OWNER = ".update-owner.json"
 MAX_JSON = 256 * 1024
 MAX_LOG = 64 * 1024
 STALE_SECONDS = 24 * 60 * 60
+MAINTENANCE_SECONDS = 2.0
 _maintenance_lock = threading.Lock()
+
+
+class _BudgetExpired(Exception):
+    pass
+
+
+def _check_budget(deadline):
+    if deadline is not None and time.monotonic() >= deadline:
+        raise _BudgetExpired()
+
+
+def _children(directory, limit, deadline=None):
+    """Limit enumeration itself, rather than materializing then slicing a folder."""
+    values = []
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            _check_budget(deadline)
+            values.append(Path(entry.path))
+            if len(values) >= limit:
+                break
+    return values
 
 
 def _plain(path):
@@ -158,12 +180,16 @@ def _plan(directory, cache):
         return None
 
 
-def _runtime_leases(directory):
+def _runtime_leases(directory, deadline=None):
     live = False
-    entries = list(directory.glob(".running-*.json"))
+    children = _children(directory, 1001, deadline)
+    if len(children) > 1000:
+        return True
+    entries = [entry for entry in children if entry.name.startswith(".running-") and entry.suffix == ".json"]
     if len(entries) > 256:
         return True
     for entry in entries:
+        _check_budget(deadline)
         record = _read(entry)
         if not record or record.get("application") != APPLICATION_ID:
             live = True  # An unreadable lease must not authorize deletion.
@@ -174,18 +200,23 @@ def _runtime_leases(directory):
     return live
 
 
-def _remove(path):
+def _remove(path, deadline=None):
     """No traversal through links; refusal only leaves redundant cache files."""
     if not _plain(path):
         return False
     try:
+        _check_budget(deadline)
         if path.is_dir():
-            count = 0
-            for root, directories, files in os.walk(path, followlinks=False):
-                for name in directories + files:
+            count, pending = 0, [path]
+            while pending:
+                root = pending.pop()
+                for child in _children(root, 10001 - count, deadline):
                     count += 1
-                    if count > 10000 or not _plain(Path(root) / name):
+                    if count > 10000 or not _plain(child):
                         return False
+                    if child.is_dir():
+                        pending.append(child)
+            _check_budget(deadline)
             shutil.rmtree(path)
         else:
             path.unlink()
@@ -206,9 +237,10 @@ def _trim_log(path):
         pass
 
 
-def _clean_failed_records(cache):
+def _clean_failed_records(cache, deadline=None):
     records = []
-    for path in cache.glob("failed-source-*.json"):
+    for path in _children(cache, 2000, deadline):
+        _check_budget(deadline)
         if not re.fullmatch(r"failed-source-[0-9a-f]{32}\.json", path.name):
             continue
         record = _read(path)
@@ -226,7 +258,7 @@ def _clean_failed_records(cache):
         if len(records) >= 1000:
             break
     records.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return [str(path) for path in records[3:] if _remove(path)]
+    return [str(path) for path in records[3:] if _remove(path, deadline)]
 
 
 def cleanup_updates(cache, running_source=None, current_exe=None, now=None):
@@ -239,6 +271,8 @@ def cleanup_updates(cache, running_source=None, current_exe=None, now=None):
         with _installation_idle() as idle:
             if not idle:
                 return removed
+            deadline = time.monotonic() + MAINTENANCE_SECONDS
+            _check_budget(deadline)
             now = time.time() if now is None else now
             active_record = _read(cache / "active-source.json")
             active = _record_stage(cache, active_record)
@@ -252,7 +286,8 @@ def cleanup_updates(cache, running_source=None, current_exe=None, now=None):
                     if previous:
                         protected.add(previous)
             entries = []
-            for directory in list(cache.iterdir())[:2000]:
+            for directory in _children(cache, 2000, deadline):
+                _check_budget(deadline)
                 if not directory.is_dir() or not _plain(directory):
                     continue
                 owner, plan = _read(directory / OWNER), _plan(directory, cache)
@@ -263,7 +298,7 @@ def cleanup_updates(cache, running_source=None, current_exe=None, now=None):
                 if not directory.name.startswith(("update-", "download-")):
                     continue
                 age = now - directory.stat().st_mtime
-                leases = _runtime_leases(directory)
+                leases = _runtime_leases(directory, deadline)
                 if plan and not owned and (directory / "source").is_dir():
                     # Releases before ownership/leases existed may still run in
                     # another process. Reclaim their ZIPs, never guess that their
@@ -303,7 +338,7 @@ def cleanup_updates(cache, running_source=None, current_exe=None, now=None):
                     if _plain(backup) and backup.is_file():
                         backups.append((backup, (directory / "install.json").stat().st_mtime))
             for backup, _ in sorted(backups, key=lambda item: item[1], reverse=True)[1:]:
-                if _remove(backup):
+                if _remove(backup, deadline):
                     removed.append(str(backup))
             # An external EXE backup must retain its ownership record even after
             # many intervening source updates; otherwise a later EXE update
@@ -314,8 +349,9 @@ def cleanup_updates(cache, running_source=None, current_exe=None, now=None):
                     if _plain(backup) and backup.is_file():
                         diagnostics.add(directory)
             for directory, plan, _ in entries:
+                _check_budget(deadline)
                 if directory not in protected and directory not in diagnostics:
-                    if _remove(directory):
+                    if _remove(directory, deadline):
                         removed.append(str(directory))
                     continue
                 keep = {"install.json", OWNER, "ready"}
@@ -323,19 +359,21 @@ def cleanup_updates(cache, running_source=None, current_exe=None, now=None):
                     keep.add("source")
                     if plan:
                         keep.add(Path(plan["source_backup"]).name)
-                logs = sorted((p for p in directory.glob("*.log") if _plain(p)),
+                children = _children(directory, 1000, deadline)
+                logs = sorted((p for p in children if p.suffix == ".log" and _plain(p)),
                               key=lambda p: p.stat().st_mtime, reverse=True)
                 keep_logs = {directory / "install.log", *logs[:2]}
-                for child in list(directory.iterdir())[:1000]:
+                for child in children:
+                    _check_budget(deadline)
                     if child.name in keep or child.name.startswith(".running-"):
                         continue
                     if child in keep_logs and directory in diagnostics:
                         _trim_log(child)
-                    elif _remove(child):
+                    elif _remove(child, deadline):
                         removed.append(str(child))
-            removed.extend(_clean_failed_records(cache))
+            removed.extend(_clean_failed_records(cache, deadline))
             return removed
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, _BudgetExpired):
         return removed
     finally:
         _maintenance_lock.release()

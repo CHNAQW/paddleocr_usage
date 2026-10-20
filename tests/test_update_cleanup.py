@@ -190,6 +190,15 @@ class UpdateCleanupTests(unittest.TestCase):
             self.assertEqual(cleanup.cleanup_updates(self.cache), [])
         self.assertTrue((stage / "download.zip").exists())
 
+    def test_maintenance_time_budget_preserves_data_and_can_resume_next_time(self):
+        stage, _, _ = self.stage(1)
+        with patch.object(cleanup, "MAINTENANCE_SECONDS", 0):
+            self.assertEqual(cleanup.cleanup_updates(self.cache), [])
+        self.assertTrue((stage / "download.zip").exists())
+        cleanup.cleanup_updates(self.cache)
+        self.assertFalse((stage / "download.zip").exists())
+        self.assertTrue((stage / "install.log").exists())
+
     @unittest.skipUnless(sys.platform == "win32", "requires the native Windows mutex")
     def test_real_windows_installer_mutex_is_respected_across_threads(self):
         stage, _, _ = self.stage(1)

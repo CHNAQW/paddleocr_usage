@@ -6,6 +6,10 @@ on:
       - '*.py'
       - 'tests/*.py'
       - 'requirements.txt'
+      - 'License'
+      - 'License.txt'
+      - '*.bat'
+      - 'version_info_*.txt'
       - 'update_helper.ps1'
       - '.github/workflows/update-checks.yml'
   workflow_dispatch:
@@ -29,7 +33,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native PowerShell updates, cancellation and Tk responsiveness
         run: |
-          $patterns = @('test_windows_update_helper.py', 'test_update_cleanup.py', 'test_update_ui.py', 'test_task_runtime.py', 'test_application_runtime.py', 'test_force_auto.py', 'test_freeze_ui.py')
+          $patterns = @('test_windows_update_helper.py', 'test_update_cleanup.py', 'test_update_ui.py', 'test_task_runtime.py', 'test_application_runtime.py', 'test_job_recovery.py', 'test_copy_ui.py', 'test_advanced_settings.py', 'test_desktop_performance.py', 'test_force_auto.py', 'test_freeze_ui.py')
           foreach ($pattern in $patterns) {
             $output = & python -m unittest discover -s tests -p $pattern -v 2>&1 | Out-String
             $testExit = $LASTEXITCODE

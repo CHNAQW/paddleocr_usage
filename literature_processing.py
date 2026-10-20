@@ -12,8 +12,9 @@ from urllib.parse import quote, urlparse
 
 from ui_translations import tr
 from task_runtime import cancellable_call
+from prompt_templates import resolve_prompt, snapshot as prompt_snapshot
 from model_budget import (BudgetExceeded, ResponseTooLong, budget_chunks, check_request,
-                          effective_limits, input_budget, messages, request_size)
+                          effective_limits, input_budget, messages, request_size, prepare_request)
 
 try:
     import requests
@@ -73,20 +74,27 @@ def _cancel(stop: Callable[[], bool]) -> None:
         raise ProcessingCancelled(tr('用户已停止文献处理。'))
 
 
+def _close_response(response):
+    try:
+        response.close()
+    except Exception:
+        pass  # Cleanup must not replace a completed translation/upload or its original error.
+
+
 def chat(profile: ModelProfile, instruction: str, data: dict, stop=lambda: False, input_percent=50) -> str:
     profile.validate()
     _cancel(stop)
-    check_request(profile, instruction, data, input_percent)
+    payload, estimated_size = prepare_request(profile, instruction, data, input_percent)
     if requests is None:
         raise RuntimeError(tr('缺少 requests，请先安装 requirements.txt。'))
-    body = {"model": profile.model.strip(), "messages": messages(instruction, data)}
+    body = {"model": profile.model.strip(), "messages": payload}
     limits = effective_limits(profile)
     known_deepseek = (urlparse(profile.base_url).hostname == "api.deepseek.com"
                       and profile.model.lower() in {"deepseek-flash", "deepseek-v4.1-flash", "deepseek-v4-pro"})
     # Avoid a small server default truncating a large translation. Do not impose
     # DeepSeek's output parameter/limit on an unrelated compatible deployment.
     if limits.output_limit and (profile.output_limit or known_deepseek):
-        available = limits.context_limit - request_size(instruction, data) - 256 if limits.context_limit else limits.output_limit
+        available = limits.context_limit - estimated_size - 256 if limits.context_limit else limits.output_limit
         body["max_tokens"] = min(limits.output_limit, max(1, available))
     def request():
         response = requests.post(
@@ -112,7 +120,7 @@ def chat(profile: ModelProfile, instruction: str, data: dict, stop=lambda: False
             return content.strip()
 
         finally:
-            response.close()
+            _close_response(response)
     return cancellable_call(request, stop, cancelled=ProcessingCancelled)
 
 
@@ -131,16 +139,27 @@ def review_reply(content: str) -> dict:
     value = json_reply(content)
     if type(value.get("has_problem")) is not bool:
         raise RuntimeError(tr('核验结果缺少布尔字段 has_problem；不能视为核验通过。'))
+    # A fluent summary or a false flag must not conceal explicit omissions.
+    # Keep legacy responses without lists compatible; supplied lists must be valid.
+    problems = False
+    for field in ("issues", "omissions", "mistranslations"):
+        if field in value:
+            findings = value[field]
+            if not isinstance(findings, list) or any(not isinstance(item, str) for item in findings):
+                raise RuntimeError(tr("核验问题列表格式无效，不能视为核验通过。"))
+            problems = problems or any(item.strip() for item in findings)
+    if problems and value["has_problem"] is False:
+        value["reportedHasProblem"] = False
+        value["has_problem"] = True
+        value["inconsistentApproval"] = True
     return value
 
 
-def detect_language(text: str, target: str, profile: ModelProfile, stop=lambda: False, input_percent=50) -> dict:
+def detect_language(text: str, target: str, profile: ModelProfile, stop=lambda: False,
+                    input_percent=50, prompts=None) -> dict:
     if not text.strip():
         raise ValueError(tr('文献为空，无法识别语言。'))
-    result = json_reply(chat(profile,
-        '识别 sample 的主要自然语言，判断是否属于 target_language（区分简繁中文）。'
-        '只返回 JSON：{"language":"语言名称或 unknown","is_target_language":true或false}。'
-        '忽略 Markdown 标记、链接和代码；没有足够自然语言时返回 unknown。',
+    result = json_reply(chat(profile, resolve_prompt("language_detection", prompts),
         {"sample": text[:300], "target_language": LANGUAGES.get(target, target)}, stop, input_percent=input_percent))
     if (not isinstance(result.get("language"), str) or not result["language"].strip()
             or result["language"].strip().lower() in {"unknown", "und", "未知"}
@@ -215,43 +234,16 @@ class TranslationOptions:
     force_auto: bool = False
 
 
-TRANSLATE_PROMPT = ("你是学术文献翻译员。把 source 全文忠实译成 target_language；"
-    "保留全部事实、数字、引用、公式、代码块、图片和链接地址以及 Markdown 结构。"
-    "不要摘要、增删内容或添加说明；专名与参考文献保持可识别。只返回译文 Markdown，勿套额外代码围栏。")
-COMPARE_PROMPT = ('比较原文 source 与两份译文 first、second，检查准确性、遗漏、误译、数字和引文。'
-    '只返回 JSON：{"has_problem":true或false,"issues":["具体问题"],'
-    '"summary":"结论"}。两份译文均忠实准确时 has_problem=false。')
-ARBITRATE_PROMPT = ('核对原文及两份译文并裁决。只返回 JSON：'
-    '{"choice":"first|second|unresolved","has_problem":true或false,"reason":"理由"}。'
-    'has_problem 表示所选译文是否仍有问题，而不是是否存在分歧。'
-    '只有所选译文完整准确时 has_problem=false；两份都有问题时 choice=unresolved。')
-PROOFREAD_PROMPT = ('校对译文，结合 source 检查语句不通、缺字少字、漏译等问题，不改写或润色。'
-    '只返回 JSON：{"has_problem":true或false,"issues":["具体问题"],"summary":"结论"}。')
-PROOF_ARBITRATE_PROMPT = ('对照原文 source、最终译文 translation，独立复核 proofreading 中的疑点。'
-    '判断疑点是否真实存在，不以另一模型的判断为结论，不改写译文。只返回 JSON：'
-    '{"decision":"approve|needs_review|unresolved","has_problem":true或false,"reason":"具体理由"}。'
-    '只有确认最终译文完整准确、校对疑点均不成立时，返回 decision=approve 且 has_problem=false；'
-    '确认仍有问题时 decision=needs_review 且 has_problem=true；证据不足时 decision=unresolved。')
-ARBITRATE_REVISE_PROMPT = ('对照原文 source、两份译文 first、second 及 comparison，独立裁决。'
-    '用户已授权你直接修订译文。已有完整准确的译文可选 first 或 second；两份都有可修复错误时，'
-    '可选 revised 并提供完整修订译文，修复误译、遗漏或缺字，不摘要、不润色，不编造原文没有的信息。'
-    '保留全部事实、数字、引文、公式、代码、图片与链接及 Markdown 结构。无法可靠修复时选 unresolved。'
-    '只返回 JSON：{"choice":"first|second|revised|unresolved","has_problem":true或false,'
-    '"reason":"理由","revised_translation":"仅 revised 时必填的完整修订译文"}。'
-    '只有所选或修订译文完整准确时 has_problem=false。')
-PROOF_REVISE_PROMPT = ('对照原文 source、译文 translation 和 proofreading，独立复核疑点。'
-    '用户已授权直接修订译文；疑点不成立时 approve，确有且能可靠修复时 revised 并返回完整修订译文。'
-    '只修复误译、缺字少字、语句不通及遗漏，不摘要、不润色、不补写不确定的原文内容。'
-    '保留事实、数字、引文、公式、代码、图片与链接及 Markdown 结构。无法确定时 unresolved。'
-    '只返回 JSON：{"decision":"approve|revised|needs_review|unresolved","has_problem":true或false,'
-    '"reason":"理由","revised_translation":"仅 revised 时必填的完整修订译文"}。'
-    '只有译文或修订稿完整准确时 has_problem=false。')
-REVISION_VERIFY_PROMPT = ('独立核验 source 与 translation。translation 是裁决模型修订后的完整译文。'
-    '检查是否忠实完整、无误译遗漏或缺字、语句通顺，保留事实、数字、引文、公式、代码、图片、链接和 Markdown。'
-    '只核验，不再次修订，不以裁决模型结论代替判断。只返回 JSON：'
-    '{"has_problem":true或false,"issues":["具体问题"],"summary":"结论"}。'
-    '只有完整准确且没有任何疑点时 has_problem=false 且 issues=[]。')
-
+# Public defaults remain available to callers and regression fixtures.
+TRANSLATE_PROMPT = resolve_prompt("translation")
+SECOND_TRANSLATE_PROMPT = resolve_prompt("translation_second_pass")
+COMPARE_PROMPT = resolve_prompt("translation_compare")
+ARBITRATE_PROMPT = resolve_prompt("translation_arbitrate")
+PROOFREAD_PROMPT = resolve_prompt("proofreading")
+PROOF_ARBITRATE_PROMPT = resolve_prompt("proofreading_arbitrate")
+ARBITRATE_REVISE_PROMPT = resolve_prompt("translation_arbitrate_revise")
+PROOF_REVISE_PROMPT = resolve_prompt("proofreading_arbitrate_revise")
+REVISION_VERIFY_PROMPT = resolve_prompt("revision_verify")
 
 class _RetryChunk(Exception):
     """An explicit user request to discard the current generated drafts."""
@@ -261,8 +253,14 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
                        translator: ModelProfile, reviewer: ModelProfile | None = None,
                        proofreader: ModelProfile | None = None, arbiter: ModelProfile | None = None,
                        decide=None, stop=lambda: False, log=lambda message: None, *,
-                       upstream_verified=True) -> dict:
+                       upstream_verified=True, prompts=None) -> dict:
     """Return an auditable result. Unresolved documents are saved but never approved."""
+    prompts = prompt_snapshot(prompts)
+    translation_prompt = resolve_prompt("translation", prompts)
+    second_prompt = resolve_prompt("translation_second_pass", prompts)
+    compare_prompt = resolve_prompt("translation_compare", prompts)
+    proof_prompt = resolve_prompt("proofreading", prompts)
+    revision_prompt = resolve_prompt("revision_verify", prompts)
     if options.force_auto:
         options = replace(options, arbitration="大模型裁决", allow_arbiter_revision=True, proofreading=True)
         decide = None
@@ -281,8 +279,8 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
     if model_arbitration and arbiter is None:
         raise ValueError(tr('请选择裁决模型。'))
     revision_authorized = model_arbitration and options.allow_arbiter_revision is True
-    arbitration_prompt = ARBITRATE_REVISE_PROMPT if revision_authorized else ARBITRATE_PROMPT
-    proof_arbitration_prompt = PROOF_REVISE_PROMPT if revision_authorized else PROOF_ARBITRATE_PROMPT
+    arbitration_prompt = resolve_prompt("translation_arbitrate_revise" if revision_authorized else "translation_arbitrate", prompts)
+    proof_arbitration_prompt = resolve_prompt("proofreading_arbitrate_revise" if revision_authorized else "proofreading_arbitrate", prompts)
     percent = options.input_percent
     active = {"translator": translator}
     if options.secondary_review:
@@ -306,7 +304,7 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
 
     source_bytes = source.read_bytes()
     text = source_bytes.decode("utf-8-sig")
-    language = detect_language(text, options.target, translator, stop, input_percent=percent)
+    language = detect_language(text, options.target, translator, stop, input_percent=percent, prompts=prompts)
     if language["is_target_language"]:
         return {"status": "target_language", "language": language["language"], "verified": False}
     source_language = language["language"] if options.source == "自动检测" else LANGUAGES.get(options.source, options.source)
@@ -333,7 +331,7 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
         verifier = reviewer if stage == "translation" else proofreader
         log(tr("{arg0}：第 {arg1} 段已生成模型修订稿，正在自动核验。", arg0=source.name, arg1=record["chunk"]))
         try:
-            verification = review_reply(ask(verifier, REVISION_VERIFY_PROMPT,
+            verification = review_reply(ask(verifier, revision_prompt,
                                             {**data_for(original), "translation": candidate}))
             revision["verification"] = verification
             revision["verifier"] = verifier.model
@@ -353,27 +351,27 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
         _cancel(stop)
         data = data_for(original)
         try:
-            check_request(translator, TRANSLATE_PROMPT, data, percent)
+            check_request(translator, translation_prompt, data, percent)
             # Plan for expanded translations and every enabled downstream model.
             # Actual responses are checked again; excessive expansion triggers
             # a smaller source chunk and a complete new translation/review.
             candidates = {**data, "first": original * 2, "second": original * 2}
             report_reserve = " " * min(4096, max(128, input_budget(arbiter, percent) // 8)) if model_arbitration else ""
             if options.secondary_review:
-                check_request(reviewer, TRANSLATE_PROMPT, data, percent)
-                check_request(reviewer, COMPARE_PROMPT, candidates, percent)
+                check_request(reviewer, second_prompt, data, percent)
+                check_request(reviewer, compare_prompt, candidates, percent)
                 if options.arbitration == "大模型裁决":
                     check_request(arbiter, arbitration_prompt,
                                   {**candidates, "comparison": report_reserve}, percent)
                     if revision_authorized:
-                        check_request(reviewer, REVISION_VERIFY_PROMPT, {**data, "translation": original * 2}, percent)
+                        check_request(reviewer, revision_prompt, {**data, "translation": original * 2}, percent)
             if options.proofreading:
-                check_request(proofreader, PROOFREAD_PROMPT, {**data, "translation": original * 2}, percent)
+                check_request(proofreader, proof_prompt, {**data, "translation": original * 2}, percent)
                 if model_arbitration:
                     check_request(arbiter, proof_arbitration_prompt,
                                   {**data, "translation": original * 2, "proofreading": report_reserve}, percent)
                     if revision_authorized:
-                        check_request(proofreader, REVISION_VERIFY_PROMPT, {**data, "translation": original * 2}, percent)
+                        check_request(proofreader, revision_prompt, {**data, "translation": original * 2}, percent)
             return True
         except BudgetExceeded:
             return False
@@ -383,16 +381,16 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
     attempt_record = {}
     def translate_chunk(original, index):
         data = data_for(original)
-        first = ask(translator, TRANSLATE_PROMPT, data)
+        first = ask(translator, translation_prompt, data)
         attempt_drafts["first"] = first
         record = attempt_record
         record.update(chunk=index, verified=True, pendingReasons=[])
         if options.secondary_review:
             log(tr('{arg0}：第 {arg1} 段二次翻译核对', arg0=source.name, arg1=index))
-            second = ask(reviewer, TRANSLATE_PROMPT, data)
+            second = ask(reviewer, second_prompt, data)
             attempt_drafts["second"] = second
             record["candidates"] = {"first": first, "second": second}
-            comparison = review_reply(ask(reviewer, COMPARE_PROMPT,
+            comparison = review_reply(ask(reviewer, compare_prompt,
                 {**data, "first": first, "second": second}))
             record["comparison"] = comparison
             if comparison["has_problem"]:
@@ -443,7 +441,7 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
             if any(item["accepted"] for item in record.get("revisions", [])):
                 attempt_drafts["first"] = first
             log(tr('{arg0}：第 {arg1} 段文本校对', arg0=source.name, arg1=index))
-            proof = review_reply(ask(proofreader, PROOFREAD_PROMPT, {**data, "translation": first}))
+            proof = review_reply(ask(proofreader, proof_prompt, {**data, "translation": first}))
             record["proofreading"] = proof
             proof_passed = not proof["has_problem"]
             if not proof_passed and model_arbitration:
@@ -541,23 +539,46 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
     return report
 
 
-FORMAT_PROMPT = ("你是 Markdown 文献排版编辑。只整理 source 的 Markdown 格式，便于人类阅读。"
-    "合理使用现有标题的层级、段落与空行、列表、表格、引用和代码围栏；保留原有章节顺序与语言。"
-    "不得翻译、摘要、润色、补写标题内容、修改措辞或擅自修复疑似 OCR 错字。"
-    "完整保留全部正文、数字、引用、参考文献、代码、公式、图片与链接地址。"
-    "已有代码块内容和数学公式必须原样保留。每个 source 只整理一次；不生成另一候选版本。"
-    "只返回整理后的 Markdown，不添加说明，不把整篇文章套入代码围栏。")
-FORMAT_VERIFY_PROMPT = ("独立校对 source 与 formatted。这是一次整理之后的二次核验，不是二次整理。"
-    "检查全部内容、语种、顺序、数字、引文、参考文献、代码、公式、图片与链接是否保留，"
-    "检查 Markdown 标题、段落、列表、表格和围栏是否清晰可读。疑似缺字或语句不通只指出，不擅自修正文稿。"
-    "只能返回核验 JSON，绝不生成、改写或再次排版整理稿："
-    '{"has_problem":true或false,"issues":["具体问题"],"summary":"结论"}。')
+FORMAT_PROMPT = resolve_prompt("markdown_format")
+FORMAT_VERIFY_PROMPT = resolve_prompt("markdown_verify")
+
+
+def _math_blocks(text, include_inline=False):
+    """Match math without rescanning unmatched opening delimiters."""
+    consumed, missing = 0, set()
+    starts = r"\$\$|\\\[|(?<!\$)\$(?!\$)" if include_inline else r"\$\$|\\\["
+    for match in re.finditer(starts, text):
+        opener = match.group()
+        if match.start() < consumed or opener in missing:
+            continue
+        closer = r"\]" if opener == r"\[" else opener
+        end = text.find(closer, match.end())
+        if end < 0:
+            # There is no closer after this position, so later openings of the
+            # same kind cannot match either. Repeated malformed OCR delimiters
+            # must not trigger a quadratic regex scan while holding the GIL.
+            missing.add(opener)
+            continue
+        if opener == "$" and (end == match.end() or "\n" in text[match.end():end]
+                              or text[end + 1:end + 2] == "$"):
+            continue
+        consumed = end + len(closer)
+        yield match.start(), consumed
 
 
 def _markdown_protected(text):
     """Ranges that must not be split across separate formatting requests."""
     ranges, fence, start, position = [], None, 0, 0
+    table_start, table_rows = 0, 0
     for line in text.splitlines(keepends=True):
+        if "|" in line:
+            if not table_rows:
+                table_start = position
+            table_rows += 1
+        else:
+            if table_rows >= 2:
+                ranges.append((table_start, position))
+            table_rows = 0
         marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line.rstrip("\r\n"))
         if marker:
             run, tail = marker.groups()
@@ -569,9 +590,9 @@ def _markdown_protected(text):
         position += len(line)
     if fence:
         ranges.append((start, len(text)))
-    ranges.extend((m.start(), m.end()) for m in re.finditer(r"\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]", text))
-    # Contiguous Markdown table rows remain one unit, including the separator.
-    ranges.extend((m.start(), m.end()) for m in re.finditer(r"(?m)^(?:[^\n]*\|[^\n]*\n){2,}", text))
+    if table_rows >= 2:
+        ranges.append((table_start, len(text)))
+    ranges.extend(_math_blocks(text))
     merged = []
     for begin, end in sorted(ranges):
         if merged and begin <= merged[-1][1]:
@@ -591,12 +612,29 @@ def formatting_chunks(text, fits):
         units.append(block)
         position = end
     units.extend(budget_chunks(text[position:], fits))
-    chunks = []
-    for unit in units:
-        if chunks and fits(chunks[-1] + unit):
-            chunks[-1] += unit
-        else:
-            chunks.append(unit)
+    # Greedily fill each request, but test groups of units instead of rebuilding
+    # an ever-growing string after every formula/table/code block.
+    chunks, position = [], 0
+    while position < len(units):
+        remaining = len(units) - position
+        low, high, probe = 1, remaining, min(2, remaining)
+        best = units[position]
+        while low < remaining:
+            candidate = "".join(units[position:position + probe])
+            if not fits(candidate):
+                high = probe - 1
+                break
+            low, best = probe, candidate
+            probe = min(probe * 2, remaining)
+        while low < high:
+            middle = (low + high + 1) // 2
+            candidate = "".join(units[position:position + middle])
+            if fits(candidate):
+                low, best = middle, candidate
+            else:
+                high = middle - 1
+        chunks.append(best)
+        position += low
     return chunks
 
 
@@ -635,8 +673,10 @@ def formatting_content_issues(source, formatted):
     inline = r"(?<!`)(`{1,2})(?!`)([^\n]*?)\1(?!`)"
     if Counter(m.group(2) for m in re.finditer(inline, source)) - Counter(m.group(2) for m in re.finditer(inline, formatted)):
         issues.append(tr("整理稿中的行内代码发生变化。"))
-    math = r"\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|(?<!\$)\$(?!\$)[^\n$]+\$(?!\$)"
-    if Counter(re.findall(math, source)) != Counter(re.findall(math, formatted)):
+    def math(text):
+        for begin, end in _math_blocks(text, include_inline=True):
+            yield text[begin:end]
+    if Counter(math(source)) != Counter(math(formatted)):
         issues.append(tr("整理稿中的数学公式发生变化。"))
     return issues
 
@@ -669,17 +709,15 @@ def find_formatting_files(root, recursive=True, output_root=None, stop=lambda: F
     return sorted(result)
 
 
-FORMAT_ARBITRATE_PROMPT = (
-    '你是 Markdown 整理的最终核验裁决员。对照 source 和 formatted 检查内容、数字、引用、公式、表格及代码是否完整，'
-    '判断已有 review 是否误报。只核验，不重新整理，不返回改写文本。仍有问题或无法确认时保持待处理。'
-    '只返回 JSON：{"decision":"approve或needs_review","has_problem":true或false,"issues":["具体问题"]}。'
-    '只有内容和结构均无问题才可 approve，且 has_problem=false、issues=[]。'
-)
-
+FORMAT_ARBITRATE_PROMPT = resolve_prompt("markdown_arbitrate")
 
 def format_markdown_document(source, destination, formatter, verifier, input_percent=50,
-                             stop=lambda: False, log=lambda message: None, decide=None, force_auto=False, arbiter=None):
+                             stop=lambda: False, log=lambda message: None, decide=None, force_auto=False, arbiter=None, prompts=None):
     """One formatting response and one independent, JSON-only review per source chunk."""
+    prompts = prompt_snapshot(prompts)
+    format_prompt = resolve_prompt("markdown_format", prompts)
+    verify_prompt = resolve_prompt("markdown_verify", prompts)
+    arbitrate_prompt = resolve_prompt("markdown_arbitrate", prompts)
     if force_auto:
         if arbiter is None:
             raise ValueError(tr("请选择裁决模型。"))
@@ -700,10 +738,10 @@ def format_markdown_document(source, destination, formatter, verifier, input_per
     def fits(original):
         _cancel(stop)
         try:
-            check_request(formatter, FORMAT_PROMPT, {"source": original}, input_percent)
-            check_request(verifier, FORMAT_VERIFY_PROMPT, {"source": original, "formatted": original * 2}, input_percent)
+            check_request(formatter, format_prompt, {"source": original}, input_percent)
+            check_request(verifier, verify_prompt, {"source": original, "formatted": original * 2}, input_percent)
             if force_auto:
-                check_request(arbiter, FORMAT_ARBITRATE_PROMPT,
+                check_request(arbiter, arbitrate_prompt,
                     {"source": original, "formatted": original * 2, "review": {"issues": [" " * 512]}}, input_percent)
             return True
         except BudgetExceeded:
@@ -715,12 +753,12 @@ def format_markdown_document(source, destination, formatter, verifier, input_per
         while True:
             _cancel(stop)
             log(tr("{arg0}：整理第 {arg1}/{arg2} 段（仅整理一次）。", arg0=source.name, arg1=index, arg2=len(chunks)))
-            candidate = chat(formatter, FORMAT_PROMPT, {"source": original}, stop, input_percent=input_percent)
+            candidate = chat(formatter, format_prompt, {"source": original}, stop, input_percent=input_percent)
             record = {"chunk": index, "attempt": len(prior) + 1, "verified": False,
                       "contentIssues": formatting_content_issues(original, candidate)}
             log(tr("{arg0}：第 {arg1} 段独立核验，不再次整理。", arg0=source.name, arg1=index))
             try:
-                review = review_reply(chat(verifier, FORMAT_VERIFY_PROMPT, {"source": original, "formatted": candidate},
+                review = review_reply(chat(verifier, verify_prompt, {"source": original, "formatted": candidate},
                                           stop, input_percent=input_percent))
                 record["review"] = review
                 if not isinstance(review.get("issues"), list) or any(not isinstance(item, str) for item in review["issues"]):
@@ -732,7 +770,7 @@ def format_markdown_document(source, destination, formatter, verifier, input_per
                 record["reviewError"] = str(exc)
             if force_auto and not record["verified"]:
                 try:
-                    verdict = review_reply(chat(arbiter, FORMAT_ARBITRATE_PROMPT,
+                    verdict = review_reply(chat(arbiter, arbitrate_prompt,
                         {"source": original, "formatted": candidate, "review": dict(record)}, stop,
                         input_percent=input_percent))
                     record["arbitration"] = verdict
@@ -883,7 +921,7 @@ class GitHubSetupClient:
             except ValueError:
                 raise RuntimeError(tr("GitHub 返回的数据无法读取，请稍后重试。")) from None
         finally:
-            response.close()
+            _close_response(response)
 
     def pages(self, path, **params):
         result = []
@@ -1124,7 +1162,7 @@ def upload_verified_file(path: Path, relative_name: str, verified: bool, options
         if response.status_code != 404:
             raise RuntimeError(tr('读取 GitHub 仓库失败：HTTP {arg0}。', arg0=response.status_code))
     finally:
-        response.close()
+        _close_response(response)
     _cancel(stop)
     response = requests.put(url, headers=headers, json={
         "message": f"Add reviewed literature: {remote}", "branch": options.branch,
@@ -1135,4 +1173,4 @@ def upload_verified_file(path: Path, relative_name: str, verified: bool, options
             raise RuntimeError(tr('GitHub 上传失败：HTTP {arg0}。请检查分支和 Contents 写入权限。', arg0=response.status_code))
         return remote
     finally:
-        response.close()
+        _close_response(response)

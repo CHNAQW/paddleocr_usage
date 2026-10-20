@@ -136,7 +136,7 @@ class ManualUploadTests(unittest.TestCase):
 
     def cleanup_root(self):
         for timer in self.root.tk.call('after', 'info'):
-            self.root.after_cancel(timer)
+            self.root.tk.call("after", "cancel", timer)
         self.root.destroy()
 
     def wait(self):
@@ -217,6 +217,44 @@ class ManualUploadTests(unittest.TestCase):
             self.panel.upload()
             launch.assert_not_called()
             confirm.assert_not_called()
+
+    def test_rebuilding_a_large_table_yields_during_deletion_and_retains_selection(self):
+        self.panel.candidates = [
+            lp.UploadCandidate(Path(f'/tmp/documents/{index}.md'), f'{index}.md', 'original', 'ready', 'sha')
+            for index in range(1200)]
+        self.panel.render(auto_select=True)
+        deadline = time.monotonic() + 3
+        while self.panel.render_timer is not None and time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(.005)
+        self.assertIsNone(self.panel.render_timer)
+        self.assertEqual(len(self.panel.tree.get_children()), 1200)
+        ticks = []
+        self.root.after(0, lambda: ticks.append(len(self.panel.tree.get_children())))
+        with patch.object(self.panel.tree, 'delete', wraps=self.panel.tree.delete) as delete:
+            self.panel.render()
+            self.assertEqual(len(self.panel.tree.get_children()), 1100)
+            self.assertEqual(str(self.panel.upload_button.cget('state')), 'disabled')
+            deadline = time.monotonic() + 3
+            while self.panel.render_timer is not None and time.monotonic() < deadline:
+                self.root.update()
+                time.sleep(.005)
+            self.assertIsNone(self.panel.render_timer)
+            self.assertTrue(ticks)
+            self.assertGreater(ticks[0], 0)
+            self.assertLessEqual(max(len(call.args) for call in delete.call_args_list), 100)
+        self.assertEqual(len(self.panel.tree.selection()), 1200)
+        self.assertEqual(str(self.panel.upload_button.cget('state')), 'normal')
+
+    def test_idle_polls_do_not_reconfigure_controls_or_multiply_timers(self):
+        self.stage()
+        timers = len(self.root.tk.call('after', 'info'))
+        with patch.object(self.panel.upload_button, 'configure', wraps=self.panel.upload_button.configure) as configure:
+            for _ in range(30):
+                self.panel.poll()
+                self.c.poll()
+            configure.assert_not_called()
+        self.assertEqual(len(self.root.tk.call('after', 'info')), timers)
 
     def test_bilingual_small_workspace_and_sidebar_follow_font_metrics(self):
         self.stage()

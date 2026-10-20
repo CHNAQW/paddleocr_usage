@@ -41,7 +41,7 @@ class FormattingAndServiceTests(unittest.TestCase):
 
     def cleanup_root(self):
         for timer in self.root.tk.call('after', 'info'):
-            self.root.after_cancel(timer)
+            self.root.tk.call("after", "cancel", timer)
         self.root.destroy()
 
     def formatter(self):
@@ -294,7 +294,7 @@ class SharedServiceStartupTest(unittest.TestCase):
                 self.assertEqual(app.config.token, 'paddle-token')
         finally:
             for timer in root.tk.call('after', 'info'):
-                root.after_cancel(timer)
+                root.tk.call("after", "cancel", timer)
             root.destroy()
             set_language('zh')
 

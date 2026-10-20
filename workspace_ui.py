@@ -388,8 +388,10 @@ class WorkspaceLayout:
         settings_header = ttk.Frame(self.settings, padding=(18, 14))
         settings_header.grid(row=0, column=0, sticky="ew")
         settings_header.columnconfigure(0, weight=1)
-        AdaptiveLabel(settings_header, text=tr('连接你的处理服务'), style="CardTitle.TLabel").grid(row=0, column=0, columnspan=2, sticky="ew")
-        AdaptiveLabel(settings_header, text=tr('界面语言 / Interface language'), style="Subtitle.TLabel").grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        settings_title = AdaptiveLabel(settings_header, text=tr('偏好设置'), style="CardTitle.TLabel")
+        settings_title.grid(row=0, column=0, columnspan=2, sticky="ew")
+        language_caption = AdaptiveLabel(settings_header, text=tr('界面语言 / Interface language'), style="Subtitle.TLabel")
+        language_caption.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         app.ui_language_var = tk.StringVar(value="English" if language() == "en" else "中文")
         self.language_selector = ttk.Combobox(settings_header, textvariable=app.ui_language_var,
                                               values=("中文", "English"), state="readonly", width=10)
@@ -477,11 +479,36 @@ class WorkspaceLayout:
                       style="Subtitle.TLabel").grid(row=2, column=0, sticky="ew", pady=8)
         AdaptiveLabel(group, text=tr("启用后各任务的服务商、地址和密钥由此处管理。关闭后保留当前连接，可再分别修改；更换服务后请拉取并选择适配的模型。"),
                       style="Subtitle.TLabel").grid(row=3, column=0, sticky="ew", pady=8)
+        from advanced_settings import AdvancedPromptSettings, LegalNotice
+        advanced = scrollable_page(self.settings_tabs, tr("高级"))
+        legal = scrollable_page(self.settings_tabs, tr("法律声明"))
+        controls.advanced = AdvancedPromptSettings(advanced, saved.get("prompts", {}))
+        self.legal_notice = LegalNotice(legal)
         footer = ttk.Frame(self.settings, padding=12)
         footer.grid(row=2, column=0, sticky="ew")
         footer.columnconfigure(0, weight=1)
-        AdaptiveLabel(footer, text=tr('模型密钥保存在本机配置，请勿共享。'), style="Subtitle.TLabel").grid(row=0, column=0, sticky="ew")
+        privacy_hint = AdaptiveLabel(footer, text=tr('模型密钥保存在本机配置，请勿共享。'), style="Subtitle.TLabel")
+        privacy_hint.grid(row=0, column=0, sticky="ew")
         ttk.Button(footer, text=tr('保存并返回'), style="Accent.TButton", command=self.close_settings).grid(row=0, column=1, padx=(8, 0))
+        compact_settings = None
+        def fit_settings(event):
+            nonlocal compact_settings
+            if event.widget != self.settings:
+                return
+            compact = self.settings.winfo_height() < 480
+            if compact == compact_settings:
+                return
+            compact_settings = compact
+            settings_header.configure(padding=(12, 8) if compact else (18, 14))
+            footer.configure(padding=(12, 6) if compact else 12)
+            for widget in (settings_title, language_caption, privacy_hint):
+                widget.grid_remove() if compact else widget.grid()
+            self.language_selector.grid_configure(row=0 if compact else 1,
+                pady=0 if compact else (8, 0), padx=(8, 0) if compact else (12, 0))
+            self.settings_selector.grid_configure(row=0 if compact else 2,
+                columnspan=1 if compact else 2, pady=0 if compact else (10, 0))
+            self.settings_selector.schedule()
+        self.settings.bind("<Configure>", fit_settings, add="+")
         self.settings.protocol("WM_DELETE_WINDOW", self.close_settings)
         self.settings.bind("<Escape>", lambda event: self.close_settings())
 

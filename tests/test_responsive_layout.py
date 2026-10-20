@@ -28,7 +28,7 @@ class ResponsiveLayoutTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         for timer in cls.root.tk.call('after', 'info'):
-            cls.root.after_cancel(timer)
+            cls.root.tk.call("after", "cancel", timer)
         cls.root.destroy()
         cls.load.stop()
         cls.save.stop()
@@ -74,8 +74,8 @@ class ResponsiveLayoutTests(unittest.TestCase):
         self.root.update()
         selector = self.shell.settings_selector
         self.assertTrue(selector.winfo_viewable())
-        self.assertEqual(len(selector.cget('values')), 5)
-        for index in range(5):
+        self.assertEqual(len(selector.cget('values')), 7)
+        for index in range(7):
             selector.current(index)
             selector.event_generate('<<ComboboxSelected>>')
             self.root.update()
@@ -157,7 +157,7 @@ class ScaledLogLayoutTests(unittest.TestCase):
                                                  root.winfo_rooty() + root.winfo_height())
                 finally:
                     for timer in root.tk.call('after', 'info'):
-                        root.after_cancel(timer)
+                        root.tk.call("after", "cancel", timer)
                     root.tk.call('tk', 'scaling', previous_scaling)
                     root.destroy()
                     set_language('zh')

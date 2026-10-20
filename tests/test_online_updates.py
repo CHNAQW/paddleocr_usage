@@ -25,6 +25,86 @@ def response(content=b'', status=200, headers=None):
 
 
 class OnlineUpdateTests(unittest.TestCase):
+    def test_cancelled_download_releases_waiter_and_does_not_resume_when_stop_is_reset(self):
+        self._blocked_download(timeout=False)
+
+    def test_stalled_download_has_a_total_deadline_and_cleans_up_when_transport_finishes(self):
+        self._blocked_download(timeout=True)
+
+    def _blocked_download(self, timeout):
+        entered, release, cancelled = threading.Event(), threading.Event(), threading.Event()
+        value = response()
+        def blocked(_size):
+            entered.set()
+            release.wait(3)
+            yield b"late ZIP data"
+        value.iter_content.side_effect = blocked
+        cache = self.root / "cache"
+        offer = updates.OnlineUpdate(NEXT, "https://github.com/update.zip", "", "")
+        outcome = []
+        def download():
+            try:
+                updates.download_github_update(offer, CURRENT, cache=cache, stop=cancelled.is_set)
+            except (updates.UpdateCancelled, TimeoutError) as exc:
+                outcome.append(type(exc))
+        with patch.object(updates, "_github_response", return_value=value), \
+                patch.object(updates, "DOWNLOAD_TIMEOUT", .15 if timeout else 3), \
+                patch.object(updates, "import_package") as imported:
+            worker = threading.Thread(target=download)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                if not timeout:
+                    cancelled.set()
+                worker.join(1)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(outcome, [TimeoutError if timeout else updates.UpdateCancelled])
+                cancelled.clear()  # A subsequent UI task can reuse the same event.
+            finally:
+                release.set()
+                worker.join(3)
+            deadline = time.monotonic() + 1
+            while (not value.close.called or list(cache.iterdir())) and time.monotonic() < deadline:
+                time.sleep(.01)
+            imported.assert_not_called()
+            value.close.assert_called_once()
+            self.assertEqual(list(cache.iterdir()), [])
+
+    def test_package_finishing_after_cancellation_is_discarded(self):
+        executable = self.root / "next.exe"
+        executable.write_bytes(pe_payload())
+        source = updates.build_package(executable, NEXT, self.root)
+        package = updates.import_package(source, CURRENT, cache=self.root / "cache")
+        entered, release, cancelled = threading.Event(), threading.Event(), threading.Event()
+        def finishing(*args):
+            entered.set()
+            release.wait(3)
+            return package
+        outcome = []
+        def download():
+            try:
+                updates.download_github_update(updates.OnlineUpdate(NEXT, "https://github.com/update.zip", "", ""),
+                                               CURRENT, stop=cancelled.is_set)
+            except updates.UpdateCancelled:
+                outcome.append("cancelled")
+        with patch.object(updates, "_download_github_update", side_effect=finishing):
+            worker = threading.Thread(target=download)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                cancelled.set()
+                worker.join(1)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(outcome, ["cancelled"])
+            finally:
+                release.set()
+                worker.join(3)
+            deadline = time.monotonic() + 1
+            while package.directory.exists() and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertFalse(package.directory.exists())
+            self.assertTrue(source.exists())
+
     def test_cancelled_request_does_not_wait_for_github_headers(self):
         entered, release, cancelled = threading.Event(), threading.Event(), threading.Event()
         value = response()
@@ -208,6 +288,48 @@ class OnlineUpdateTests(unittest.TestCase):
             updates.download_github_update(cases[0][0], CURRENT, cache=self.root / 'cache', stop=lambda: True)
         get.assert_not_called()
         self.assertEqual(list((self.root / 'cache').iterdir()), [])
+
+    def test_response_close_error_preserves_download_result_and_cleans_its_directory(self):
+        executable = self.root / "next.exe"
+        executable.write_bytes(pe_payload())
+        content = updates.build_package(executable, NEXT, self.root).read_bytes()
+        cache = self.root / "cache"
+        for offered_version in (NEXT, "26.10.20.01"):
+            with self.subTest(version=offered_version):
+                result = response(content)
+                result.close.side_effect = OSError("transport cleanup failed")
+                offer = updates.OnlineUpdate(offered_version, "https://github.com/update.zip", "", "")
+                with patch.object(updates, "_github_response", return_value=result):
+                    if offered_version == NEXT:
+                        package = updates.download_github_update(offer, CURRENT, cache=cache)
+                        self.assertEqual(package.version, NEXT)
+                        self.assertTrue(package.payload.is_file())
+                        self.assertTrue(package.source.is_file())
+                        self.assertEqual(list(cache.iterdir()), [package.directory])
+                        updates.discard_package(package)
+                    else:
+                        # Failure happens after import, so both the extracted
+                        # package and the download directory need reclaiming.
+                        with self.assertRaises(ValueError):
+                            updates.download_github_update(offer, CURRENT, cache=cache)
+                result.close.assert_called_once()
+                self.assertEqual(list(cache.iterdir()), [])
+                self.assertTrue(executable.is_file())
+
+    def test_response_close_error_does_not_mask_metadata_or_http_status(self):
+        value = response(b'{"ok": true}')
+        value.close.side_effect = OSError("transport cleanup failed")
+        with patch.object(updates, "_github_response", return_value=value):
+            self.assertEqual(updates._github_bytes("https://github.com/update.json", lambda: False),
+                             b'{"ok": true}')
+        value.close.assert_called_once()
+        denied = response(status=403)
+        denied.close.side_effect = OSError("transport cleanup failed")
+        with patch.object(requests, "get", return_value=denied):
+            with self.assertRaises(updates.GitHubHTTPError) as failure:
+                updates._github_response("https://api.github.com/repos/owner/repo")
+        self.assertEqual(failure.exception.status, 403)
+        denied.close.assert_called_once()
 
     def test_host_redirect_and_http_errors_never_follow_untrusted_addresses(self):
         for url in ('http://github.com/x', 'https://github.com.evil.invalid/x', 'https://user:secret@github.com/x', 'https://github.com:444/x'):

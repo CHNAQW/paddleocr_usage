@@ -29,7 +29,8 @@ def cancellable_call(work, stop=lambda: False, timeout=900, cancelled=TaskCancel
             raise TimeoutError(tr("请求超时，已停止等待；可稍后重试。"))
     check()
     slot_deadline = min(deadline, time.monotonic() + slot_timeout)
-    while not _network_slots.acquire(timeout=.05):
+    slots = _network_slots
+    while not slots.acquire(timeout=.05):
         check()
         if time.monotonic() >= slot_deadline:
             raise RuntimeError(tr("仍有网络请求正在结束，请稍后重试。"))
@@ -38,20 +39,19 @@ def cancellable_call(work, stop=lambda: False, timeout=900, cancelled=TaskCancel
         # Do not launch another request after the caller has already stopped.
         check()
     except BaseException:
-        _network_slots.release()
+        slots.release()
         raise
-    result = queue.Queue(maxsize=1)
-    abandoned = threading.Event()
-    delivery_lock = threading.Lock()
-    delivered = False
+    ready, acknowledged = threading.Event(), threading.Event()
+    outcome = []
+    accepted = False
     def dispose(value):
         close = getattr(value, "close", None)
         if callable(close):
             try:
                 close()
             except Exception:
-                # Cleanup must not replace a cancellation/timeout with a
-                # transport-specific error, or strand the delivery lock.
+                # Cleanup errors must not replace cancellation/timeout or
+                # prevent the worker from returning its transport slot.
                 pass
     def worker():
         try:
@@ -59,47 +59,35 @@ def cancellable_call(work, stop=lambda: False, timeout=900, cancelled=TaskCancel
                 value = (True, work())
             except BaseException as exc:
                 value = (False, exc)
-            with delivery_lock:
-                if abandoned.is_set():
-                    if value[0]:
-                        dispose(value[1])
-                else:
-                    result.put(value)
+            outcome.append(value)
+            ready.set()
+            # The caller always acknowledges in finally, including cancellation
+            # before this transport finishes. Cleanup remains on this worker:
+            # close() can itself block, and must never delay stop/timeout.
+            acknowledged.wait()
+            if not accepted and value[0]:
+                dispose(value[1])
         finally:
-            _network_slots.release()
+            slots.release()
     thread = threading.Thread(target=worker, daemon=True)
     try:
         thread.start()
     except BaseException:
-        _network_slots.release()
+        slots.release()
         raise
     try:
         while True:
             check()
-            try:
-                ok, value = result.get(timeout=.05)
-            except queue.Empty:
+            if not ready.wait(timeout=.05):
                 continue
-            try:
-                check()
-            except BaseException:
-                if ok:
-                    dispose(value)
-                raise
-            delivered = True
+            check()
+            ok, value = outcome[0]
             if ok:
+                accepted = True
                 return value
             raise value
     finally:
-        if not delivered:
-            with delivery_lock:
-                abandoned.set()
-                try:
-                    ok, value = result.get_nowait()
-                    if ok:
-                        dispose(value)
-                except queue.Empty:
-                    pass
+        acknowledged.set()
 
 
 def drain_events(events, limit=60, seconds=.012):

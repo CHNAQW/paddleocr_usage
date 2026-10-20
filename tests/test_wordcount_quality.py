@@ -64,7 +64,7 @@ class WordCountQualityTests(unittest.TestCase):
             def submit(**_kwargs):
                 return {"data": {"jobId": next(submissions)}}
 
-            def save(_payload, md_path, raw_path, _timeout):
+            def save(_payload, md_path, raw_path, _timeout, **_kwargs):
                 md_path.write_text("内容太少", encoding="utf-8")
                 raw_path.write_text("{}", encoding="utf-8")
                 return "内容太少", {}
@@ -160,6 +160,34 @@ class LLMReviewTests(unittest.TestCase):
         self.assertEqual([(item[0], item[1]) for item in answers], [(1, 2), (2, 2)])
         self.assertIn('"has_problem": true', answers[1][2])
 
+    def test_ocr_prompt_is_literal_snapshotted_and_separate_from_document_data(self):
+        instruction = '检查缺页；保留字面值 {chapter}、{"json": 1} 和 50%。'
+        prompts = {"ocr_review": instruction}
+        responses = []
+        for _ in range(2):
+            response = Mock(ok=True)
+            response.json.return_value = {"choices": [{"message": {"content": '{"has_problem":false}'}}]}
+            responses.append(response)
+        def changed_preferences(*_args):
+            prompts["ocr_review"] = "下一次才使用的新提示词"
+        with patch("paddleocr_pdf_to_md_gui.requests.post", side_effect=responses) as post:
+            review_markdown_with_llm("字" * 50001, "paper.md", "https://example.invalid/v1",
+                                     "key", "model", prompts=prompts, response_callback=changed_preferences)
+        for index, call in enumerate(post.call_args_list, 1):
+            system, data = call.kwargs["json"]["messages"]
+            self.assertEqual(system["role"], "system")
+            self.assertIn(instruction, system["content"])
+            self.assertIn("has_problem", system["content"])
+            self.assertNotIn("下一次才使用", system["content"])
+            self.assertEqual(data["role"], "user")
+            document = json.loads(data["content"])
+            self.assertEqual(document["filename"], "paper.md")
+            self.assertEqual(document["chunk_index"], index)
+            self.assertEqual(document["chunk_count"], 2)
+            self.assertEqual(len(document["markdown"]), 50000 if index == 1 else 1)
+        for response in responses:
+            response.close.assert_called_once()
+
     def test_llm_problem_removes_artifacts_and_resubmits(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -171,7 +199,7 @@ class LLMReviewTests(unittest.TestCase):
             def submit(**_kwargs):
                 return {"data": {"jobId": next(submissions)}}
 
-            def save(_payload, md_path, raw_path, _timeout):
+            def save(_payload, md_path, raw_path, _timeout, **_kwargs):
                 markdown = "字" * 150
                 md_path.write_text(markdown, encoding="utf-8")
                 raw_path.write_text("{}", encoding="utf-8")
@@ -205,10 +233,13 @@ class LLMReviewTests(unittest.TestCase):
                     llm_base_url="https://llm.invalid/v1",
                     llm_api_key="key",
                     llm_model="llm-model",
+                    prompts={"ocr_review": "固定的 OCR 质量规则"},
                 )
 
             self.assertEqual(submit_mock.call_count, 2)
             self.assertEqual(review_mock.call_count, 2)
+            self.assertTrue(all(call.kwargs["prompts"] == {"ocr_review": "固定的 OCR 质量规则"}
+                                for call in review_mock.call_args_list))
             self.assertFalse(raw_data["llmReview"]["hasProblem"])
             self.assertTrue(output_path.exists())
 

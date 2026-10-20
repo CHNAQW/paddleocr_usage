@@ -22,6 +22,8 @@ class InterfaceResponsivenessTests(unittest.TestCase):
         except tk.TclError as exc:
             raise unittest.SkipTest(str(exc))
         self.destroyed = False
+        self.addCleanup(set_language, 'zh')
+        self.addCleanup(self._destroy_root)
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
         self.directory = Path(self.folder.name)
@@ -29,7 +31,11 @@ class InterfaceResponsivenessTests(unittest.TestCase):
         self.save = patch.object(application, 'save_config')
         self.info = patch.object(application.messagebox, 'showinfo')
         self.error = patch.object(application.messagebox, 'showerror')
-        self.load.start(); self.save.start(); self.notice = self.info.start(); self.error.start()
+        for patcher in (self.load, self.save, self.info, self.error):
+            self.addCleanup(patcher.stop)
+            started = patcher.start()
+            if patcher is self.info:
+                self.notice = started
         application.configure_unicode_ui_fonts(self.root)
         application.configure_design_language(self.root)
         self.app = application.PaddleOCRBatchGUI(self.root)
@@ -41,12 +47,21 @@ class InterfaceResponsivenessTests(unittest.TestCase):
         self.root.update()
 
     def tearDown(self):
-        if not self.destroyed:
+        self._destroy_root()
+
+    def _destroy_root(self):
+        if self.destroyed:
+            return
+        try:
             for timer in self.root.tk.call('after', 'info'):
-                self.root.after_cancel(timer)
-            self.root.destroy()
-        self.load.stop(); self.save.stop(); self.info.stop(); self.error.stop()
-        set_language('zh')
+                # Native ttk timers contain Tcl scripts, not Python callback
+                # command names accepted by Tkinter's after_cancel cleanup.
+                self.root.tk.call('after', 'cancel', timer)
+        finally:
+            try:
+                self.root.destroy()
+            finally:
+                self.destroyed = True
 
     def pump(self, predicate, timeout=3):
         deadline = time.monotonic() + timeout
@@ -114,6 +129,49 @@ class InterfaceResponsivenessTests(unittest.TestCase):
                 self.assertIn('pdf_scan', self.app.background_jobs)
                 release.set()
                 self.pump(lambda: not self.app.background_jobs)
+        finally:
+            release.set()
+
+    def test_opening_a_slow_output_folder_keeps_the_interface_responsive(self):
+        release, entered = threading.Event(), threading.Event()
+        self.app.output_var.set(str(self.directory))
+        def open_folder(_path):
+            entered.set()
+            release.wait(2)
+        try:
+            with patch.object(application.os, "startfile", side_effect=open_folder, create=True):
+                self.app.open_output_dir()
+                self.assertTrue(entered.wait(.5))
+                self.heartbeat()
+                self.assertIn("open_output", self.app.background_jobs)
+                release.set()
+                self.pump(lambda: "open_output" not in self.app.background_jobs)
+            self.notice.assert_not_called()
+        finally:
+            release.set()
+
+    def test_old_model_list_does_not_overwrite_a_new_service_configuration(self):
+        release, entered = threading.Event(), threading.Event()
+        self.app.llm_base_url_var.set("https://old.example.invalid/v1")
+        self.app.llm_api_key_var.set("old-key")
+        self.app.llm_model_var.set("old-model")
+        def fetch(*_args, **_kwargs):
+            entered.set()
+            release.wait(2)
+            return ["returned-old-model"]
+        try:
+            with patch.object(application, "fetch_openai_compatible_models", side_effect=fetch):
+                self.app.fetch_llm_models()
+                self.assertTrue(entered.wait(.5))
+                self.app.llm_base_url_var.set("https://new.example.invalid/v1")
+                self.app.llm_api_key_var.set("new-key")
+                self.app.llm_model_var.set("new-model")
+                release.set()
+                self.pump(lambda: not self.app.model_fetch_thread.is_alive() and self.app.log_queue.empty())
+            self.assertEqual(self.app.llm_model_var.get(), "new-model")
+            self.assertNotIn("returned-old-model", self.app.llm_model_combo.cget("values"))
+            self.assertEqual(str(self.app.fetch_models_btn.cget("state")), "normal")
+            self.assertIn("已忽略旧请求", self.app.status_var.get())
         finally:
             release.set()
 
@@ -255,10 +313,7 @@ class InterfaceResponsivenessTests(unittest.TestCase):
         worker = threading.Thread(target=work, daemon=True)
         worker.start()
         self.pump(lambda: not self.c.events.empty())
-        for timer in self.root.tk.call('after', 'info'):
-            self.root.after_cancel(timer)
-        self.root.destroy()
-        self.destroyed = True
+        self._destroy_root()
         self.assertTrue(finished.wait(.6))
         worker.join(timeout=.2)
         self.assertFalse(worker.is_alive())

@@ -39,7 +39,7 @@ class GithubWorkspaceTests(unittest.TestCase):
         if wizard and wizard.window.winfo_exists():
             wizard.close()
         for timer in self.root.tk.call('after', 'info'):
-            self.root.after_cancel(timer)
+            self.root.tk.call("after", "cancel", timer)
         self.root.destroy()
         self.load.stop()
         self.save.stop()

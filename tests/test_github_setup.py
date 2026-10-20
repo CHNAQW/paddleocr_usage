@@ -122,7 +122,7 @@ class GitHubWizardTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         for timer in cls.root.tk.call("after", "info"):
-            cls.root.after_cancel(timer)
+            cls.root.tk.call("after", "cancel", timer)
         cls.root.destroy()
         cls.load.stop()
         cls.save.stop()

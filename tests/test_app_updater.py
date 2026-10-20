@@ -25,6 +25,24 @@ def pe_payload(size=512):
 
 
 class UpdateTests(unittest.TestCase):
+    def test_advanced_source_keeps_legal_text_and_requires_prompt_modules(self):
+        required = {"task_runtime.py": "", "update_cleanup.py": "",
+                    "prompt_templates.py": "", "advanced_settings.py": ""}
+        text = Path(__file__).resolve().parents[1].joinpath("License").read_bytes()
+        entry = 'APP_VERSION="26.10.20.03"\n'
+        for legal_name in ("License", "License.txt"):
+            with self.subTest(legal_name=legal_name):
+                path = self.source_zip(entry=entry, additions={**required, legal_name: text})
+                package = updates.import_package(path, self.current, cache=self.cache)
+                self.assertEqual((package.directory / "source" / legal_name).read_bytes(), text)
+                updates.discard_package(package)
+        for missing in ("prompt_templates.py", "advanced_settings.py", "License"):
+            incomplete = {**required, "License": text}
+            incomplete.pop(missing)
+            path = self.source_zip(entry=entry, additions=incomplete)
+            with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, "源码包缺少"):
+                updates.import_package(path, self.current, cache=self.cache)
+
     def test_new_source_versions_require_their_runtime_and_cleanup_modules(self):
         entry = 'APP_VERSION="26.10.20.02"\n'
         for additions in ({}, {"task_runtime.py": ""}, {"update_cleanup.py": ""}):

@@ -71,7 +71,7 @@ def update_in_progress(app):
 
 class ModelControls:
     def __init__(self, parent, title, saved, events, fetch, test, app=None):
-        self.events, self.fetch, self.test = events, fetch, test
+        self.events, self.fetch = events, fetch
         self.app = app
         self.request_generation = 0
         self.active_request = None
@@ -90,9 +90,11 @@ class ModelControls:
         self.limit_value = tk.StringVar(value=str(saved.get("input_limit") or DEFAULT_CONTEXT_LIMIT))
         self.catalog_limits = {}
         detected = saved.get("detected_limits", {})
-        if isinstance(detected, dict) and (detected.get("input_limit") or detected.get("context_limit")):
-            self.catalog_limits[(self.url.get().strip(), self.model.get().strip())] = ModelLimits(
-                *(positive_integer(detected.get(key)) for key in ("input_limit", "context_limit", "output_limit")))
+        if isinstance(detected, dict):
+            limits = tuple(positive_integer(detected.get(key))
+                           for key in ("input_limit", "context_limit", "output_limit"))
+            if any(limits):
+                self.catalog_limits[(self.url.get().strip(), self.model.get().strip())] = ModelLimits(*limits)
         self.provider = ChoiceVar(value=next((name for name, url in PROVIDERS.items()
                                                 if url and url == self.url.get()), tr('自定义 OpenAI compatible')))
         selector = ttk.Combobox(self.form, textvariable=self.provider, values=[ui_text(value) for value in PROVIDERS], state="readonly")
@@ -150,9 +152,11 @@ class ModelControls:
     def refresh_limits(self):
         detected = self.catalog_limits.get((self.url.get().strip(), self.model.get().strip()))
         if not self.manual_limit.get():
-            self.limit_value.set(str((detected.input_limit or detected.context_limit) if detected else DEFAULT_CONTEXT_LIMIT))
+            self.limit_value.set(str((detected.input_limit or detected.context_limit or DEFAULT_CONTEXT_LIMIT)
+                                     if detected else DEFAULT_CONTEXT_LIMIT))
         self.limit_entry.configure(state="normal" if self.manual_limit.get() else "disabled")
-        source = tr("手动设置") if self.manual_limit.get() else tr("接口元数据") if detected else tr("DeepSeek-V4.1-Flash 默认值")
+        has_input = detected and (detected.input_limit or detected.context_limit)
+        source = tr("手动设置") if self.manual_limit.get() else tr("接口元数据") if has_input else tr("DeepSeek-V4.1-Flash 默认值")
         self.limit_status.set(tr("上限来源：{arg0}。未返回限制时使用 1,000,000 上下文 / 256,000 输出的默认值；可手动修改。", arg0=source))
 
     def config_data(self):
@@ -226,6 +230,7 @@ class LiteratureControls:
         self.cancel_event = threading.Event()
         saved = app.config.literature if isinstance(app.config.literature, dict) else {}
         self.formatting = None
+        self.advanced = None
         self.formatting_saved = saved.get("formatting", {})
         self.fetch, self.test = fetch, test
         shared = saved.get("llm_service", {})
@@ -306,9 +311,14 @@ class LiteratureControls:
         data["input_percent"] = self.chunk_percent()
         data["updates"] = self.app.updates.config_data()
         data["formatting"] = self.formatting.config_data() if self.formatting else self.formatting_saved
+        data["prompts"] = self.advanced.config_data() if self.advanced else {}
         data["llm_service"] = {"enabled": self.shared_llm.get(), "base_url": self.shared_url.get(), "api_key": self.shared_key.get()}
         data.update({key: value.config_data() for key, value in self.profiles.items()})
         return data
+
+    def prompt_snapshot(self):
+        from prompt_templates import snapshot
+        return self.advanced.prompt_snapshot() if getattr(self, "advanced", None) else snapshot()
 
     def chunk_percent(self):
         value = self.input_percent.get().strip()
@@ -405,7 +415,8 @@ class LiteratureControls:
                     allow_arbiter_revision=self.allow_arbiter_revision.get(), force_auto=self.force_auto.get()),
                 "output": None if self.same_folder.get() else Path(self.output.get()).expanduser().resolve(),
                 "prefix": self.prefix.get().startswith("前缀"), "github": github,
-                "auto_translate": self.auto_translate.get(), "upload_kind": self.upload_kind.get(), "force_auto": self.force_auto.get()}
+                "auto_translate": self.auto_translate.get(), "upload_kind": self.upload_kind.get(), "force_auto": self.force_auto.get(),
+                "prompts": self.prompt_snapshot()}
 
     def input_paths(self, settings=None, stop=lambda: False):
         source, recursive, target = settings if settings is not None else self.path_settings()
@@ -542,7 +553,7 @@ class LiteratureControls:
         destination = translated_path(path, root, snapshot["output"], snapshot["prefix"])
         result = translate_document(path, destination, snapshot["options"],
             **snapshot["profiles"], decide=None if snapshot.get("force_auto") else self.decide, stop=self.stopped,
-            log=self.log, upstream_verified=upstream_ok)
+            log=self.log, upstream_verified=upstream_ok, prompts=snapshot.get("prompts"))
         labels = {"verified": tr('核验通过'), "needs_review": tr('核验尚未通过，请查看检查报告'), "unverified": tr('未启用质量检查'),
                   "target_language": tr('已是目标语言，跳过'), "existing": tr('译文已存在，跳过')}
         if result["status"] == "needs_review":
@@ -694,6 +705,11 @@ class LiteratureControls:
         localize_widgets(dialog)
 
     def poll(self):
+        if self.pending is not None:
+            self.app.root.after_cancel(self.pending)
+            self.pending = None
+        if self.closed:
+            return
         try:
             for kind, payload in drain_events(self.events):
                 if kind == "decision":
@@ -737,8 +753,6 @@ class LiteratureControls:
                             controls.model.set(result[0])
                         controls.refresh_limits()
                         self.log(tr('已拉取 {arg0} 个模型。', arg0=len(result)))
-        except queue.Empty:
-            pass
         except Exception as exc:
             self.log(tr("后台事件处理失败：{arg0}", arg0=exc))
         if not self.closed:
@@ -947,6 +961,7 @@ class MarkdownFormatting:
             for profile in models.values():
                 profile.validate()
             percent, prefix = self.owner.chunk_percent(), self.prefix.get().startswith("前缀")
+            prompts = self.owner.prompt_snapshot()
             automatic = self.owner.force_auto.get()
             arbiter = self.owner.profiles["arbiter"].profile() if automatic else None
             if arbiter:
@@ -981,7 +996,7 @@ class MarkdownFormatting:
                             lambda: format_markdown_document(path, destination, **models, input_percent=percent,
                                 stop=self.cancel.is_set, log=self.owner.log,
                                 decide=None if automatic else lambda payload: self.owner.decide(payload, self.cancel.is_set),
-                                force_auto=automatic, arbiter=arbiter), self.cancel.is_set, automatic=automatic)
+                                force_auto=automatic, arbiter=arbiter, prompts=prompts), self.cancel.is_set, automatic=automatic)
                         counts[result["status"]] += 1
                         label = {"verified": tr("整理核验通过"), "needs_review": tr("整理稿待核验处理"), "existing": tr("整理稿已存在，跳过")}[result["status"]]
                         self.owner.log(tr("{arg0}：{arg1}", arg0=path.name, arg1=label))
@@ -1006,7 +1021,11 @@ class MarkdownFormatting:
         self.stop_button.configure(state="normal" if self.busy else "disabled")
 
     def poll(self):
+        if self.pending is not None:
+            self.root.after_cancel(self.pending)
         self.pending = None
+        if self.closed:
+            return
         try:
             for kind, value in drain_events(self.events):
                 if kind == "status":
@@ -1026,8 +1045,6 @@ class MarkdownFormatting:
                     self.owner.log(message)
                     self.app.start_btn.configure(state="normal")
                     self.owner.start_button.configure(state="normal")
-        except queue.Empty:
-            pass
         except Exception as exc:
             self.status.set(tr("后台事件处理失败：{arg0}", arg0=exc))
         self.buttons()

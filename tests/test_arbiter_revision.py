@@ -168,7 +168,7 @@ class ArbiterRevisionTests(unittest.TestCase):
             calls.append((prompt, data))
             if 'sample' in data:
                 return self.detect
-            if prompt == lp.TRANSLATE_PROMPT:
+            if prompt in {lp.TRANSLATE_PROMPT, lp.SECOND_TRANSLATE_PROMPT}:
                 return 'draft'
             if prompt == lp.COMPARE_PROMPT:
                 return self.problem

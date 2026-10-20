@@ -147,7 +147,7 @@ class DesktopLayoutTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         for timer in cls.root.tk.call("after", "info"):
-            cls.root.after_cancel(timer)
+            cls.root.tk.call("after", "cancel", timer)
         cls.root.destroy()
         cls.config_patch.stop()
         cls.save_patch.stop()
@@ -803,7 +803,7 @@ class EnglishStartupTests(unittest.TestCase):
                     self.assertEqual(app.config.ui_language, locale)
         finally:
             for timer in root.tk.call("after", "info"):
-                root.after_cancel(timer)
+                root.tk.call("after", "cancel", timer)
             root.destroy()
             set_language("zh")
 

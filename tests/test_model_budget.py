@@ -8,7 +8,8 @@ from unittest.mock import Mock, patch
 
 import literature_processing as lp
 from model_budget import (BudgetExceeded, ModelCatalog, ResponseTooLong, budget_chunks,
-                          effective_limits, input_budget, read_limits, request_size)
+                          effective_limits, input_budget, messages, prepare_request,
+                          read_limits, request_size)
 
 
 class BudgetTests(unittest.TestCase):
@@ -65,6 +66,17 @@ class BudgetTests(unittest.TestCase):
         self.assertGreater(request_size("translate", {"source": "中" * 100}), plain + 150)
         self.assertGreater(request_size("translate", {"source": '"' * 100}), plain)
 
+    def test_prepared_request_serializes_multilingual_data_only_once(self):
+        data = {"source": ('中文 / العربية / 😀 / "quoted" / \n\t' * 1000)}
+        with patch("model_budget.json.dumps", wraps=json.dumps) as serialize:
+            payload, size = prepare_request(self.profile(), "translate", data)
+        serialize.assert_called_once()
+        self.assertEqual(payload, messages("translate", data))
+        self.assertEqual(size, request_size("translate", data))
+        self.assertEqual(size, sum(len(item["content"].encode("utf-8")) for item in payload) + 128)
+        with self.assertRaises(BudgetExceeded):
+            prepare_request(self.profile(input_limit=100), "translate", data)
+
     def test_chunking_fills_budget_without_losing_markdown_or_unicode(self):
         text = ("# Heading\n\n" + "Citations [1]. 中文。\n\n" * 20 + "```python\nprint('x')\n```\n\n") * 15
         fits = lambda value: request_size("translate", {"source": value}) <= 1600
@@ -87,6 +99,31 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(chunks, ["A" * 1000] * 200)
         # Bound work directly rather than depending on CI CPU timing.
         self.assertLess(inspected, len(text) * 20)
+
+    def test_fitting_fences_are_not_split_after_a_short_introduction(self):
+        blocks = [
+            "```python\n" + "print('text')\n" * 6 + "```\n",
+            "~~~python\n" + "中文 = '😀'\n" * 6 + "~~~~\n",
+            "````text\n```not a closing fence\n\n" + "source\n" * 6 + "````\n",
+            "```python\r\n" + "print('text')\r\n" * 6 + "```\r\n",
+        ]
+        for block in blocks:
+            with self.subTest(block=block[:20]):
+                text = "Introduction.\n\n" + block + "\n" + "Conclusion.\n" * 15
+                budget = len(block.encode("utf-8")) + 4
+                fits = lambda value: len(value.encode("utf-8")) <= budget
+                chunks = budget_chunks(text, fits)
+                self.assertEqual("".join(chunks), text)
+                self.assertTrue(all(fits(chunk) for chunk in chunks))
+                self.assertTrue(any(block in chunk for chunk in chunks))
+
+    def test_a_single_oversized_fence_still_splits_without_losing_content(self):
+        text = "```text\n" + "中文😀 data\n" * 100 + "```\n"
+        fits = lambda value: len(value.encode("utf-8")) <= 100
+        chunks = budget_chunks(text, fits)
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(fits(chunk) for chunk in chunks))
+        self.assertEqual("".join(chunks), text)
 
     def test_tiny_budget_fails_before_sending_an_oversized_request(self):
         with self.assertRaises(BudgetExceeded), patch.object(lp.requests, "post") as post:

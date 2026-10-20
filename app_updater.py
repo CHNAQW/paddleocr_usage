@@ -29,6 +29,7 @@ PLATFORM = "windows-x86_64"
 MAX_PAYLOAD = 512 * 1024 * 1024
 MAX_MANIFEST = 16 * 1024
 BLOCK_SIZE = 1024 * 1024
+DOWNLOAD_TIMEOUT = 15 * 60
 
 
 class UpdateCancelled(RuntimeError):
@@ -354,7 +355,7 @@ def import_source(archive, source, current_version, cache, stop, progress):
             continue
         if relative in {"app_launcher.py", "source_bootstrap.py", "make_update_package.py"}:
             continue
-        if Path(relative).suffix.lower() not in {".py", ".json", ".png", ".ico", ".ps1", ".txt"}:
+        if relative != "License" and Path(relative).suffix.lower() not in {".py", ".json", ".png", ".ico", ".ps1", ".txt"}:
             continue
         mode = stat.S_IFMT(info.external_attr >> 16)
         if info.flag_bits & 1 or mode not in {0, stat.S_IFREG} or relative.casefold() in names:
@@ -389,9 +390,12 @@ def import_source(archive, source, current_version, cache, stop, progress):
     for introduced, modules in (
         ("26.10.20.01", {"task_runtime.py"}),
         ("26.10.20.02", {"update_cleanup.py"}),
+        ("26.10.20.03", {"prompt_templates.py", "advanced_settings.py"}),
     ):
         if version_tuple(version) >= version_tuple(introduced) and not modules <= mapping.keys():
             raise ValueError(tr("源码包缺少运行所需文件，或入口文件过大。"))
+    if version_tuple(version) >= (26, 10, 20, 3) and not {"License", "License.txt"} & mapping.keys():
+        raise ValueError(tr("源码包缺少运行所需文件，或入口文件过大。"))
     requested = requirements(archive.read(mapping["requirements.txt"]).decode("utf-8-sig"))
     available = getattr(sys, "_paddleocr_requirements", requirements(Path(__file__).with_name("requirements.txt").read_text(encoding="utf-8-sig")))
     if requested != available:
@@ -399,11 +403,12 @@ def import_source(archive, source, current_version, cache, stop, progress):
     source_modules = {name.split("/")[0].removesuffix(".py") for _, name in selected if name.endswith(".py")}
     imported = set()
     for info, name in selected:
+        _cancel(stop)
         if name.endswith(".py"):
             if info.file_size > 4 * BLOCK_SIZE:
                 raise ValueError(tr("源码包内容超出支持范围。"))
             try:
-                module_tree = ast.parse(archive.read(info).decode("utf-8-sig"))
+                module_tree = tree if name == "paddleocr_pdf_to_md_gui.py" else ast.parse(archive.read(info).decode("utf-8-sig"))
             except (SyntaxError, UnicodeError) as exc:
                 raise ValueError(tr("无法识别源码版本，或源码需要更高版本的 Python。")) from exc
             for node in ast.walk(module_tree):
@@ -412,6 +417,7 @@ def import_source(archive, source, current_version, cache, stop, progress):
                 elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                     imported.add(node.module.split(".")[0])
     for name in imported - source_modules - {"__future__"}:
+        _cancel(stop)
         if importlib.util.find_spec(name) is None:
             raise ValueError(tr("当前运行时未包含模块 {arg0}，请使用完整 EXE 更新包。", arg0=name))
     cache.mkdir(parents=True, exist_ok=True)
@@ -436,11 +442,8 @@ def import_source(archive, source, current_version, cache, stop, progress):
                     checksum.update(block)
                     outgoing.write(block)
                     progress(done, total)
-            if path.suffix == ".py":
-                try:
-                    ast.parse(path.read_text(encoding="utf-8-sig"))
-                except (SyntaxError, UnicodeError) as exc:
-                    raise ValueError(tr("无法识别源码版本，或源码需要更高版本的 Python。")) from exc
+            # Syntax/imports were checked above. ZipFile verifies the same CRC
+            # while extracting; hashing these bytes remains the activation guard.
             hashes[name] = checksum.hexdigest()
         record = {"schema": 1, "application": APPLICATION_ID, "version": version,
                   "directory": str(target), "files": hashes, "requirements": requested}
@@ -508,6 +511,14 @@ class GitHubHTTPError(RuntimeError):
         super().__init__(message)
 
 
+def _close_response(response):
+    """A transport cleanup error must not replace the result or skip file cleanup."""
+    try:
+        response.close()
+    except Exception:
+        pass
+
+
 def _github_response(url, *, stream=False, stop=lambda: False, accept="application/vnd.github+json"):
     """Follow only GitHub HTTPS redirects, without forwarding application credentials."""
     from urllib.parse import urlsplit, urljoin
@@ -527,14 +538,14 @@ def _github_response(url, *, stream=False, stop=lambda: False, accept="applicati
             raise RuntimeError(tr("无法连接 GitHub，请检查网络或代理后重试。")) from None
         if response.status_code in {301, 302, 303, 307, 308}:
             location = response.headers.get("Location", "")
-            response.close()
+            _close_response(response)
             if not location:
                 break
             url = urljoin(url, location)
             continue
         if response.status_code != 200:
             status = response.status_code
-            response.close()
+            _close_response(response)
             if status == 404:
                 raise ValueError(tr("GitHub 尚无可用发行版或找不到目标代码，请切换更新渠道后重试。"))
             raise GitHubHTTPError(status, url)
@@ -559,12 +570,12 @@ def _github_bytes(url, stop, limit=4 * BLOCK_SIZE, accept="application/vnd.githu
                     raise ValueError(tr("GitHub 更新元数据过大。"))
             return bytes(data)
         finally:
-            response.close()
+            _close_response(response)
     try:
         return cancellable_call(read, stop, timeout=60, cancelled=UpdateCancelled)
     except BaseException:
         if not reading.is_set():
-            response.close()
+            _close_response(response)
         raise
 
 
@@ -674,10 +685,46 @@ def check_github_update(current_version, channel="release", stop=lambda: False):
     return offer if version_tuple(offer.version) > version_tuple(current_version) else None
 
 
+class _DownloadedPackage:
+    """Transfer staging ownership only if a bounded download was not abandoned."""
+    def __init__(self, package):
+        self.package = package
+
+    def take(self):
+        package, self.package = self.package, None
+        return package
+
+    def close(self):
+        package = self.take()
+        if package is not None:
+            discard_package(package)
+
+
 def download_github_update(offer, current_version, cache=None, stop=lambda: False, progress=lambda done, total: None):
-    """Bound streaming download, verify transport digest, then reuse the local ZIP validator."""
+    """Return promptly on stop/deadline; the transport retains its own staging files."""
     if not isinstance(offer, OnlineUpdate) or version_tuple(offer.version) <= version_tuple(current_version):
         raise ValueError(tr("没有可下载的新版。"))
+    import threading
+    abandoned = threading.Event()
+
+    def stopped():
+        return abandoned.is_set() or stop()
+
+    def download():
+        return _DownloadedPackage(_download_github_update(offer, current_version, cache, stopped, progress))
+
+    try:
+        delivery = cancellable_call(download, stop, timeout=DOWNLOAD_TIMEOUT, cancelled=UpdateCancelled)
+        return delivery.take()
+    except BaseException:
+        # The UI may reuse/reset its stop event for another task. Keep the old
+        # transport cancelled until its socket unblocks and its own finally runs.
+        abandoned.set()
+        raise
+
+
+def _download_github_update(offer, current_version, cache, stop, progress):
+    """The sole owner of downloading/extracting files, including after cancellation."""
     cache = Path(cache) if cache is not None else update_cache()
     cache.mkdir(parents=True, exist_ok=True)
     directory = Path(tempfile.mkdtemp(prefix="download-", dir=cache))
@@ -703,6 +750,7 @@ def download_github_update(offer, current_version, cache=None, stop=lambda: Fals
                 or (offer.sha256 and digest.hexdigest() != offer.sha256)):
             raise ValueError(tr("下载大小或 SHA-256 校验失败，请重新下载。"))
         package = import_package(source, current_version, cache=cache, stop=stop, progress=progress)
+        _cancel(stop)
         if package.version != offer.version:
             raise ValueError(tr("下载内容的版本与检查结果不一致，未安装。"))
         # Keep the downloaded ZIP alongside the staged payload until installation/discard.
@@ -716,5 +764,5 @@ def download_github_update(offer, current_version, cache=None, stop=lambda: Fals
         raise
     finally:
         if response is not None:
-            response.close()
+            _close_response(response)
         shutil.rmtree(directory, ignore_errors=True)

@@ -4,18 +4,19 @@ from __future__ import annotations
 import queue
 import threading
 import tkinter as tk
+from collections import deque
 from task_runtime import drain_events
 
 from tkinter import font as tkfont
 import webbrowser
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from tkinter import ttk
 
 from literature_processing import (GitHubOptions, GitHubSetupClient, UPLOAD_KINDS, ProcessingCancelled,
     document_upload_evidence, scan_missing_documents, upload_verified_file, github_folder_name, github_repository_name)
 from literature_ui import scrollable_page, update_in_progress
 from responsive_ui import AdaptiveCheckbutton, AdaptiveLabel, ButtonToolbar, ResponsiveForm
-from ui_i18n import LocalizedVar, filedialog, messagebox, localize_widgets, tr
+from ui_i18n import LocalizedVar, filedialog, messagebox, localize_widgets, invalidate_copy, tr
 
 
 class GitHubSetup:
@@ -314,6 +315,7 @@ class GitHubWizard:
     def show_folders(self, folder, rows):
         self.browser_path = folder
         self.browser_location.set(tr("正在浏览：{arg0}", arg0=folder or tr("仓库根目录")))
+        invalidate_copy(self.directory_list)
         self.directory_list.delete(*self.directory_list.get_children())
         for index, path in enumerate(rows):
             self.directory_list.insert("", "end", iid=str(index), text=PurePosixPath(path).name, values=(path,))
@@ -359,6 +361,9 @@ class GitHubWizard:
         self.worker_thread.start()
 
     def poll(self):
+        if self.poll_id is not None:
+            self.window.after_cancel(self.poll_id)
+            self.poll_id = None
         if self.closed:
             return
         try:
@@ -372,13 +377,12 @@ class GitHubWizard:
                 else:
                     self.status.set("")
                     self.completed(result)
-        except queue.Empty:
-            pass
         except Exception as exc:
             self.busy = False
             self.status.set(tr("后台事件处理失败：{arg0}", arg0=exc))
             self.update_buttons()
-        self.poll_id = self.window.after(60, self.poll)
+        if not self.closed:
+            self.poll_id = self.window.after(60, self.poll)
 
     def back(self):
         self.dirty()
@@ -412,7 +416,9 @@ class GitHubWizard:
         self.closed = True
         self.cancel.set()
         self.generation += 1
-        self.window.after_cancel(self.poll_id)
+        if self.poll_id is not None:
+            self.window.after_cancel(self.poll_id)
+            self.poll_id = None
         for variable, trace in self.traces:
             variable.trace_remove("write", trace)
         self.traces.clear()
@@ -444,6 +450,8 @@ class ManualUpload:
         self.worker_thread = None
         self.events, self.cancel = queue.Queue(), threading.Event()
         self.candidates, self.checked = [], None
+        self.ready_count = 0
+        self.button_state = None
         self.extra_buttons = []
         self.render_timer = None
         self.render_generation = 0
@@ -525,24 +533,31 @@ class ManualUpload:
             self.controls.upload_root.set(value)
 
     def buttons(self):
+        state = (self.busy, self.render_timer is not None, self.ready_count > 0,
+                 tuple(tuple(map(str, group)) for group in self.extra_buttons))
+        if state == self.button_state:
+            return
+        self.button_state = state
         for scan, upload, stop in [(self.scan_button, self.upload_button, self.stop_button)] + self.extra_buttons:
             scan.configure(state="disabled" if self.busy else "normal")
-            upload.configure(state="normal" if not self.busy and self.render_timer is None and any(c.status == "ready" for c in self.candidates) else "disabled")
+            upload.configure(state="normal" if not self.busy and self.render_timer is None and self.ready_count else "disabled")
             stop.configure(state="normal" if self.busy else "disabled")
         self.folder_entry.configure(state="disabled" if self.busy else "normal")
         self.browse_button.configure(state="disabled" if self.busy else "normal")
         self.kind_combo.configure(state="disabled" if self.busy else "readonly")
 
     def render(self, auto_select=False):
+        invalidate_copy(self.tree)
         if self.render_timer is not None:
             self.app.root.after_cancel(self.render_timer)
             self.render_timer = None
         self.render_generation += 1
         generation = self.render_generation
+        self.ready_count = sum(item.status == "ready" for item in self.candidates)
         c = self.controls
         self.destination.set(tr("目标：{arg0} · {arg1} / {arg2}", arg0=c.repository.get(), arg1=c.branch.get(), arg2=c.folder.get() or tr("仓库根目录")))
         selected = set(self.tree.selection())
-        self.tree.delete(*self.tree.get_children())
+        stale_rows = deque(self.tree.get_children())
         self.tree.heading("#0", text=tr("相对路径"))
         self.tree.heading("role", text=tr("文档类型"))
         self.tree.heading("status", text=tr("处理状态"))
@@ -571,7 +586,19 @@ class ManualUpload:
             if end < len(self.candidates):
                 self.render_timer = self.app.root.after(1, lambda: batch(end))
             self.buttons()
-        batch()
+        def clear():
+            self.render_timer = None
+            if self.closed or generation != self.render_generation:
+                return
+            rows = [stale_rows.popleft() for _ in range(min(100, len(stale_rows)))]
+            if rows:
+                self.tree.delete(*rows)
+            if stale_rows:
+                self.render_timer = self.app.root.after(1, clear)
+                self.buttons()
+            else:
+                batch()
+        clear()
 
     def resize(self, event=None):
         if event is None or event.widget == self.window:
@@ -655,17 +682,21 @@ class ManualUpload:
         self.launch(work, "uploaded")
 
     def poll(self):
+        if self.pending is not None:
+            self.app.root.after_cancel(self.pending)
         self.pending = None
+        if self.closed:
+            return
         try:
             for kind, value in drain_events(self.events):
                 if kind == "scan" and self.checked == self.signature() and not self.cancel.is_set():
                     self.candidates = value
                     self.render(auto_select=True)
-                    ready = [str(i) for i, c in enumerate(value) if c.status == "ready"]
-                    self.status.set(tr("扫描完成：共 {arg0} 个文档，{arg1} 个可以补传。", arg0=len(value), arg1=len(ready)))
+                    self.status.set(tr("扫描完成：共 {arg0} 个文档，{arg1} 个可以补传。", arg0=len(value), arg1=self.ready_count))
                 elif kind == "row" and self.checked == self.signature():
                     from dataclasses import replace
                     index, status = value
+                    self.ready_count += int(status == "ready") - int(self.candidates[index].status == "ready")
                     self.candidates[index] = replace(self.candidates[index], status=status)
                     if self.tree.exists(str(index)):
                         labels = {"existing": tr("远端已有，跳过"), "uploaded": tr("上传完成"), "failed": tr("上传失败，文件保留本地")}
@@ -678,8 +709,6 @@ class ManualUpload:
                     self.busy = False
                     if self.cancel.is_set():
                         self.status.set(tr("已停止。"))
-        except queue.Empty:
-            pass
         except Exception as exc:
             self.status.set(tr("后台事件处理失败：{arg0}", arg0=exc))
         self.buttons()
