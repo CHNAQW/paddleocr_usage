@@ -166,6 +166,96 @@ class OnlineUpdateTests(unittest.TestCase):
                 time.sleep(.01)
             value.close.assert_called_once()
 
+    def test_metadata_cancel_after_headers_never_waits_for_close_or_releases_slot_early(self):
+        cancelled, closing, release_close = threading.Event(), threading.Event(), threading.Event()
+        value = response(b'{"late": true}')
+        def headers(*args, **kwargs):
+            cancelled.set()
+            return value
+        def close():
+            closing.set()
+            release_close.wait(3)
+        value.close.side_effect = close
+        slot = threading.BoundedSemaphore(1)
+        outcome = []
+        def check():
+            try:
+                updates._github_bytes("https://github.com/update.json", cancelled.is_set)
+            except updates.UpdateCancelled:
+                outcome.append("cancelled")
+        with patch("task_runtime._network_slots", slot), patch.object(requests, "get", side_effect=headers):
+            worker = threading.Thread(target=check)
+            worker.start()
+            try:
+                self.assertTrue(closing.wait(1))
+                worker.join(1)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(outcome, ["cancelled"])
+                self.assertFalse(slot.acquire(blocking=False))
+                value.iter_content.assert_not_called()
+            finally:
+                release_close.set()
+                worker.join(3)
+            self.assertTrue(slot.acquire(timeout=1))
+            slot.release()
+        value.close.assert_called_once()
+
+    def test_cancelled_metadata_headers_do_not_resume_after_stop_is_reset(self):
+        entered, release_headers, cancelled, closed = (threading.Event() for _ in range(4))
+        value = response(b'{"late": true}')
+        value.close.side_effect = closed.set
+        def headers(*args, **kwargs):
+            entered.set()
+            release_headers.wait(3)
+            return value
+        outcome = []
+        def check():
+            try:
+                updates._github_bytes("https://github.com/update.json", cancelled.is_set)
+            except updates.UpdateCancelled:
+                outcome.append("cancelled")
+        with patch("task_runtime._network_slots", threading.BoundedSemaphore(1)), \
+                patch.object(requests, "get", side_effect=headers):
+            worker = threading.Thread(target=check)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                cancelled.set()
+                worker.join(1)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(outcome, ["cancelled"])
+                cancelled.clear()
+            finally:
+                release_headers.set()
+                worker.join(3)
+            self.assertTrue(closed.wait(1))
+            value.iter_content.assert_not_called()
+            value.close.assert_called_once()
+
+    def test_metadata_deadline_includes_redirect_close_without_spawning_more_workers(self):
+        closing, release_close = threading.Event(), threading.Event()
+        value = response(status=302, headers={"Location": "https://github.com/next.json"})
+        def close():
+            closing.set()
+            release_close.wait(3)
+        value.close.side_effect = close
+        slot = threading.BoundedSemaphore(1)
+        with patch("task_runtime._network_slots", slot), patch.object(updates, "METADATA_TIMEOUT", .1), \
+                patch.object(requests, "get", return_value=value) as get:
+            try:
+                started = time.monotonic()
+                with self.assertRaises(TimeoutError):
+                    updates._github_bytes("https://github.com/update.json", lambda: False)
+                self.assertLess(time.monotonic() - started, 1)
+                self.assertTrue(closing.is_set())
+                self.assertFalse(slot.acquire(blocking=False))
+            finally:
+                release_close.set()
+            self.assertTrue(slot.acquire(timeout=1))
+            slot.release()
+            get.assert_called_once()
+            value.close.assert_called_once()
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

@@ -4,8 +4,34 @@ import unittest
 from unittest.mock import patch
 
 import paddleocr_pdf_to_md_gui as application
-from responsive_ui import AdaptiveCheckbutton
+from responsive_ui import AdaptiveCheckbutton, fit_lines
 from ui_i18n import set_language
+
+
+class CompactLabelTextTests(unittest.TestCase):
+    def setUp(self):
+        try:
+            self.root = tk.Tk()
+        except tk.TclError as exc:
+            raise unittest.SkipTest(str(exc))
+        self.addCleanup(self.root.destroy)
+
+    def test_hiding_additional_lines_preserves_complete_version_when_it_fits(self):
+        font = tkfont.nametofont("TkDefaultFont", root=self.root)
+        version = "27.1.1.1"
+        width = font.measure(version + "…") + 50
+        self.assertEqual(fit_lines(version + "\n" + "Release notes " * 100, width, 1, font),
+                         version + "…")
+
+    def test_ellipsis_reserves_its_measured_width_instead_of_two_characters(self):
+        for size in (10, 16):
+            with self.subTest(size=size):
+                font = tkfont.Font(root=self.root, family="Arial", size=size)
+                prefix = "WWWiii1234"
+                width = font.measure(prefix + "…")
+                result = fit_lines(prefix + "567890ABCDEFGHIJKLMN", width, 1, font)
+                self.assertEqual(result, prefix + "…")
+                self.assertLessEqual(font.measure(result), width)
 
 
 class ResponsiveLayoutTests(unittest.TestCase):

@@ -174,27 +174,40 @@ def fit_lines(text, width, maximum, font):
     # token just to display two lines; the label's source remains fully copyable.
     original_length = len(text)
     text = text[:8192]
-    lines, used, end = 1, 0, 0
+    lines, used, end, line_start = 1, 0, 0, 0
+    def shortened():
+        prefix = text[:end].rstrip()
+        # A line break hides following lines; it does not consume space on the
+        # visible line. Keep complete identifiers when the ellipsis already fits.
+        while len(prefix) > line_start and font.measure(prefix[line_start:] + "…") > width:
+            prefix = prefix[:-1].rstrip()
+        return prefix + "…"
+
     for match in re.finditer(r"\n|[^\S\n]+|[^\s]+", text):
         token = match.group()
         if token == "\n":
+            if lines == maximum:
+                return shortened()
             lines, used = lines + 1, 0
-            if lines > maximum:
-                break
             end += 1
+            line_start = end
             continue
         size = font.measure(token)
         if used and used + size > width and not token.isspace():
+            if lines == maximum:
+                return shortened()
             lines, used = lines + 1, 0
+            line_start = end
         for char in token:
             size = font.measure(char)
             if used + size > width:
+                if lines == maximum:
+                    return shortened()
                 lines, used = lines + 1, 0
-            if lines > maximum:
-                return text[:max(0, end - 2)].rstrip() + "…"
+                line_start = end
             used += size
             end += 1
-    return text if end == original_length else text[:max(0, end - 2)].rstrip() + "…"
+    return text if end == original_length else shortened()
 
 
 class ResponsiveForm(ttk.Frame):

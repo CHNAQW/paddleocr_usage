@@ -30,6 +30,7 @@ MAX_PAYLOAD = 512 * 1024 * 1024
 MAX_MANIFEST = 16 * 1024
 BLOCK_SIZE = 1024 * 1024
 DOWNLOAD_TIMEOUT = 15 * 60
+METADATA_TIMEOUT = 60
 
 
 class UpdateCancelled(RuntimeError):
@@ -519,7 +520,8 @@ def _close_response(response):
         pass
 
 
-def _github_response(url, *, stream=False, stop=lambda: False, accept="application/vnd.github+json"):
+def _github_response(url, *, stream=False, stop=lambda: False, accept="application/vnd.github+json",
+                     _worker_owned=False):
     """Follow only GitHub HTTPS redirects, without forwarding application credentials."""
     from urllib.parse import urlsplit, urljoin
     import requests
@@ -530,10 +532,13 @@ def _github_response(url, *, stream=False, stop=lambda: False, accept="applicati
                 or parsed.password or parsed.port not in {None, 443}):
             raise ValueError(tr("更新下载地址不属于受支持的 GitHub HTTPS 地址。"))
         try:
-            response = cancellable_call(
-                lambda: requests.get(url, headers={"Accept": accept, "User-Agent": "PaddleOCR-Updater"},
-                                     timeout=(10, 30), stream=stream, allow_redirects=False),
-                stop, timeout=50, cancelled=UpdateCancelled)
+            def request():
+                return requests.get(url, headers={"Accept": accept, "User-Agent": "PaddleOCR-Updater"},
+                                    timeout=(10, 30), stream=stream, allow_redirects=False)
+            # Metadata already owns a bounded worker for the entire response
+            # lifecycle. A nested acquisition could exhaust the same slot pool.
+            response = request() if _worker_owned else cancellable_call(
+                request, stop, timeout=50, cancelled=UpdateCancelled)
         except requests.RequestException:
             raise RuntimeError(tr("无法连接 GitHub，请检查网络或代理后重试。")) from None
         if response.status_code in {301, 302, 303, 307, 308}:
@@ -554,28 +559,31 @@ def _github_response(url, *, stream=False, stop=lambda: False, accept="applicati
 
 
 def _github_bytes(url, stop, limit=4 * BLOCK_SIZE, accept="application/vnd.github+json"):
-    response = _github_response(url, stream=True, stop=stop, accept=accept)
-    # A read timeout only bounds silence between bytes. A slow metadata stream
-    # also needs a total deadline and prompt cancellation for the waiting UI.
+    # One bounded worker owns headers, redirects, body and close. In particular,
+    # cancellation before body reading must never close a response on the caller.
     import threading
-    reading = threading.Event()
+    abandoned = threading.Event()
+    def stopped():
+        return abandoned.is_set() or stop()
     def read():
-        reading.set()
+        response = _github_response(url, stream=True, stop=stopped, accept=accept, _worker_owned=True)
         try:
+            _cancel(stopped)
             data = bytearray()
             for block in response.iter_content(64 * 1024):
-                _cancel(stop)
+                _cancel(stopped)
                 data.extend(block)
                 if len(data) > limit:
                     raise ValueError(tr("GitHub 更新元数据过大。"))
+            _cancel(stopped)
             return bytes(data)
         finally:
             _close_response(response)
     try:
-        return cancellable_call(read, stop, timeout=60, cancelled=UpdateCancelled)
+        return cancellable_call(read, stop, timeout=METADATA_TIMEOUT, cancelled=UpdateCancelled)
     except BaseException:
-        if not reading.is_set():
-            _close_response(response)
+        # Reusing/resetting the UI's stop event must not revive an old request.
+        abandoned.set()
         raise
 
 

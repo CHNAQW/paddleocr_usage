@@ -484,6 +484,8 @@ class UpdatePanelTests(unittest.TestCase):
 
     def test_compact_update_actions_wrap_in_both_languages(self):
         self.app.workspace_layout.show_settings(3)
+        self.app.workspace_layout.settings.geometry("440x340")
+        self.root.update()
         self.stage()
         self.panel.online = updates.OnlineUpdate("27.1.1.1", "https://github.com/new.zip", "Changes", "")
         self.panel.preview.set("27.1.1.1\n" + "Release notes " * 100)
