@@ -62,6 +62,23 @@ jobs:
           PYTHONDONTWRITEBYTECODE: '1'
         run: |
           xvfb-run -a python -c "import tkinter; root = tkinter.Tk(); root.update(); root.destroy()"
-          xvfb-run -a python -m unittest discover -s tests -v
+          set +e
+          timeout --signal=TERM --kill-after=10s 360s xvfb-run -a python -u -c "import faulthandler, unittest; faulthandler.dump_traceback_later(60, repeat=True); unittest.main(module=None, argv=['unittest', 'discover', '-s', 'tests', '-v'])" 2>&1 | tee regression.log
+          test_exit=${PIPESTATUS[0]}
+          set -e
+          if [ "$test_exit" -ne 0 ]; then
+            python - <<'PY'
+          from pathlib import Path
+          text = Path('regression.log').read_text(encoding='utf-8', errors='replace')
+          cases = [line for line in text.splitlines() if line.startswith('test_')]
+          details = ['Last reported test: ' + (cases[-1] if cases else '(none)')]
+          tail = text[-8000:]
+          details.extend(tail[offset:offset + 1000] for offset in range(0, len(tail), 1000))
+          for index, message in enumerate(details):
+              escaped = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print(f'::error title=Linux regression diagnostics {index}::{escaped}')
+          PY
+            exit "$test_exit"
+          fi
       - name: Build and version checks
         run: python -c "import runpy; [value() for name, value in runpy.run_path('tests/test_build_script.py').items() if name.startswith('test_')]"
