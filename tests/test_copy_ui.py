@@ -114,7 +114,15 @@ class CopyInteractionTests(unittest.TestCase):
         ui_i18n.localize_widgets(dialog)
         self.root.update()
         dialog.grab_set()
-        text.event_generate('<Button-3>', x=3, y=3)
+        def popup_without_native_wait(*_args):
+            # Windows waits inside its native menu until a person selects an
+            # item. Simulate its grab change while testing our restoration.
+            self.assertEqual(self.root.grab_current(), dialog)
+            dialog.grab_release()
+            self.assertIsNone(self.root.grab_current())
+        with patch.object(tk.Menu, 'tk_popup', side_effect=popup_without_native_wait) as popup:
+            text.event_generate('<Button-3>', x=3, y=3)
+            popup.assert_called_once()
         self.assertEqual(self.root.grab_current(), dialog)
         text._copy_menu.invoke(1)
         self.assertEqual(self.root.clipboard_get(), 'diagnostic')

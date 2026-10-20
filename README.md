@@ -424,8 +424,8 @@ Linux 与 macOS 用户应保留 `.py` 文件，并通过上述虚拟环境运行
 
 ### Navigation and Small Windows   导航与小窗口
 
-The minimum window size is 540×420. Navigation moves from a sidebar to a compact top bar in narrow windows. Task options scroll independently, with side-by-side groups in wide windows. Start/stop controls and runtime logs remain visible; drag the divider to adjust log height. Service credentials and model configuration live in the separate Preferences window.  
-最小窗口为 540×420。宽窗口使用侧栏导航和并排选项，窄窗口切换为紧凑顶部导航；任务选项可独立滚动，开始/停止按钮和运行日志固定可见，拖动分隔条可调整日志高度。服务凭据与模型配置集中在独立的偏好设置窗口。
+The baseline minimum window size is 540×420. The minimum height is recalculated from the font metrics and wrapped toolbars when more room is needed, preserving both the document viewport and readable logs. Navigation moves from a sidebar to a compact top bar in narrow windows. Task options scroll independently, with side-by-side groups in wide windows. Start/stop controls and runtime logs remain visible; drag the divider to adjust log height. Service credentials and model configuration live in the separate Preferences window.  
+基础最小窗口为 540×420；字体或工具栏换行需要更多空间时，最小高度会按实际布局重新计算，保留文档区域和可读的日志正文。宽窗口使用侧栏导航和并排选项，窄窗口切换为紧凑顶部导航；任务选项可独立滚动，开始/停止按钮和运行日志固定可见，拖动分隔条可调整日志高度。服务凭据与模型配置集中在独立的偏好设置窗口。
 
 The workspace follows [Emil Kowalski’s design-engineering guidance](https://github.com/emilkowalski/skills/tree/main/skills/emil-design-eng): consistent control states, clear task hierarchy, and instant keyboard navigation.
 界面参考 [Emil Kowalski 的设计工程技能](https://github.com/emilkowalski/skills/tree/main/skills/emil-design-eng)，统一控件状态与任务层级，键盘切换直接响应。
@@ -1547,8 +1547,8 @@ python -m unittest discover -s tests -v
 GUI tests require a graphical display and explicitly skip when none is available. API tests use simulated responses rather than real model requests or GitHub uploads. Tests cover translation, arbitration, proofreading, output protection, OCR handoff, upload conditions, small-window layout, guided GitHub setup and read-only checks, adaptive bilingual labels, and release-version consistency. Windows EXE construction still requires a Windows build environment.
 GUI 测试需要图形显示，无显示时会明确跳过。API 测试使用模拟响应，不调用真实模型或上传到真实 GitHub 仓库。测试覆盖翻译、裁决、校对、输出保护、OCR 衔接、上传条件、小窗口布局、GitHub 引导设置与只读检查、自适应双语标签和发布版本一致性；Windows EXE 构建仍须在 Windows 环境验证。
 
-Headless Linux CI uses Xvfb and prints thread stacks every 60 seconds. Its test process has a six-minute limit; failures include the last test and stack in check annotations. Layout regressions explicitly exercise 96/100 DPI; unexpected dialogs fail immediately, and simulated running-task state is restored even after a failed assertion.  
-Linux 无界面 CI 使用 Xvfb，每 60 秒输出线程栈，测试进程最多运行六分钟；失败时通过检查注释保留最后用例和线程栈。布局回归显式覆盖 96／100 DPI；未预期弹窗直接使布局用例失败，断言失败后也会恢复模拟任务状态。
+Headless Linux CI uses Xvfb and prints thread stacks every 60 seconds. Its test process has a six-minute limit; failures include the last test and stack in check annotations. Each Windows test group has a two-minute watchdog that records the stack and ends a stalled group; remaining groups still run and failures are reported together. Layout regressions explicitly exercise 96/100 DPI; unexpected dialogs fail immediately, and simulated running-task state is restored even after a failed assertion.  
+Linux 无界面 CI 使用 Xvfb，每 60 秒输出线程栈，测试进程最多运行六分钟；失败时通过检查注释保留最后用例和线程栈。Windows 每组测试设有两分钟超时保护，停滞时保留线程栈并结束该组，其余组继续执行后统一报告失败。布局回归显式覆盖 96／100 DPI；未预期弹窗直接使布局用例失败，断言失败后也会恢复模拟任务状态。
 
 
 Local-update tests also cover source ZIP validation without execution, dependency/module checks, corrupt packages, cancellation, startup records, source-module precedence, task guards and configuration preservation. Online-update tests cover pinned commits, release-package preference, HTTPS redirects, download fingerprints, size/version mismatch and cleanup; manual-upload tests cover role filtering, complete remote trees, legacy fingerprints, changed files, cancellation and compact bilingual layouts. Formatting tests cover single-pass generation, independent checks, protected blocks, content changes, shared connections, override/cancel, wheel events and conditional draft choices. To reproduce the opt-in native onefile probe, use an environment with Nuitka 2.7.12 and its build dependencies, then run:  

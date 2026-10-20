@@ -158,6 +158,20 @@ class ResponsiveLayoutTests(unittest.TestCase):
 
 
 class ScaledLogLayoutTests(unittest.TestCase):
+    def assert_log_fits(self, app, dpi, locale):
+        shell = app.workspace_layout
+        widgets = {"root": app.root, "navigation": shell.rail, "header": shell.header,
+                   "toolbar": shell.toolbar, "actions": shell.actions, "panes": app.workspace_panes,
+                   "document": app.notebook, "log_header": shell.log_header,
+                   "log_frame": shell.log_frame, "log_text": app.log_text}
+        geometry = {name: (widget.winfo_width(), widget.winfo_height(), widget.winfo_reqheight())
+                    for name, widget in widgets.items()}
+        diagnostic = f"DPI={dpi}, locale={locale}, minsize={app.root.minsize()}, width/height/reqheight={geometry}"
+        self.assertGreaterEqual(app.log_text.winfo_height(), 40, diagnostic)
+        self.assertGreaterEqual(app.notebook.winfo_height(), 64, diagnostic)
+        self.assertLessEqual(app.log_text.winfo_rooty() + app.log_text.winfo_height(),
+                             app.root.winfo_rooty() + app.root.winfo_height(), diagnostic)
+
     def test_log_and_task_viewport_fit_at_96_and_100_dpi(self):
         for dpi in (96, 100):
             with self.subTest(dpi=dpi):
@@ -177,16 +191,64 @@ class ScaledLogLayoutTests(unittest.TestCase):
                             app.change_ui_language(locale)
                             root.geometry('540x420')
                             root.update()
-                            self.assertGreaterEqual(app.log_text.winfo_height(), 40)
-                            self.assertGreaterEqual(app.notebook.winfo_height(), 64)
-                            self.assertLessEqual(app.log_text.winfo_rooty() + app.log_text.winfo_height(),
-                                                 root.winfo_rooty() + root.winfo_height())
+                            self.assert_log_fits(app, dpi, locale)
                 finally:
                     for timer in root.tk.call('after', 'info'):
                         root.tk.call("after", "cancel", timer)
                     root.tk.call('tk', 'scaling', previous_scaling)
                     root.destroy()
                     set_language('zh')
+
+    def test_extra_toolbar_row_reserves_log_space_and_minimum_recovers_after_resize(self):
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            raise unittest.SkipTest(str(exc))
+        previous_scaling = root.tk.call("tk", "scaling")
+        try:
+            root.tk.call("tk", "scaling", 100 / 72)
+            application.configure_unicode_ui_fonts(root)
+            application.configure_design_language(root)
+            with patch.object(application, "load_config", return_value=application.AppConfig(token="")), \
+                    patch.object(application, "save_config"):
+                app = application.PaddleOCRBatchGUI(root)
+                shell = app.workspace_layout
+                style = ttk.Style(root)
+                original_font = style.lookup("Tool.TButton", "font")
+                # A slightly wider native font is enough to add a toolbar row.
+                # Exercise this on Linux too, rather than relying on Windows CI.
+                style.configure("Tool.TButton", font=(shell.family, 10))
+                for locale in ("zh", "en"):
+                    app.change_ui_language(locale)
+                    root.geometry("540x420")
+                    root.update()
+                    self.assert_log_fits(app, 100, locale)
+                    self.assertTrue(shell.compact)
+                    self.assertEqual(len(shell.toolbar.buttons), 8)
+                    for button in shell.toolbar.buttons:
+                        self.assertTrue(button.winfo_viewable())
+                self.assertGreater(root.minsize()[1], 420)
+                root.geometry("1100x820")
+                root.update()
+                self.assertFalse(shell.compact)
+                self.assertEqual(root.minsize(), (540, 420))
+                style.configure("Tool.TButton", font=original_font)
+                root.geometry("680x420")
+                root.update()
+                self.assertTrue(shell.compact)
+                self.assertEqual(root.minsize(), (540, 420))
+                self.assert_log_fits(app, 100, "en")
+                with patch.object(root, "minsize", wraps=root.minsize) as minimum:
+                    for _ in range(5):
+                        shell.constrain_panes()
+                        root.update()
+                    self.assertFalse(any(call.args for call in minimum.call_args_list))
+        finally:
+            for timer in root.tk.call("after", "info"):
+                root.tk.call("after", "cancel", timer)
+            root.tk.call("tk", "scaling", previous_scaling)
+            root.destroy()
+            set_language("zh")
 
 
 if __name__ == '__main__':

@@ -237,6 +237,7 @@ class WorkspaceLayout:
         self.app, self.root = app, app.root
         self.family = tkfont.nametofont("TkDefaultFont").actual("family")
         self.compact = None
+        self.base_minimum = self.root.minsize()
         self.settings = None
         self.forms = []
         self.form_columns = {}
@@ -564,6 +565,7 @@ class WorkspaceLayout:
         app.workspace_panes.add(self.log_frame, minsize=86, height=155, stretch="never")
         self.log_header = tk.Frame(self.log_frame, bg=COLORS["log"])
         self.log_header.grid(row=0, column=0, sticky="ew", padx=16, pady=7)
+        self.log_header.bind("<Configure>", self.constrain_panes, add="+")
         self.log_header.columnconfigure(1, weight=1)
         self.log_header.columnconfigure(2, weight=1)
         tk.Label(self.log_header, text=tr('运行日志'), bg=COLORS["log"], fg="#adbcaf", font=(self.family, 9),
@@ -678,17 +680,30 @@ class WorkspaceLayout:
         panes = self.app.workspace_panes
         if len(panes.panes()) < 2:
             return
+        # Tool labels can need an extra row on another platform/font/DPI. Give
+        # that row real window space instead of stealing the log's text area.
+        required_log = max(92, self.log_header.winfo_reqheight() + 14 + 8 + 40)
+        sash = int(panes.cget("sashwidth")) + 2 * int(panes.cget("sashpad"))
+        required_content = 64 + required_log + sash
+        minimum_height = self.base_minimum[1]
+        if self.compact:
+            fixed_height = (self.rail.winfo_reqheight() + self.header.winfo_reqheight()
+                            + self.actions.winfo_reqheight())
+            minimum_height = max(minimum_height, fixed_height + required_content)
+        minimum_window = (self.base_minimum[0], minimum_height)
+        if self.root.minsize() != minimum_window:
+            self.root.minsize(*minimum_window)
         height = panes.winfo_height()
-        if height < 100:
+        if height < required_content:
+            # minsize changes are applied by Tk's next geometry pass.
             return
         # Header/button font metrics vary with Tk DPI. Reserve actual text space.
-        required_log = self.log_header.winfo_reqheight() + 14 + 8 + 40
-        log_minimum = min(max(92, required_log), max(42, height - 70))
-        minimum = min(220, max(64, int(height * .30)), height - log_minimum - 6)
+        log_minimum = required_log
+        minimum = min(220, max(64, int(height * .30)), height - log_minimum - sash)
         panes.paneconfigure(self.app.notebook, minsize=minimum)
         panes.paneconfigure(self.log_frame, minsize=log_minimum)
         top = panes.sash_coord(0)[1]
-        bounded = min(max(top, minimum), max(minimum, height - log_minimum - 6))
+        bounded = min(max(top, minimum), max(minimum, height - log_minimum - sash))
         if bounded != top:
             panes.sash_place(0, 0, bounded)
 
