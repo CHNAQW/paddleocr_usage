@@ -120,6 +120,14 @@ class OCRIntegrationTests(unittest.TestCase):
 
 
 class DesktopLayoutTests(unittest.TestCase):
+    def setUp(self):
+        # An unexpected modal must fail the case, not wait forever in headless CI.
+        for name in ("showinfo", "showwarning", "showerror", "askyesno"):
+            guard = patch.object(application.messagebox, name,
+                side_effect=AssertionError("Unexpected modal dialog: " + name))
+            guard.start()
+            self.addCleanup(guard.stop)
+
     @classmethod
     def setUpClass(cls):
         try:
@@ -438,19 +446,21 @@ class DesktopLayoutTests(unittest.TestCase):
 
     def test_running_page_and_split_progress_do_not_push_logs_out_of_small_window(self):
         self.root.geometry("540x420")
-        self.app.worker_thread = Mock()
-        self.app.worker_thread.is_alive.return_value = True
-        self.app.page_progress_text_var.set("当前文件页数进度：128/900 页，14.22%")
-        self.app.page_progress_var.set(14.22)
-        self.app.split_progress_text_var.set("大文件分段进度：当前文件已处理 1/12 段")
-        self.app.split_progress_label.grid()
-        self.root.update()
-        self.assertGreaterEqual(self.app.log_text.winfo_height(), 40)
-        self.assertLessEqual(self.app.log_text.winfo_rooty() + self.app.log_text.winfo_height(),
-                             self.root.winfo_rooty() + self.root.winfo_height())
-        self.app.worker_thread = None
-        self.app.page_progress_var.set(0)
-        self.app.split_progress_label.grid_remove()
+        previous_worker = self.app.worker_thread
+        try:
+            self.app.worker_thread = Mock(is_alive=Mock(return_value=True))
+            self.app.page_progress_text_var.set("当前文件页数进度：128/900 页，14.22%")
+            self.app.page_progress_var.set(14.22)
+            self.app.split_progress_text_var.set("大文件分段进度：当前文件已处理 1/12 段")
+            self.app.split_progress_label.grid()
+            self.root.update()
+            self.assertGreaterEqual(self.app.log_text.winfo_height(), 40)
+            self.assertLessEqual(self.app.log_text.winfo_rooty() + self.app.log_text.winfo_height(),
+                                 self.root.winfo_rooty() + self.root.winfo_height())
+        finally:
+            self.app.worker_thread = previous_worker
+            self.app.page_progress_var.set(0)
+            self.app.split_progress_label.grid_remove()
 
     def test_keyboard_navigation_and_long_values_keep_actions_reachable(self):
         self.root.geometry("640x480")

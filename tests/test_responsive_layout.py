@@ -131,5 +131,37 @@ class ResponsiveLayoutTests(unittest.TestCase):
             wizard.close()
 
 
+class ScaledLogLayoutTests(unittest.TestCase):
+    def test_log_and_task_viewport_fit_at_96_and_100_dpi(self):
+        for dpi in (96, 100):
+            with self.subTest(dpi=dpi):
+                try:
+                    root = tk.Tk()
+                except tk.TclError as exc:
+                    raise unittest.SkipTest(str(exc))
+                previous_scaling = root.tk.call('tk', 'scaling')
+                try:
+                    root.tk.call('tk', 'scaling', dpi / 72)
+                    application.configure_unicode_ui_fonts(root)
+                    application.configure_design_language(root)
+                    with patch.object(application, 'load_config', return_value=application.AppConfig(token='')), \
+                            patch.object(application, 'save_config'):
+                        app = application.PaddleOCRBatchGUI(root)
+                        for locale in ('zh', 'en'):
+                            app.change_ui_language(locale)
+                            root.geometry('540x420')
+                            root.update()
+                            self.assertGreaterEqual(app.log_text.winfo_height(), 40)
+                            self.assertGreaterEqual(app.notebook.winfo_height(), 64)
+                            self.assertLessEqual(app.log_text.winfo_rooty() + app.log_text.winfo_height(),
+                                                 root.winfo_rooty() + root.winfo_height())
+                finally:
+                    for timer in root.tk.call('after', 'info'):
+                        root.after_cancel(timer)
+                    root.tk.call('tk', 'scaling', previous_scaling)
+                    root.destroy()
+                    set_language('zh')
+
+
 if __name__ == '__main__':
     unittest.main()

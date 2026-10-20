@@ -653,7 +653,9 @@ class WorkspaceLayout:
         height = panes.winfo_height()
         if height < 100:
             return
-        log_minimum = min(92, max(42, height - 70))
+        # Header/button font metrics vary with Tk DPI. Reserve actual text space.
+        required_log = self.log_header.winfo_reqheight() + 14 + 8 + 40
+        log_minimum = min(max(92, required_log), max(42, height - 70))
         minimum = min(220, max(64, int(height * .30)), height - log_minimum - 6)
         panes.paneconfigure(self.app.notebook, minsize=minimum)
         panes.paneconfigure(self.log_frame, minsize=log_minimum)
@@ -711,7 +713,9 @@ class WorkspaceLayout:
             self.workspace.grid(row=1, column=0, columnspan=2, sticky="nsew")
             self.title.configure(font=(self.family, 17, "bold"))
             self.subtitle.grid_remove()
-            self.header.configure(padding=(20, 8, 20, 8))
+            self.header.configure(padding=(20, 6, 20, 6))
+            self.toolbar.grid_configure(pady=(6, 0))
+            self.actions.configure(padding=(20, 8, 20, 8))
             self.app.workspace_panes.paneconfigure(self.log_frame, height=100)
         else:
             self.root.columnconfigure(0, weight=0, minsize=rail_width)
@@ -742,6 +746,8 @@ class WorkspaceLayout:
             self.title.configure(font=(self.family, 23, "bold"))
             self.subtitle.grid()
             self.header.configure(padding=(24, 16, 20, 8))
+            self.toolbar.grid_configure(pady=(10, 0))
+            self.actions.configure(padding=(20, 10, 20, 12))
             self.app.workspace_panes.paneconfigure(self.log_frame, height=155)
         for _, files, options, service in self.forms:
             for box in (files, options, service):
