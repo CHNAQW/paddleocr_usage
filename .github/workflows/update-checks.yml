@@ -36,7 +36,7 @@ jobs:
           $patterns = @('test_windows_update_helper.py', 'test_update_cleanup.py', 'test_update_ui.py', 'test_task_runtime.py', 'test_application_runtime.py', 'test_job_recovery.py', 'test_copy_ui.py', 'test_advanced_settings.py', 'test_desktop_performance.py', 'test_responsive_layout.py', 'test_force_auto.py', 'test_freeze_ui.py')
           $failure = 0
           foreach ($pattern in $patterns) {
-            $output = & python -m unittest discover -s tests -p $pattern -v 2>&1 | Out-String
+            $output = & python -u -c "import faulthandler, sys, unittest; faulthandler.dump_traceback_later(120, exit=True); unittest.main(module=None, argv=['unittest', 'discover', '-s', 'tests', '-p', sys.argv[1], '-v'])" $pattern 2>&1 | Out-String
             $testExit = $LASTEXITCODE
             Write-Output $output
             if ($testExit -ne 0) {
