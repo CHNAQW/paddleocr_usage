@@ -261,8 +261,10 @@ def copyable_notice(title="", message="", *, detail="", parent=None, **_options)
     dialog.bind("<Escape>", lambda _event: dialog.destroy())
     dialog.bind("<Return>", lambda _event: dialog.destroy())
     localize_widgets(dialog)
+    dialog.deiconify()
+    dialog.lift()
     dialog.grab_set()
-    body.focus_set()
+    body.focus_force()
     try:
         dialog.wait_window()
     finally:

@@ -1,6 +1,17 @@
 """Reviewed English captions and messages. Chinese strings are stable message IDs."""
 
 EN_MESSAGES = {
+    "仍有网络请求正在结束，请稍后重试。": "Previous network requests are still finishing. Try again shortly.",
+    'GitHub 分页结果重复或过多，已停止读取，请缩小范围后重试。': 'GitHub returned repeated or excessive pages. Narrow the scope and try again.',
+    '请求超时，已停止等待；可稍后重试。': 'The request timed out. Try again later.',
+    '全自动处理失败：{arg0}；尝试 {arg1}/2；{arg2}': 'Automatic processing failed: {arg0}; attempt {arg1}/2; {arg2}',
+    '后台事件处理失败：{arg0}': 'Could not handle a background event: {arg0}',
+    '后台任务失败：{arg0}': 'Background task failed: {arg0}',
+    '启用文本校对、模型裁决及修订授权；疑点由模型决定。失败最多尝试两次，保留待处理稿并继续，不弹人工选择。': 'Enables proofreading, model decisions and revision permission. Models resolve findings. Failed operations get at most two attempts; pending drafts are kept and processing continues without a decision dialog.',
+    '强制全自动（无需人工裁决）': 'Fully automatic (no manual decisions)',
+    '日志过长，界面已截短；复制日志可查看保留的完整消息。': 'This log entry is shortened on screen. Copy the log to read the complete retained message.',
+    '正在后台扫描或检查文件……': 'Scanning or checking files in the background…',
+    '预览已截短；使用复制全文查看完整内容。': 'Preview shortened. Use Copy all to read the complete text.',
     '启动时自动检查更新': 'Check for updates at startup',
     '默认关闭。启用后按所选渠道在启动时检查一次；仅提示新版，下载和安装仍需手动确认。': 'Off by default. When enabled, check the selected channel once at startup. Download and installation require your confirmation.',
     '来源固定为 CHNAQW/paddleocr_usage。可检查最新 Release 或 main 分支；main 代码可能尚未经过正式发布验证。': 'Updates come from CHNAQW/paddleocr_usage. Choose the latest release or main branch; main may contain changes awaiting release validation.',
@@ -119,7 +130,7 @@ EN_MESSAGES = {
     "请等待当前 OCR / 翻译任务完成。": "Wait for the current OCR or translation task to finish.",
     "没有发现待处理的 .md 文件。": "No .md files found to process.",
     "无法开始翻译": "Could not start translation",
-    "已请求停止；等待当前 API 请求返回后退出。": "Stop requested. Waiting for the current API request to return.",
+    "已请求停止；正在结束等待，不再处理后续文件。": "Stop requested. Ending the current wait; no further files will be processed.",
     "用户已停止。": "Stopped by the user.",
     "未上传（尚未核验通过）：{arg0}": "Not uploaded (not verified): {arg0}",
     "GitHub 上传成功：{arg0}": "Uploaded to GitHub: {arg0}",

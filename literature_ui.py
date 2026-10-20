@@ -7,6 +7,8 @@ import os
 import queue
 import threading
 import tkinter as tk
+from task_runtime import drain_events
+
 from dataclasses import asdict
 from pathlib import Path
 from tkinter import ttk
@@ -169,6 +171,8 @@ class LiteratureControls:
         self.app, self.page = app, page
         self.events = queue.Queue()
         self.thread = None
+        self.closed = False
+        self.pending = None
         self.snapshot = None
         self.cancel_event = threading.Event()
         saved = app.config.literature if isinstance(app.config.literature, dict) else {}
@@ -196,6 +200,7 @@ class LiteratureControls:
         self.proofreading = tk.BooleanVar(value=saved.get("proofreading", False))
         self.arbitration = ChoiceVar(value=saved.get("arbitration", "用户自行裁决"))
         self.allow_arbiter_revision = tk.BooleanVar(value=saved.get("allow_arbiter_revision", False))
+        self.force_auto = tk.BooleanVar(value=saved.get("force_auto") is True)
         self.input_percent = tk.StringVar(value=str(saved.get("input_percent", 50)))
         self.upload = tk.BooleanVar(value=saved.get("upload", False))
         self.upload_kind = ChoiceVar(value=saved.get("upload_kind", "同时上传"))
@@ -213,7 +218,16 @@ class LiteratureControls:
         self.sync_llm_service()
         for variable in (self.input, self.output, self.same_folder):
             variable.trace_add("write", lambda *_: self.app.workspace_layout.sync_output())
-        self.app.root.after(100, self.poll)
+        self.force_auto.trace_add("write", self.sync_automatic)
+        self.sync_automatic()
+        self.pending = self.app.root.after(100, self.poll)
+        self.app.root.bind("<Destroy>", self.cleanup, add="+")
+
+    def sync_automatic(self, *_):
+        if self.force_auto.get():
+            self.proofreading.set(True)
+            self.arbitration.set("大模型裁决")
+            self.allow_arbiter_revision.set(True)
 
     def _build(self, saved, fetch, test):
         from workspace_ui import build_translation_page
@@ -237,7 +251,7 @@ class LiteratureControls:
                 "same_folder": self.same_folder.get(), "recursive": self.recursive.get(), "filename_position": self.prefix.get(),
                 "source": self.source.get(), "target": self.target.get(), "secondary": self.secondary.get(),
                 "proofreading": self.proofreading.get(), "arbitration": self.arbitration.get(), "upload": self.upload.get(),
-                "allow_arbiter_revision": self.allow_arbiter_revision.get(),
+                "allow_arbiter_revision": self.allow_arbiter_revision.get(), "force_auto": self.force_auto.get(),
                 "repository": self.repository.get(), "branch": self.branch.get(), "folder": self.folder.get(),
                 "upload_kind": self.upload_kind.get(), "upload_root": self.upload_root.get()}
         data["input_percent"] = self.chunk_percent()
@@ -254,7 +268,9 @@ class LiteratureControls:
         return int(value)
 
     def busy(self):
-        return bool(self.thread and self.thread.is_alive()) or bool(getattr(self, "formatting", None) and self.formatting.busy)
+        manual = getattr(self.app, "manual_check_thread", None)
+        preparing_ocr = "pdf_prepare" in getattr(self.app, "background_jobs", {})
+        return preparing_ocr or bool(self.thread and self.thread.is_alive()) or bool(manual and manual.is_alive()) or bool(getattr(self, "formatting", None) and self.formatting.busy)
 
     def open_formatting(self):
         if self.formatting is None:
@@ -337,35 +353,39 @@ class LiteratureControls:
             raise ValueError(tr('请选择译文输出文件夹，或勾选输出到原文文件夹。'))
         return {"profiles": profiles, "options": TranslationOptions(self.target.get().strip(), self.source.get().strip() or "自动检测",
                     self.secondary.get(), self.proofreading.get(), self.arbitration.get(), self.chunk_percent(),
-                    allow_arbiter_revision=self.allow_arbiter_revision.get()),
+                    allow_arbiter_revision=self.allow_arbiter_revision.get(), force_auto=self.force_auto.get()),
                 "output": None if self.same_folder.get() else Path(self.output.get()).expanduser().resolve(),
                 "prefix": self.prefix.get().startswith("前缀"), "github": github,
-                "auto_translate": self.auto_translate.get(), "upload_kind": self.upload_kind.get()}
+                "auto_translate": self.auto_translate.get(), "upload_kind": self.upload_kind.get(), "force_auto": self.force_auto.get()}
 
-    def input_paths(self):
-        if not self.input.get().strip() or not Path(self.input.get()).is_dir():
+    def input_paths(self, settings=None):
+        source, recursive, target = settings if settings is not None else self.path_settings()
+        if not source or not Path(source).is_dir():
             raise ValueError(tr('请选择有效的 Markdown 输入文件夹。'))
-        root = Path(self.input.get()).expanduser().resolve()
-        output = None if self.same_folder.get() or not self.output.get().strip() else Path(self.output.get()).expanduser().resolve()
-        return root, find_markdown_files(root, self.recursive.get(), output)
+        root = Path(source).expanduser().resolve()
+        output = Path(target).expanduser().resolve() if target else None
+        return root, find_markdown_files(root, recursive, output)
+
+    def path_settings(self):
+        return self.input.get().strip(), self.recursive.get(), None if self.same_folder.get() else self.output.get().strip()
 
     def scan(self):
-        try:
-            _, paths = self.input_paths()
-            messagebox.showinfo(tr('扫描完成'), tr('发现 {arg0} 个待检测的 Markdown 文件。', arg0=len(paths)), parent=self.app.root)
-        except Exception as exc:
-            messagebox.showerror(tr('扫描失败'), str(exc), parent=self.app.root)
+        settings = self.path_settings()
+        self.status.set(tr("正在后台扫描或检查文件……"))
+        def finished(result):
+            message = tr('发现 {arg0} 个待检测的 Markdown 文件。', arg0=len(result[1]))
+            self.status.set(message)
+            self.log(message)
+        self.app.run_background("md_scan", lambda: self.input_paths(settings), finished)
 
     def start(self):
         if self.busy() or (self.app.worker_thread and self.app.worker_thread.is_alive()):
             messagebox.showwarning(tr('正在运行'), tr('请等待当前 OCR / 翻译任务完成。'), parent=self.app.root)
             return
         try:
-            root, paths = self.input_paths()
+            settings = self.path_settings()
             snapshot = self.make_snapshot()
             self.app.save_current_config()
-            if not paths:
-                raise ValueError(tr('没有发现待处理的 .md 文件。'))
         except Exception as exc:
             messagebox.showerror(tr('无法开始翻译'), str(exc), parent=self.app.root)
             return
@@ -375,7 +395,16 @@ class LiteratureControls:
         self.app.workspace_layout.translation_stop.configure(state="normal")
         self.start_button.configure(state="disabled")
         self.app.start_btn.configure(state="disabled")
-        self.thread = threading.Thread(target=self.worker, args=(root, paths, snapshot), daemon=True)
+        def worker():
+            try:
+                root, paths = self.input_paths(settings)
+                if not paths:
+                    raise ValueError(tr('没有发现待处理的 .md 文件。'))
+                self.worker(root, paths, snapshot)
+            except Exception as exc:
+                self.events.put(("done", tr("后台任务失败：{arg0}", arg0=exc)))
+        self.active_snapshot = snapshot
+        self.thread = threading.Thread(target=worker, daemon=True)
         self.thread.start()
 
     def stop(self):
@@ -384,10 +413,10 @@ class LiteratureControls:
             self.formatting.cancel.set()
         if self.app.worker_thread and self.app.worker_thread.is_alive():
             self.app.stop_requested = True
-        self.status.set(tr('已请求停止；等待当前 API 请求返回后退出。'))
+        self.status.set(tr('已请求停止；正在结束等待，不再处理后续文件。'))
 
     def stopped(self):
-        return self.cancel_event.is_set() or self.app.stop_requested
+        return getattr(self, "closed", False) or self.cancel_event.is_set() or self.app.stop_requested
 
     def log(self, text):
         self.app.log_queue.put(("log", text))
@@ -403,14 +432,21 @@ class LiteratureControls:
                 continue
         raise ProcessingCancelled(tr('用户已停止。'))
 
-    def run_with_issue_dialog(self, path, work, stop=None):
+    def run_with_issue_dialog(self, path, work, stop=None, automatic=False):
         stopped = stop or self.stopped
+        attempts = 0
         while not stopped():
+            attempts += 1
             try:
                 return work()
             except ProcessingCancelled:
                 raise
             except Exception as exc:
+                if automatic:
+                    self.log(tr("全自动处理失败：{arg0}；尝试 {arg1}/2；{arg2}", arg0=path.name, arg1=attempts, arg2=exc))
+                    if attempts < 2:
+                        continue
+                    raise
                 try:
                     source = path.read_text(encoding="utf-8-sig")
                 except (OSError, UnicodeError):
@@ -441,7 +477,7 @@ class LiteratureControls:
     def process(self, path, root, snapshot, upstream_ok=True):
         destination = translated_path(path, root, snapshot["output"], snapshot["prefix"])
         result = translate_document(path, destination, snapshot["options"],
-            **snapshot["profiles"], decide=self.decide, stop=self.stopped, log=self.log)
+            **snapshot["profiles"], decide=None if snapshot.get("force_auto") else self.decide, stop=self.stopped, log=self.log)
         labels = {"verified": tr('核验通过'), "needs_review": tr('核验尚未通过，请查看检查报告'), "unverified": tr('未启用质量检查'),
                   "target_language": tr('已是目标语言，跳过'), "existing": tr('译文已存在，跳过')}
         if result["status"] == "needs_review":
@@ -479,9 +515,10 @@ class LiteratureControls:
                 if isinstance(value, dict):
                     return bool(value.get("qualityWarning")) or any(warning(v) for v in value.values())
                 return isinstance(value, list) and any(warning(v) for v in value)
-            self.run_with_issue_dialog(path, lambda: self.process(path, root, snapshot, upstream_ok=not warning(raw_data)))
+            self.run_with_issue_dialog(path, lambda: self.process(path, root, snapshot, upstream_ok=not warning(raw_data)), automatic=snapshot.get("force_auto", False))
 
     def worker(self, root, paths, snapshot):
+        self.active_snapshot = snapshot
         counts = {"verified": 0, "needs_review": 0, "unverified": 0, "target_language": 0, "existing": 0, "failed": 0}
         stopped = False
         try:
@@ -492,7 +529,7 @@ class LiteratureControls:
                 self.events.put(("status", tr('正在处理 {arg0}/{arg1}：{arg2}', arg0=index, arg1=len(paths), arg2=path.name)))
                 self.events.put(("progress", (index - 1, len(paths))))
                 try:
-                    result = self.run_with_issue_dialog(path, lambda: self.process(path, root, snapshot))
+                    result = self.run_with_issue_dialog(path, lambda: self.process(path, root, snapshot), automatic=snapshot.get("force_auto", False))
                     counts[result["status"]] += 1
                 except ProcessingCancelled:
                     stopped = True
@@ -551,7 +588,10 @@ class LiteratureControls:
             frame.columnconfigure(0, weight=1)
             body = tk.Text(frame, wrap="word", background=ttk.Style(frame).lookup("TFrame", "background"),
                            foreground=ttk.Style(frame).lookup("TLabel", "foreground"))
-            body.insert("1.0", text)
+            preview = str(text)
+            if len(preview) > 100000:
+                preview = preview[:100000] + "\n" + str(tr("预览已截短；使用复制全文查看完整内容。"))
+            body.insert("1.0", preview)
             body.configure(state="disabled")
             body.grid(row=0, column=0, sticky="nsew")
             scrollbar = ttk.Scrollbar(frame, command=body.yview)
@@ -592,8 +632,7 @@ class LiteratureControls:
 
     def poll(self):
         try:
-            while True:
-                kind, payload = self.events.get_nowait()
+            for kind, payload in drain_events(self.events):
                 if kind == "decision":
                     self.decision_dialog(*payload)
                 elif kind == "status":
@@ -609,7 +648,8 @@ class LiteratureControls:
                     self.start_button.configure(state="normal")
                     self.app.workspace_layout.translation_stop.configure(state="disabled")
                     self.app.start_btn.configure(state="normal")
-                    messagebox.showinfo(tr('文献处理'), payload, parent=self.app.root)
+                    if not getattr(self, "active_snapshot", {}).get("force_auto"):
+                        messagebox.showinfo(tr('文献处理'), payload, parent=self.app.root)
                 elif kind == "profile_result":
                     controls, testing, result, error, requested = payload
                     if not controls.box.winfo_exists():
@@ -636,7 +676,19 @@ class LiteratureControls:
                         self.log(tr('已拉取 {arg0} 个模型。', arg0=len(result)))
         except queue.Empty:
             pass
-        self.app.root.after(100, self.poll)
+        except Exception as exc:
+            self.log(tr("后台事件处理失败：{arg0}", arg0=exc))
+        if not self.closed:
+            self.pending = self.app.root.after(100, self.poll)
+
+    def cleanup(self, event):
+        if event.widget != self.app.root:
+            return
+        self.closed = True
+        self.cancel_event.set()
+        if self.pending:
+            self.app.root.after_cancel(self.pending)
+            self.pending = None
 
 
 class MarkdownFormatting:
@@ -780,30 +832,35 @@ class MarkdownFormatting:
                 "recursive": self.recursive.get(), "filename_position": self.prefix.get(),
                 **{key: model.config_data() for key, model in self.models.items()}}
 
-    def paths(self):
+    def path_settings(self):
+        return self.input.get().strip(), self.same_folder.get(), self.output.get().strip(), self.recursive.get()
+
+    def paths(self, settings=None):
         from literature_processing import find_formatting_files
-        if not self.input.get().strip():
+        source_value, same_folder, output_value, recursive = settings if settings is not None else self.path_settings()
+        if not source_value:
             raise ValueError(tr("请选择有效的 Markdown 文件或文件夹。"))
-        source = Path(self.input.get()).expanduser().resolve()
+        source = Path(source_value).expanduser().resolve()
         output = None
-        if not self.same_folder.get():
-            if not self.output.get().strip():
+        if not same_folder:
+            if not output_value:
                 raise ValueError(tr("请选择整理稿输出文件夹。"))
-            output = Path(self.output.get()).expanduser().resolve()
+            output = Path(output_value).expanduser().resolve()
             if output.exists() and not output.is_dir():
                 raise ValueError(tr("请选择整理稿输出文件夹。"))
         if source.is_file() and source.suffix.lower() == ".md":
             return source.parent, [source], output
         if source.is_dir():
-            return source, find_formatting_files(source, self.recursive.get(), output), output
+            return source, find_formatting_files(source, recursive, output), output
         raise ValueError(tr("请选择有效的 Markdown 文件或文件夹。"))
 
     def scan(self):
-        try:
-            _, paths, _ = self.paths()
-            self.status.set(tr("发现 {arg0} 个可整理 Markdown；原文和译文均可，跳过已有整理稿。", arg0=len(paths)))
-        except Exception as exc:
-            self.status.set(tr("扫描失败：{arg0}", arg0=exc))
+        settings = self.path_settings()
+        self.status.set(tr("正在后台扫描或检查文件……"))
+        def finished(result):
+            if not self.closed:
+                self.status.set(tr("发现 {arg0} 个可整理 Markdown；原文和译文均可，跳过已有整理稿。", arg0=len(result[1])))
+        self.app.run_background("format_scan", lambda: self.paths(settings), finished)
 
     def start(self):
         from literature_processing import formatted_path, format_markdown_document
@@ -811,13 +868,15 @@ class MarkdownFormatting:
             messagebox.showwarning(tr("正在运行"), tr("请等待 OCR、翻译或整理任务结束。"), parent=self.window)
             return
         try:
-            root, paths, output = self.paths()
-            if not paths:
-                raise ValueError(tr("没有发现待整理的 Markdown。"))
+            settings = self.path_settings()
             models = {key: model.profile() for key, model in self.models.items()}
             for profile in models.values():
                 profile.validate()
             percent, prefix = self.owner.chunk_percent(), self.prefix.get().startswith("前缀")
+            automatic = self.owner.force_auto.get()
+            arbiter = self.owner.profiles["arbiter"].profile() if automatic else None
+            if arbiter:
+                arbiter.validate()
             self.app.save_current_config()
         except Exception as exc:
             messagebox.showerror(tr("无法开始整理"), str(exc), parent=self.window)
@@ -834,6 +893,9 @@ class MarkdownFormatting:
             counts = {"verified": 0, "needs_review": 0, "existing": 0, "failed": 0}
             stopped = False
             try:
+                root, paths, output = self.paths(settings)
+                if not paths:
+                    raise ValueError(tr("没有发现待整理的 Markdown。"))
                 for index, path in enumerate(paths, 1):
                     if self.cancel.is_set():
                         stopped = True
@@ -844,7 +906,8 @@ class MarkdownFormatting:
                         result = self.owner.run_with_issue_dialog(path,
                             lambda: format_markdown_document(path, destination, **models, input_percent=percent,
                                 stop=self.cancel.is_set, log=self.owner.log,
-                                decide=lambda payload: self.owner.decide(payload, self.cancel.is_set)), self.cancel.is_set)
+                                decide=None if automatic else lambda payload: self.owner.decide(payload, self.cancel.is_set),
+                                force_auto=automatic, arbiter=arbiter), self.cancel.is_set, automatic=automatic)
                         counts[result["status"]] += 1
                         label = {"verified": tr("整理核验通过"), "needs_review": tr("整理稿待核验处理"), "existing": tr("整理稿已存在，跳过")}[result["status"]]
                         self.owner.log(tr("{arg0}：{arg1}", arg0=path.name, arg1=label))
@@ -855,6 +918,9 @@ class MarkdownFormatting:
                         counts["failed"] += 1
                         self.owner.log(tr("整理失败，原文已保留：{arg0}；{arg1}", arg0=path.name, arg1=exc))
                     self.events.put(("progress", 100 * index / len(paths)))
+            except Exception as exc:
+                counts["failed"] += 1
+                self.owner.log(tr("后台任务失败：{arg0}", arg0=exc))
             finally:
                 self.events.put(("done", (counts, stopped)))
         self.thread = threading.Thread(target=worker, daemon=True)
@@ -868,8 +934,7 @@ class MarkdownFormatting:
     def poll(self):
         self.pending = None
         try:
-            while True:
-                kind, value = self.events.get_nowait()
+            for kind, value in drain_events(self.events):
                 if kind == "status":
                     self.status.set(value)
                     self.app.status_var.set(value)
@@ -889,6 +954,8 @@ class MarkdownFormatting:
                     self.owner.start_button.configure(state="normal")
         except queue.Empty:
             pass
+        except Exception as exc:
+            self.status.set(tr("后台事件处理失败：{arg0}", arg0=exc))
         self.buttons()
         if not self.closed:
             self.pending = self.root.after(100, self.poll)

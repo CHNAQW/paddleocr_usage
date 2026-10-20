@@ -175,11 +175,17 @@ def quality_controls(parent, controls):
     AdaptiveLabel(panel, text=tr("默认不授权。授权后，模型可修订翻译分歧或校对疑点，自动核验通过即采用，无需再次确认；仍有疑点时保留报告并交由用户处理。"),
                   style="Hint.TLabel").grid(row=4, column=0, sticky="ew", pady=(6, 0))
 
+    panel.automatic_button = AdaptiveCheckbutton(panel, text=tr("强制全自动（无需人工裁决）"), variable=controls.force_auto)
+    panel.automatic_button.grid(row=5, column=0, sticky="ew", pady=(8, 0))
+    AdaptiveLabel(panel, text=tr("启用文本校对、模型裁决及修订授权；疑点由模型决定。失败最多尝试两次，保留待处理稿并继续，不弹人工选择。"),
+                  style="Hint.TLabel").grid(row=6, column=0, sticky="ew", pady=(4, 0))
     def refresh(*_):
         checking = controls.secondary.get() or controls.proofreading.get()
-        panel.arbitration_combo.configure(state="readonly" if checking else "disabled")
-        panel.revision_button.configure(state="normal" if checking and controls.arbitration.get() == "大模型裁决" else "disabled")
-    traces = [(variable, variable.trace_add("write", refresh)) for variable in (controls.secondary, controls.proofreading, controls.arbitration)]
+        automatic = controls.force_auto.get()
+        panel.proofreading_button.configure(state="disabled" if automatic else "normal")
+        panel.arbitration_combo.configure(state="readonly" if checking and not automatic else "disabled")
+        panel.revision_button.configure(state="normal" if checking and controls.arbitration.get() == "大模型裁决" and not automatic else "disabled")
+    traces = [(variable, variable.trace_add("write", refresh)) for variable in (controls.secondary, controls.proofreading, controls.arbitration, controls.force_auto)]
     def cleanup(event):
         if event.widget == panel:
             for variable, trace in traces:
@@ -455,6 +461,9 @@ class WorkspaceLayout:
         group.grid(row=0, column=0, sticky="ew", padx=10, pady=8)
         group.columnconfigure(0, weight=1)
         AdaptiveCheckbutton(group, text=tr("所有 LLM 共用同一服务商与 API Key"), variable=controls.shared_llm).grid(row=0, column=0, sticky="ew", pady=6)
+        AdaptiveCheckbutton(group, text=tr("强制全自动（无需人工裁决）"), variable=controls.force_auto).grid(row=4, column=0, sticky="ew", pady=6)
+        AdaptiveLabel(group, text=tr("启用文本校对、模型裁决及修订授权；疑点由模型决定。失败最多尝试两次，保留待处理稿并继续，不弹人工选择。"),
+                      style="Subtitle.TLabel").grid(row=5, column=0, sticky="ew", pady=6)
         shared_form = ResponsiveForm(group)
         shared_form.grid(row=1, column=0, sticky="ew")
         preset = ttk.Combobox(shared_form, textvariable=controls.shared_provider, values=[tr(v) for v in PROVIDERS], state="readonly")

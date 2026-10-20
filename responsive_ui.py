@@ -273,11 +273,16 @@ class NotebookSelector(ttk.Combobox):
         titles = [self.notebook.tab(tab, "text") for tab in self.notebook.tabs()]
         if not titles:
             return
-        self.configure(values=titles)
-        self.current(self.notebook.index(self.notebook.select()))
+        if tuple(self.cget("values")) != tuple(titles):
+            self.configure(values=titles)
+        selected = self.notebook.index(self.notebook.select())
+        if self.current() != selected:
+            self.current(selected)
         font = tkfont.Font(root=self, font=ttk.Style(self).lookup("TNotebook.Tab", "font") or "TkDefaultFont")
         compact = sum(font.measure(title) + 26 for title in titles) + 12 > self.notebook.winfo_width()
-        self.notebook.configure(style="Workspace.TNotebook" if compact else "TNotebook")
+        style = "Workspace.TNotebook" if compact else "TNotebook"
+        if str(self.notebook.cget("style")) != style:
+            self.notebook.configure(style=style)
         if compact:
             self.grid()
         else:

@@ -5,12 +5,13 @@ import base64
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Callable
 from urllib.parse import quote, urlparse
 
 from ui_translations import tr
+from task_runtime import cancellable_call
 from model_budget import (BudgetExceeded, ResponseTooLong, budget_chunks, check_request,
                           effective_limits, input_budget, messages, request_size)
 
@@ -87,27 +88,32 @@ def chat(profile: ModelProfile, instruction: str, data: dict, stop=lambda: False
     if limits.output_limit and (profile.output_limit or known_deepseek):
         available = limits.context_limit - request_size(instruction, data) - 256 if limits.context_limit else limits.output_limit
         body["max_tokens"] = min(limits.output_limit, max(1, available))
-    response = requests.post(
-        profile.base_url.rstrip("/") + "/chat/completions",
-        headers={"Authorization": f"Bearer {profile.api_key.strip()}", "Content-Type": "application/json"},
-        json=body, timeout=(15, 300),
-    )
-    _cancel(stop)
-    if not response.ok:
-        # Avoid reflecting server bodies that may contain credentials or document contents.
-        raise RuntimeError(tr('大模型请求失败：HTTP {arg0}。请检查接口、模型、额度和网络。', arg0=response.status_code))
-    try:
-        choice = response.json()["choices"][0]
-        content = choice["message"]["content"]
-    except (KeyError, IndexError, TypeError, ValueError) as exc:
-        raise RuntimeError(tr('大模型响应缺少 choices[0].message.content。')) from exc
-    if choice.get("finish_reason") == "length":
-        raise ResponseTooLong(tr('大模型输出被截断或过滤，请减小分段长度或更换模型。'))
-    if choice.get("finish_reason") == "content_filter":
-        raise RuntimeError(tr('大模型输出被截断或过滤，请减小分段长度或更换模型。'))
-    if not isinstance(content, str) or not content.strip():
-        raise RuntimeError(tr('大模型返回空文本。'))
-    return content.strip()
+    def request():
+        response = requests.post(
+            profile.base_url.rstrip("/") + "/chat/completions",
+            headers={"Authorization": f"Bearer {profile.api_key.strip()}", "Content-Type": "application/json"},
+            json=body, timeout=(15, 300),
+        )
+        try:
+            if not response.ok:
+                # Avoid reflecting server bodies that may contain credentials or document contents.
+                raise RuntimeError(tr('大模型请求失败：HTTP {arg0}。请检查接口、模型、额度和网络。', arg0=response.status_code))
+            try:
+                choice = response.json()["choices"][0]
+                content = choice["message"]["content"]
+            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                raise RuntimeError(tr('大模型响应缺少 choices[0].message.content。')) from exc
+            if choice.get("finish_reason") == "length":
+                raise ResponseTooLong(tr('大模型输出被截断或过滤，请减小分段长度或更换模型。'))
+            if choice.get("finish_reason") == "content_filter":
+                raise RuntimeError(tr('大模型输出被截断或过滤，请减小分段长度或更换模型。'))
+            if not isinstance(content, str) or not content.strip():
+                raise RuntimeError(tr('大模型返回空文本。'))
+            return content.strip()
+
+        finally:
+            response.close()
+    return cancellable_call(request, stop, cancelled=ProcessingCancelled)
 
 
 def json_reply(content: str) -> dict:
@@ -179,6 +185,7 @@ class TranslationOptions:
     arbitration: str = "用户自行裁决"
     input_percent: int = 50
     allow_arbiter_revision: bool = False
+    force_auto: bool = False
 
 
 TRANSLATE_PROMPT = ("你是学术文献翻译员。把 source 全文忠实译成 target_language；"
@@ -228,6 +235,9 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
                        proofreader: ModelProfile | None = None, arbiter: ModelProfile | None = None,
                        decide=None, stop=lambda: False, log=lambda message: None) -> dict:
     """Return an auditable result. Unresolved documents are saved but never approved."""
+    if options.force_auto:
+        options = replace(options, arbitration="大模型裁决", allow_arbiter_revision=True, proofreading=True)
+        decide = None
     if destination.resolve() == source.resolve():
         raise ValueError(tr('译文不能覆盖原文。'))
     if destination.exists():
@@ -461,9 +471,9 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
         except ProcessingCancelled:
             raise
         except Exception as exc:
-            if not decide or not attempt_drafts:
+            if not attempt_drafts or (not decide and not options.force_auto):
                 raise
-            choice = decide({"filename": source.name, "chunk": position + 1, "source": original,
+            choice = "first" if options.force_auto else decide({"filename": source.name, "chunk": position + 1, "source": original,
                              **attempt_drafts, "problem": str(exc)})
             if choice == "retry":
                 continue
@@ -471,6 +481,9 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
             record = {**attempt_record, "chunk": position + 1, "verified": False,
                       "pendingReasons": list(dict.fromkeys(attempt_record.get("pendingReasons", []) + ["translation_check_failed"])),
                       "checkError": str(exc), "userDecision": choice, "candidates": dict(attempt_drafts)}
+        if options.force_auto and "userDecision" in record:
+            record["automaticDecision"] = "keep_pending"
+            record.pop("userDecision", None)
         translated.append(first)
         records.append(dict(record))
         position += 1
@@ -488,6 +501,7 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
               "arbiter": arbiter.model if model_arbitration else None,
               "arbitrationMode": options.arbitration,
               "allowArbiterRevision": options.allow_arbiter_revision is True,
+              "forceAutomatic": options.force_auto is True,
               "arbiterRevisionAuthorized": revision_authorized,
               "pendingReasons": sorted({reason for record in records for reason in record["pendingReasons"]}),
               "inputPercent": percent, "tokenEstimate": "utf8_bytes_plus_framing",
@@ -622,9 +636,22 @@ def find_formatting_files(root, recursive=True, output_root=None):
         and not (output and output != root and output in path.resolve().parents))
 
 
+FORMAT_ARBITRATE_PROMPT = (
+    '你是 Markdown 整理的最终核验裁决员。对照 source 和 formatted 检查内容、数字、引用、公式、表格及代码是否完整，'
+    '判断已有 review 是否误报。只核验，不重新整理，不返回改写文本。仍有问题或无法确认时保持待处理。'
+    '只返回 JSON：{"decision":"approve或needs_review","has_problem":true或false,"issues":["具体问题"]}。'
+    '只有内容和结构均无问题才可 approve，且 has_problem=false、issues=[]。'
+)
+
+
 def format_markdown_document(source, destination, formatter, verifier, input_percent=50,
-                             stop=lambda: False, log=lambda message: None, decide=None):
+                             stop=lambda: False, log=lambda message: None, decide=None, force_auto=False, arbiter=None):
     """One formatting response and one independent, JSON-only review per source chunk."""
+    if force_auto:
+        if arbiter is None:
+            raise ValueError(tr("请选择裁决模型。"))
+        arbiter.validate()
+        decide = None
     source, destination = Path(source), Path(destination)
     if destination.resolve() == source.resolve():
         raise ValueError(tr("整理稿不能覆盖原文。"))
@@ -642,6 +669,9 @@ def format_markdown_document(source, destination, formatter, verifier, input_per
         try:
             check_request(formatter, FORMAT_PROMPT, {"source": original}, input_percent)
             check_request(verifier, FORMAT_VERIFY_PROMPT, {"source": original, "formatted": original * 2}, input_percent)
+            if force_auto:
+                check_request(arbiter, FORMAT_ARBITRATE_PROMPT,
+                    {"source": original, "formatted": original * 2, "review": {"issues": [" " * 512]}}, input_percent)
             return True
         except BudgetExceeded:
             return False
@@ -667,6 +697,18 @@ def format_markdown_document(source, destination, formatter, verifier, input_per
                 raise
             except Exception as exc:
                 record["reviewError"] = str(exc)
+            if force_auto and not record["verified"]:
+                try:
+                    verdict = review_reply(chat(arbiter, FORMAT_ARBITRATE_PROMPT,
+                        {"source": original, "formatted": candidate, "review": dict(record)}, stop,
+                        input_percent=input_percent))
+                    record["arbitration"] = verdict
+                    record["verified"] = (verdict.get("decision") == "approve" and not verdict["has_problem"]
+                        and isinstance(verdict.get("issues"), list) and not verdict["issues"] and not record["contentIssues"])
+                except ProcessingCancelled:
+                    raise
+                except Exception as exc:
+                    record["arbitrationError"] = str(exc)
             if not record["verified"] and decide:
                 choice = decide({"filename": source.name, "chunk": index, "source": original,
                                  "first": candidate, "problem": dict(record)})
@@ -693,7 +735,8 @@ def format_markdown_document(source, destination, formatter, verifier, input_per
         "outputSHA256": hashlib.sha256(result_text.encode("utf-8")).hexdigest(),
         "formatter": formatter.model, "verifier": verifier.model, "inputPercent": input_percent,
         "formattingPasses": max(r["attempt"] for r in records), "userRetries": sum(len(r["priorAttempts"]) for r in records),
-        "verificationOnly": True, "documentRole": role, "upstreamVerified": upstream_verified,
+        "verificationOnly": True, "forceAutomatic": bool(force_auto),
+        "arbiter": arbiter.model if force_auto else None, "documentRole": role, "upstreamVerified": upstream_verified,
         "contentIssues": issues, "checks": records,
         "pendingReasons": [] if verified else ["formatting_verification_failed"],
         "modelLimits": {name: {**effective_limits(profile).__dict__, "input_budget": input_budget(profile, input_percent)}
@@ -793,10 +836,10 @@ class GitHubSetupClient:
         if requests is None:
             raise RuntimeError(tr('缺少 requests。'))
         try:
-            response = requests.get("https://api.github.com" + path,
+            response = cancellable_call(lambda: requests.get("https://api.github.com" + path,
                 headers={"Authorization": f"Bearer {self.token.strip()}", "Accept": "application/vnd.github+json",
                          "X-GitHub-Api-Version": "2022-11-28"},
-                params=params, timeout=(10, 30), allow_redirects=False)
+                params=params, timeout=(10, 30), allow_redirects=False), self.stop, timeout=50, cancelled=ProcessingCancelled)
         except requests.RequestException:
             raise RuntimeError(tr("无法连接 GitHub，请检查网络或代理后重试。")) from None
         _cancel(self.stop)
@@ -818,10 +861,16 @@ class GitHubSetupClient:
     def pages(self, path, **params):
         result = []
         page = 1
+        seen = set()
         while True:
+            _cancel(self.stop)
             values = self.get(path, {**params, "per_page": 100, "page": page})
             if not isinstance(values, list):
                 raise RuntimeError(tr("GitHub 返回的数据无法读取，请稍后重试。"))
+            identity = hashlib.sha256(json.dumps(values, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+            if identity in seen or page > 1000:
+                raise RuntimeError(tr("GitHub 分页结果重复或过多，已停止读取，请缩小范围后重试。"))
+            seen.add(identity)
             result.extend(value for value in values if isinstance(value, dict))
             if len(values) < 100:
                 return result
