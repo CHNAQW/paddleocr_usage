@@ -1,7 +1,10 @@
 import hashlib
 import json
 import tempfile
+import threading
+import time
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -46,6 +49,15 @@ class TranslationTests(unittest.TestCase):
         self.assertNotIn("secret", report)
         self.assertNotIn("api_key", report)
 
+    def test_ocr_warning_blocks_upload_from_the_first_saved_translation_report(self):
+        result, _ = self.translate([self.detect, "译文", '{"has_problem":false}'],
+            options=lp.TranslationOptions(proofreading=True), proofreader=self.profile, upstream_verified=False)
+        self.assertTrue(result["verified"])  # Translation checks passed, upstream OCR did not.
+        self.assertFalse(result["upstreamVerified"])
+        saved = json.loads(self.output.with_suffix(".translation.json").read_text(encoding="utf-8"))
+        self.assertFalse(saved["upstreamVerified"])
+        self.assertEqual(lp.document_upload_evidence(self.output)[1], "unverified")
+
     def test_existing_translation_is_never_reused_as_verified_or_overwritten(self):
         self.output.write_text("previous", encoding="utf-8")
         result, chat = self.translate([])
@@ -53,6 +65,15 @@ class TranslationTests(unittest.TestCase):
         self.assertFalse(result["verified"])
         chat.assert_not_called()
         self.assertEqual(self.output.read_text(), "previous")
+
+    def test_existing_translation_report_is_never_overwritten(self):
+        report = self.output.with_suffix(".translation.json")
+        report.write_text('{"previous": true}', encoding="utf-8")
+        result, chat = self.translate([])
+        self.assertEqual(result["status"], "existing")
+        chat.assert_not_called()
+        self.assertFalse(self.output.exists())
+        self.assertEqual(report.read_text(), '{"previous": true}')
 
     def test_source_digest_matches_original_windows_file_with_bom(self):
         original = b"\xef\xbb\xbf# Paper\r\n\r\nEvidence."
@@ -102,6 +123,7 @@ class TranslationTests(unittest.TestCase):
             with self.subTest(verdict=verdict):
                 if self.output.exists():
                     self.output.unlink()
+                self.output.with_suffix(".translation.json").unlink(missing_ok=True)
                 result, _ = self.translate([self.detect, "首次", "二次", '{"has_problem":true}', json.dumps(verdict)],
                     options=lp.TranslationOptions(secondary_review=True, arbitration="大模型裁决"),
                     reviewer=self.profile, arbiter=self.profile)
@@ -145,6 +167,7 @@ class TranslationTests(unittest.TestCase):
                         {"has_problem": False}):
             with self.subTest(verdict=verdict):
                 self.output.unlink(missing_ok=True)
+                self.output.with_suffix(".translation.json").unlink(missing_ok=True)
                 result, _ = self.translate([self.detect, "译文", '{"has_problem":true}', json.dumps(verdict)],
                     options=lp.TranslationOptions(proofreading=True, arbitration="大模型裁决"),
                     proofreader=self.profile, arbiter=self.profile)
@@ -235,6 +258,21 @@ class TranslationTests(unittest.TestCase):
         self.assertEqual(lp.translated_path(source, self.root, output, True), output / "nested" / "TRANSLATED_a.md")
         self.assertEqual(lp.translated_path(source, self.root, None), nested / "a_TRANSLATED.md")
 
+    def test_translation_and_formatting_folder_scans_can_stop_during_enumeration(self):
+        for scan in (lp.find_markdown_files, lp.find_formatting_files):
+            with self.subTest(scan=scan.__name__):
+                stop = threading.Event()
+                enumerated = []
+                def paths(*args):
+                    for index in range(100):
+                        enumerated.append(index)
+                        if index == 1:
+                            stop.set()
+                        yield self.source
+                with patch.object(Path, "rglob", paths), self.assertRaises(lp.ProcessingCancelled):
+                    scan(self.root, stop=stop.is_set)
+                self.assertEqual(enumerated, [0, 1])
+
 
 class ChatTests(unittest.TestCase):
     def test_truncated_response_is_rejected(self):
@@ -285,13 +323,75 @@ class PublishingTests(unittest.TestCase):
         put.assert_not_called()
 
     def test_upload_uses_selected_branch_encoded_path_and_content(self):
-        with patch.object(lp.requests, "get", return_value=Mock(status_code=404)) as get, \
-                patch.object(lp.requests, "put", return_value=Mock(status_code=201)) as put:
+        before, committed = Mock(status_code=404), Mock(status_code=201)
+        with patch.object(lp.requests, "get", return_value=before) as get, \
+                patch.object(lp.requests, "put", return_value=committed) as put:
             self.assertEqual(self.upload(), "literature/nested/已核验.md")
         self.assertEqual(get.call_args.kwargs["params"], {"ref": "papers"})
         self.assertIn("/literature/nested/%", put.call_args.args[0])
         self.assertEqual(put.call_args.kwargs["json"]["branch"], "papers")
         self.assertNotIn("sha", put.call_args.kwargs["json"])
+        before.close.assert_called_once()
+        committed.close.assert_called_once()
+
+    def test_cancelling_remote_check_returns_promptly_and_never_uploads(self):
+        stop, release, finished = threading.Event(), threading.Event(), threading.Event()
+        response = Mock(status_code=404)
+        def get(*args, **kwargs):
+            release.wait(2)
+            finished.set()
+            return response
+        timer = threading.Timer(.05, stop.set)
+        with patch.object(lp.requests, "get", side_effect=get), patch.object(lp.requests, "put") as put:
+            timer.start()
+            try:
+                started = time.monotonic()
+                with self.assertRaises(lp.ProcessingCancelled):
+                    lp.upload_verified_file(self.path, "paper.md", True, self.options, self.sha, stop.is_set)
+                self.assertLess(time.monotonic() - started, .5)
+            finally:
+                release.set()
+                timer.join()
+            self.assertTrue(finished.wait(1))
+            put.assert_not_called()
+
+    def test_large_upload_is_rejected_before_reading_the_content(self):
+        with patch.object(Path, "stat", return_value=Mock(st_size=21 * 1024 * 1024)), \
+                patch.object(Path, "read_bytes") as read, patch.object(lp.requests, "get") as get:
+            with self.assertRaisesRegex(ValueError, "20MB"):
+                self.upload()
+        read.assert_not_called()
+        get.assert_not_called()
+
+    def test_directory_scan_checks_cancellation_during_enumeration(self):
+        stop = threading.Event()
+        enumerated = []
+        def paths(*args):
+            for index in range(100):
+                enumerated.append(index)
+                if index == 1:
+                    stop.set()
+                yield self.path
+        client = Mock(remote_paths=Mock(return_value=set()))
+        with patch.object(Path, "rglob", paths), self.assertRaises(lp.ProcessingCancelled):
+            lp.scan_missing_documents(self.path.parent, "同时上传", self.options, stop=stop.is_set, client=client)
+        self.assertEqual(enumerated, [0, 1])
+
+    def test_github_query_closes_response_for_success_missing_and_errors(self):
+        cases = [(200, False), (404, True), (401, False), (403, False), (500, False)]
+        for status, missing_ok in cases:
+            with self.subTest(status=status):
+                response = Mock(status_code=status)
+                response.json.return_value = {"ok": True}
+                with patch.object(lp.requests, "get", return_value=response):
+                    if status == 200:
+                        self.assertEqual(lp.GitHubSetupClient("token").get("/user"), {"ok": True})
+                    elif missing_ok:
+                        self.assertIsNone(lp.GitHubSetupClient("token").get("/missing", missing_ok=True))
+                    else:
+                        with self.assertRaises((ValueError, RuntimeError)):
+                            lp.GitHubSetupClient("token").get("/user")
+                response.close.assert_called_once()
 
     def test_api_errors_never_count_as_success(self):
         with patch.object(lp.requests, "get", return_value=Mock(status_code=404)), \
@@ -314,6 +414,40 @@ class PublishingTests(unittest.TestCase):
                 ({"parts": [{"rawResult": positive}, {"rawResult": positive}]}, True)):
             with self.subTest(raw=raw):
                 self.assertEqual(lp.ocr_verified(raw), expected)
+
+
+class DocumentWriteTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.destination = Path(self.temp.name) / "translated.md"
+        self.report = self.destination.with_suffix(".translation.json")
+
+    def test_failed_document_or_report_write_removes_only_new_incomplete_outputs(self):
+        original_open = Path.open
+        for failed_path in (self.destination, self.report):
+            with self.subTest(path=failed_path):
+                @contextmanager
+                def open_file(path, *args, **kwargs):
+                    with original_open(path, *args, **kwargs) as stream:
+                        if path == failed_path:
+                            def partial_write(text):
+                                stream.write(text[:2])
+                                raise OSError("disk full")
+                            yield Mock(write=Mock(side_effect=partial_write))
+                        else:
+                            yield stream
+                with patch.object(Path, "open", open_file), self.assertRaisesRegex(OSError, "disk full"):
+                    lp._write_document_report(self.destination, "complete text", self.report, {"verified": True})
+                self.assertFalse(self.destination.exists())
+                self.assertFalse(self.report.exists())
+
+    def test_existing_document_survives_a_concurrent_writer_conflict(self):
+        self.destination.write_text("other writer", encoding="utf-8")
+        with self.assertRaises(FileExistsError):
+            lp._write_document_report(self.destination, "new text", self.report, {"verified": True})
+        self.assertEqual(self.destination.read_text(), "other writer")
+        self.assertFalse(self.report.exists())
 
 
 if __name__ == "__main__":

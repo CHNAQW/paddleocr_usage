@@ -233,6 +233,26 @@ class GitHubWizardTests(unittest.TestCase):
         self.assertEqual(self.w.step, 0)
         self.assertNotIn("stale-account", self.w.account.get())
 
+    def test_destroying_wizard_cancels_active_request_and_removes_its_poll_timer(self):
+        entered, release = threading.Event(), threading.Event()
+        def request(client):
+            entered.set()
+            release.wait(2)
+            return {"login": "late-account", "repositories": []}
+        try:
+            self.w.run(request, self.w.connected)
+            self.assertTrue(entered.wait(1))
+            timer = self.w.poll_id
+            self.w.window.destroy()
+            self.assertTrue(self.w.closed)
+            self.assertTrue(self.w.cancel.is_set())
+            self.assertNotIn(timer, self.root.tk.call("after", "info"))
+            self.assertEqual(self.w.traces, [])
+        finally:
+            release.set()
+            if getattr(self.w, "worker_thread", None):
+                self.w.worker_thread.join(2)
+
     def test_bilingual_wizard_and_folder_browser_work_at_small_sizes(self):
         self.app.change_ui_language("en")
         self.root.update()

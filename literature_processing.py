@@ -158,12 +158,38 @@ def translated_path(source: Path, input_root: Path, output_root: Path | None, pr
     return result
 
 
-def find_markdown_files(root: Path, recursive=True, output_root: Path | None = None) -> list[Path]:
+def _write_document_report(destination, text, report_path, report):
+    """Reserve both outputs without overwriting; remove incomplete writes on error."""
+    serialized = json.dumps(report, ensure_ascii=False, indent=2)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    document_created = report_created = False
+    try:
+        with report_path.open("x", encoding="utf-8", newline="\n") as report_file:
+            report_created = True
+            with destination.open("x", encoding="utf-8", newline="\n") as document:
+                document_created = True
+                document.write(text)
+            report_file.write(serialized)
+    except BaseException:
+        # Close handles before unlinking: Windows cannot delete an open file.
+        for path, created in ((destination, document_created), (report_path, report_created)):
+            if created:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        raise
+
+
+def find_markdown_files(root: Path, recursive=True, output_root: Path | None = None,
+                        stop=lambda: False) -> list[Path]:
+    _cancel(stop)
     output = output_root.resolve() if output_root else None
     root = root.resolve()
     paths = root.rglob("*") if recursive else root.iterdir()
     result = []
     for path in paths:
+        _cancel(stop)
         if not path.is_file() or path.suffix.lower() != ".md" or path.is_symlink():
             continue
         if (path.stem.upper().startswith(("TRANSLATED_", "FORMATTED_"))
@@ -173,6 +199,7 @@ def find_markdown_files(root: Path, recursive=True, output_root: Path | None = N
         if output and output != root and output in path.resolve().parents:
             continue
         result.append(path)
+    _cancel(stop)
     return sorted(result)
 
 
@@ -233,14 +260,16 @@ class _RetryChunk(Exception):
 def translate_document(source: Path, destination: Path, options: TranslationOptions,
                        translator: ModelProfile, reviewer: ModelProfile | None = None,
                        proofreader: ModelProfile | None = None, arbiter: ModelProfile | None = None,
-                       decide=None, stop=lambda: False, log=lambda message: None) -> dict:
+                       decide=None, stop=lambda: False, log=lambda message: None, *,
+                       upstream_verified=True) -> dict:
     """Return an auditable result. Unresolved documents are saved but never approved."""
     if options.force_auto:
         options = replace(options, arbitration="大模型裁决", allow_arbiter_revision=True, proofreading=True)
         decide = None
     if destination.resolve() == source.resolve():
         raise ValueError(tr('译文不能覆盖原文。'))
-    if destination.exists():
+    report_path = destination.with_suffix(".translation.json")
+    if destination.exists() or report_path.exists():
         return {"status": "existing", "path": str(destination), "verified": False}
     if not options.target.strip():
         raise ValueError(tr('目标语言不能为空。'))
@@ -502,16 +531,13 @@ def translate_document(source: Path, destination: Path, options: TranslationOpti
               "arbitrationMode": options.arbitration,
               "allowArbiterRevision": options.allow_arbiter_revision is True,
               "forceAutomatic": options.force_auto is True,
+              "upstreamVerified": upstream_verified is True,
               "arbiterRevisionAuthorized": revision_authorized,
               "pendingReasons": sorted({reason for record in records for reason in record["pendingReasons"]}),
               "inputPercent": percent, "tokenEstimate": "utf8_bytes_plus_framing",
               "modelLimits": {role: {**effective_limits(profile).__dict__, "input_budget": input_budget(profile, percent)}
                               for role, profile in active.items()}, "checks": records}
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    # Exclusive creation protects both the original and concurrently produced outputs.
-    with destination.open("x", encoding="utf-8", newline="\n") as handle:
-        handle.write(output)
-    destination.with_suffix(".translation.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_document_report(destination, output, report_path, report)
     return report
 
 
@@ -624,16 +650,23 @@ def formatted_path(source, input_root, output_root=None, prefix=False):
     return result
 
 
-def find_formatting_files(root, recursive=True, output_root=None):
+def find_formatting_files(root, recursive=True, output_root=None, stop=lambda: False):
+    _cancel(stop)
     root = Path(root).resolve()
     output = Path(output_root).resolve() if output_root else None
     paths = root.rglob("*") if recursive else root.iterdir()
-    return sorted(path for path in paths if path.is_file() and path.suffix.lower() == ".md"
-        and not any(p.is_symlink() for p in (path, *path.parents))
-        and not any(part.startswith(".") for part in path.relative_to(root).parts)
-        and not path.stem.upper().startswith("FORMATTED_") and not path.stem.upper().endswith("_FORMATTED")
-        and not path.with_suffix(".formatting.json").exists()
-        and not (output and output != root and output in path.resolve().parents))
+    result = []
+    for path in paths:
+        _cancel(stop)
+        if (path.is_file() and path.suffix.lower() == ".md"
+                and not any(p.is_symlink() for p in (path, *path.parents))
+                and not any(part.startswith(".") for part in path.relative_to(root).parts)
+                and not path.stem.upper().startswith("FORMATTED_") and not path.stem.upper().endswith("_FORMATTED")
+                and not path.with_suffix(".formatting.json").exists()
+                and not (output and output != root and output in path.resolve().parents)):
+            result.append(path)
+    _cancel(stop)
+    return sorted(result)
 
 
 FORMAT_ARBITRATE_PROMPT = (
@@ -741,16 +774,7 @@ def format_markdown_document(source, destination, formatter, verifier, input_per
         "pendingReasons": [] if verified else ["formatting_verification_failed"],
         "modelLimits": {name: {**effective_limits(profile).__dict__, "input_budget": input_budget(profile, input_percent)}
                         for name, profile in (("formatter", formatter), ("verifier", verifier))}}
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    # Reserve both names exclusively; never replace a previous result or report.
-    with report_path.open("x", encoding="utf-8", newline="\n") as report_file:
-        try:
-            with destination.open("x", encoding="utf-8", newline="\n") as document:
-                document.write(result_text)
-            json.dump(report, report_file, ensure_ascii=False, indent=2)
-        except BaseException:
-            report_path.unlink(missing_ok=True)
-            raise
+    _write_document_report(destination, result_text, report_path, report)
     return report
 
 
@@ -842,21 +866,24 @@ class GitHubSetupClient:
                 params=params, timeout=(10, 30), allow_redirects=False), self.stop, timeout=50, cancelled=ProcessingCancelled)
         except requests.RequestException:
             raise RuntimeError(tr("无法连接 GitHub，请检查网络或代理后重试。")) from None
-        _cancel(self.stop)
-        if response.status_code == 404 and missing_ok:
-            return None
-        if response.status_code == 401:
-            raise ValueError(tr("访问凭据无效或已过期，请重新生成并粘贴 Token。"))
-        if response.status_code in {403, 429}:
-            raise RuntimeError(tr("GitHub 拒绝访问或请求次数已达上限，请检查凭据权限，稍后重试。"))
-        if response.status_code == 404:
-            raise ValueError(tr("找不到仓库或分支，请检查选择，并确认 Token 已授权访问该仓库。"))
-        if response.status_code != 200:
-            raise RuntimeError(tr("GitHub 连接检查失败（HTTP {arg0}），请稍后重试。", arg0=response.status_code))
         try:
-            return response.json()
-        except ValueError:
-            raise RuntimeError(tr("GitHub 返回的数据无法读取，请稍后重试。")) from None
+            _cancel(self.stop)
+            if response.status_code == 404 and missing_ok:
+                return None
+            if response.status_code == 401:
+                raise ValueError(tr("访问凭据无效或已过期，请重新生成并粘贴 Token。"))
+            if response.status_code in {403, 429}:
+                raise RuntimeError(tr("GitHub 拒绝访问或请求次数已达上限，请检查凭据权限，稍后重试。"))
+            if response.status_code == 404:
+                raise ValueError(tr("找不到仓库或分支，请检查选择，并确认 Token 已授权访问该仓库。"))
+            if response.status_code != 200:
+                raise RuntimeError(tr("GitHub 连接检查失败（HTTP {arg0}），请稍后重试。", arg0=response.status_code))
+            try:
+                return response.json()
+            except ValueError:
+                raise RuntimeError(tr("GitHub 返回的数据无法读取，请稍后重试。")) from None
+        finally:
+            response.close()
 
     def pages(self, path, **params):
         result = []
@@ -1032,10 +1059,13 @@ def scan_missing_documents(root, selection, options, recursive=True, stop=lambda
     if not root.is_dir() or selection not in UPLOAD_KINDS:
         raise ValueError(tr("请选择有效的文档文件夹和上传类型。"))
     options.validate()
+    _cancel(stop)
     client = client or GitHubSetupClient(options.token, stop)
     remote = client.remote_paths(options)
     candidates = []
-    for path in sorted(root.rglob("*") if recursive else root.iterdir()):
+    # Inspect entries incrementally so Stop can interrupt a large folder walk.
+    # Only sort the resulting documents, not every unrelated file in the tree.
+    for path in root.rglob("*") if recursive else root.iterdir():
         _cancel(stop)
         relative = path.relative_to(root)
         if (path.suffix.lower() != ".md" or not path.is_file() or any(p.startswith(".") for p in relative.parts)
@@ -1060,7 +1090,8 @@ def scan_missing_documents(root, selection, options, recursive=True, stop=lambda
             except (OSError, ValueError, UnicodeError):
                 status, digest = "unverified", ""
         candidates.append(UploadCandidate(path, relative.as_posix(), role, status, digest))
-    return candidates
+    _cancel(stop)
+    return sorted(candidates, key=lambda candidate: candidate.relative)
 
 
 def upload_verified_file(path: Path, relative_name: str, verified: bool, options: GitHubOptions,
@@ -1073,6 +1104,8 @@ def upload_verified_file(path: Path, relative_name: str, verified: bool, options
         raise RuntimeError(tr('缺少 requests。'))
     if relative_name.startswith("/") or "\\" in relative_name or ".." in PurePosixPath(relative_name).parts:
         raise ValueError(tr('上传路径必须是相对路径。'))
+    if path.stat().st_size > 20 * 1024 * 1024:
+        raise ValueError(tr('自动上传仅支持 20MB 以内的文件。'))
     content = path.read_bytes()
     if hashlib.sha256(content).hexdigest() != expected_sha256:
         raise ValueError(tr('核验后文件发生变化，请重新核验再上传。'))
@@ -1082,16 +1115,24 @@ def upload_verified_file(path: Path, relative_name: str, verified: bool, options
     url = f"https://api.github.com/repos/{options.repository}/contents/{quote(remote, safe='/')}"
     headers = {"Authorization": f"Bearer {options.token}", "Accept": "application/vnd.github+json",
                "X-GitHub-Api-Version": "2022-11-28"}
-    response = requests.get(url, headers=headers, params={"ref": options.branch}, timeout=(15, 60), allow_redirects=False)
-    if response.status_code == 200:
-        raise FileExistsError(tr('GitHub 已存在 {arg0}；为避免覆盖，未上传。', arg0=remote))
-    if response.status_code != 404:
-        raise RuntimeError(tr('读取 GitHub 仓库失败：HTTP {arg0}。', arg0=response.status_code))
+    response = cancellable_call(lambda: requests.get(
+        url, headers=headers, params={"ref": options.branch}, timeout=(15, 60), allow_redirects=False),
+        stop, timeout=90, cancelled=ProcessingCancelled)
+    try:
+        if response.status_code == 200:
+            raise FileExistsError(tr('GitHub 已存在 {arg0}；为避免覆盖，未上传。', arg0=remote))
+        if response.status_code != 404:
+            raise RuntimeError(tr('读取 GitHub 仓库失败：HTTP {arg0}。', arg0=response.status_code))
+    finally:
+        response.close()
     _cancel(stop)
     response = requests.put(url, headers=headers, json={
         "message": f"Add reviewed literature: {remote}", "branch": options.branch,
         "content": base64.b64encode(content).decode("ascii"),
     }, timeout=(15, 60), allow_redirects=False)
-    if response.status_code != 201:
-        raise RuntimeError(tr('GitHub 上传失败：HTTP {arg0}。请检查分支和 Contents 写入权限。', arg0=response.status_code))
-    return remote
+    try:
+        if response.status_code != 201:
+            raise RuntimeError(tr('GitHub 上传失败：HTTP {arg0}。请检查分支和 Contents 写入权限。', arg0=response.status_code))
+        return remote
+    finally:
+        response.close()

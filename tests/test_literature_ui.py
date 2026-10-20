@@ -2,6 +2,7 @@ import gc
 import json
 import queue
 import tempfile
+import threading
 import time
 import tkinter as tk
 import unittest
@@ -200,7 +201,7 @@ class DesktopLayoutTests(unittest.TestCase):
         try:
             catalog = ModelCatalog([{"id": "large", "context_length": 128000, "max_output_tokens": 16000},
                                     {"id": "small", "max_input_tokens": 32000}])
-            self.app.literature.events.put(("profile_result", (model, False, catalog, None, model.profile())))
+            self.app.literature.events.put(("profile_result", (model, False, catalog, None, model.profile(), model.request_generation)))
             self.app.literature.poll()
             self.assertEqual(model.profile().context_limit, 128000)
             self.assertEqual(model.limit_value.get(), "128000")
@@ -231,13 +232,107 @@ class DesktopLayoutTests(unittest.TestCase):
         model = ModelControls(self.root, "model", {"model": "large"}, self.app.literature.events, Mock(), Mock())
         try:
             requested = model.profile()
+            generation = model.request_generation
             model.url.set("https://other.invalid/v1")
             result = ModelCatalog([{"id": "large", "context_length": 128000}])
-            self.app.literature.events.put(("profile_result", (model, False, result, None, requested)))
+            self.app.literature.events.put(("profile_result", (model, False, result, None, requested, generation)))
             self.app.literature.poll()
             self.assertFalse(model.catalog_limits)
         finally:
             model.box.destroy()
+
+    def test_model_requests_are_single_flight_and_stale_credentials_cannot_publish_results(self):
+        from literature_ui import ModelControls
+        entered, release = threading.Event(), threading.Event()
+        def fetch(*args, **kwargs):
+            entered.set()
+            release.wait(2)
+            return ["stale-model"]
+        fetch = Mock(side_effect=fetch)
+        model = ModelControls(self.root, "model", {"model": "current", "api_key": "old-key"},
+                              self.app.literature.events, fetch, Mock(), app=self.app)
+        try:
+            model.request(False)
+            self.assertTrue(entered.wait(1))
+            for _ in range(10):
+                model.request(False)
+            self.assertEqual(fetch.call_count, 1)
+            self.assertTrue(all(str(button.cget("state")) == "disabled" for button in model.request_buttons))
+            stop = fetch.call_args.kwargs["stop"]
+            model.key.set("replacement-key")
+            model.key.set("old-key")
+            self.assertTrue(stop())
+            release.set()
+            model.request_thread.join(2)
+            self.assertFalse(model.request_thread.is_alive())
+            self.app.literature.poll()
+            self.assertEqual(model.model.get(), "current")
+            self.assertEqual(model.combo.cget("values"), "")
+            self.assertIsNone(model.active_request)
+            self.assertTrue(all(str(button.cget("state")) == "normal" for button in model.request_buttons))
+        finally:
+            release.set()
+            if model.request_thread:
+                model.request_thread.join(2)
+            model.box.destroy()
+
+    def test_destroyed_model_controls_cancel_requests_without_opening_a_late_dialog(self):
+        from literature_ui import ModelControls
+        entered, release = threading.Event(), threading.Event()
+        def fetch(*args, **kwargs):
+            entered.set()
+            release.wait(2)
+            raise RuntimeError("late network failure")
+        fetch = Mock(side_effect=fetch)
+        model = ModelControls(self.root, "model", {"api_key": "key"}, self.app.literature.events, fetch, Mock())
+        try:
+            model.request(False)
+            self.assertTrue(entered.wait(1))
+            model.box.destroy()
+            self.assertTrue(fetch.call_args.kwargs["stop"]())
+            release.set()
+            model.request_thread.join(2)
+            self.app.literature.poll()  # Unexpected dialogs are a test failure.
+            self.assertTrue(model.closed)
+            self.assertIsNone(model.active_request)
+        finally:
+            release.set()
+            if model.request_thread:
+                model.request_thread.join(2)
+            if model.box.winfo_exists():
+                model.box.destroy()
+
+    def test_translation_folder_scan_can_be_stopped_before_file_enumeration_finishes(self):
+        controls = self.app.literature
+        previous = controls.input.get(), self.app.stop_requested, controls.cancel_event.is_set()
+        entered = threading.Event()
+        def scan(*args, stop, **kwargs):
+            entered.set()
+            deadline = time.monotonic() + 2
+            while not stop() and time.monotonic() < deadline:
+                time.sleep(.01)
+            if stop():
+                raise lp.ProcessingCancelled("cancelled scan")
+            raise AssertionError("Stop did not reach the file enumeration")
+        try:
+            with tempfile.TemporaryDirectory() as directory, patch("literature_ui.find_markdown_files", side_effect=scan):
+                controls.input.set(directory)
+                controls.scan()
+                self.assertTrue(entered.wait(1))
+                self.assertTrue(controls.busy())
+                self.assertEqual(str(self.app.workspace_layout.translation_stop.cget("state")), "normal")
+                controls.stop()
+                deadline = time.monotonic() + 3
+                while controls.scanning and time.monotonic() < deadline:
+                    self.root.update()
+                    time.sleep(.01)
+                self.assertFalse(controls.scanning)
+                self.assertIn("已停止", controls.status.get())
+                self.assertEqual(str(controls.start_button.cget("state")), "normal")
+        finally:
+            controls.input.set(previous[0])
+            self.app.stop_requested = previous[1]
+            controls.cancel_event.set() if previous[2] else controls.cancel_event.clear()
 
     def test_logs_remain_visible_at_small_window_sizes(self):
         for width, height in ((1100, 780), (640, 480), (540, 420)):

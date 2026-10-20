@@ -25,6 +25,18 @@ def pe_payload(size=512):
 
 
 class UpdateTests(unittest.TestCase):
+    def test_new_source_versions_require_their_runtime_and_cleanup_modules(self):
+        entry = 'APP_VERSION="26.10.20.02"\n'
+        for additions in ({}, {"task_runtime.py": ""}, {"update_cleanup.py": ""}):
+            with self.subTest(additions=additions):
+                archive = self.source_zip(entry=entry, additions=additions)
+                with self.assertRaisesRegex(ValueError, "源码包缺少"):
+                    updates.import_package(archive, self.current, cache=self.cache)
+        archive = self.source_zip(entry=entry, additions={"task_runtime.py": "", "update_cleanup.py": ""})
+        package = updates.import_package(archive, self.current, cache=self.cache)
+        self.assertTrue((package.directory / "source/update_cleanup.py").is_file())
+        updates.discard_package(package)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

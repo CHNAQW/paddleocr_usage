@@ -78,6 +78,9 @@ def widget_text(widget, selected=False):
     if isinstance(widget, tk.Text):
         if selected:
             return widget.get("sel.first", "sel.last") if widget.tag_ranges("sel") else ""
+        full_text = getattr(widget, "_copy_full_text", None)
+        if callable(full_text):
+            return full_text()
         return widget.get("1.0", "end-1c")
     if isinstance(widget, (tk.Entry, ttk.Entry, ttk.Combobox, tk.Spinbox, ttk.Spinbox)):
         if selected:

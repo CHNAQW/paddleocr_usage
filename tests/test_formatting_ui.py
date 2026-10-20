@@ -1,6 +1,7 @@
 import json
 import queue
 import tempfile
+import threading
 import time
 import tkinter as tk
 import unittest
@@ -167,6 +168,28 @@ class FormattingAndServiceTests(unittest.TestCase):
         self.assertIn('通过 1', panel.status.get())
         upload.assert_not_called()
         self.assertFalse(self.app.updates.app_busy())
+
+    def test_formatting_folder_scan_exposes_stop_and_restores_controls_after_cancellation(self):
+        panel = self.formatter()
+        panel.input.set(str(self.folder))
+        entered = threading.Event()
+        def scan(*args, stop, **kwargs):
+            entered.set()
+            deadline = time.monotonic() + 2
+            while not stop() and time.monotonic() < deadline:
+                time.sleep(.01)
+            if stop():
+                raise lp.ProcessingCancelled("cancelled scan")
+            raise AssertionError("Stop did not reach the file enumeration")
+        with patch.object(lp, 'find_formatting_files', side_effect=scan):
+            panel.scan()
+            self.assertTrue(entered.wait(1))
+            self.assertTrue(panel.busy)
+            self.assertEqual(str(panel.stop_button.cget('state')), 'normal')
+            panel.stop_button.invoke()
+            self.wait(panel)
+        self.assertIn('已停止', panel.status.get())
+        self.assertEqual(str(panel.scan_button.cget('state')), 'normal')
 
     def test_generation_error_can_retry_without_deleting_source(self):
         panel = self.formatter()

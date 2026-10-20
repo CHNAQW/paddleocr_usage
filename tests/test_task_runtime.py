@@ -65,6 +65,40 @@ class RuntimeTests(unittest.TestCase):
                 cancellable_call(work, slot_timeout=.03)
         work.assert_not_called()
 
+    def test_cancel_during_slot_acquisition_does_not_start_a_request(self):
+        stop = threading.Event()
+        slot = Mock()
+        slot.acquire.side_effect = lambda **kwargs: stop.set() or True
+        work = Mock()
+        with patch('task_runtime._network_slots', slot), self.assertRaises(TaskCancelled):
+            cancellable_call(work, stop.is_set)
+        work.assert_not_called()
+        slot.release.assert_called_once()
+
+    def test_aborted_worker_propagates_without_waiting_for_the_deadline(self):
+        class WorkerAbort(BaseException):
+            pass
+        with self.assertRaises(WorkerAbort):
+            cancellable_call(Mock(side_effect=WorkerAbort()), timeout=.2)
+        self.assertEqual(cancellable_call(lambda: 'slot released'), 'slot released')
+
+    def test_failed_late_response_cleanup_does_not_leak_a_transport_slot(self):
+        release = threading.Event()
+        closed = threading.Event()
+        def fail_close():
+            closed.set()
+            raise OSError('socket already closed')
+        response = Mock(close=Mock(side_effect=fail_close))
+        slot = threading.BoundedSemaphore(1)
+        with patch('task_runtime._network_slots', slot):
+            try:
+                with self.assertRaises(TimeoutError):
+                    cancellable_call(lambda: (release.wait(1), response)[1], timeout=.05)
+            finally:
+                release.set()
+            self.assertTrue(closed.wait(1))
+            self.assertEqual(cancellable_call(lambda: 'slot released'), 'slot released')
+
     def test_event_flood_is_bounded_and_remaining_events_are_preserved(self):
         events = queue.Queue()
         for index in range(10000):

@@ -31,6 +31,8 @@ class UpdatePanel:
         self.installing, self.closed = False, False
         self.handoff = False
         self.cancel = threading.Event()
+        self.delivery_lock = threading.Lock()
+        self.discard_threads = []
         self.events = queue.Queue()
         self.frame = ttk.Frame(parent, padding=14)
         self.frame.grid(row=0, column=0, sticky="ew")
@@ -120,7 +122,7 @@ class UpdatePanel:
     def buttons(self):
         busy = self.handoff or bool(self.thread and self.thread.is_alive())
         self.choose_button.configure(state="disabled" if busy else "normal")
-        self.cancel_button.configure(state="normal" if busy else "disabled")
+        self.cancel_button.configure(state="normal" if busy and not self.handoff else "disabled")
         self.install_button.configure(state="normal" if self.staged and self.executable and not busy else "disabled")
         self.check_button.configure(state="disabled" if busy else "normal")
         self.download_button.configure(state="normal" if self.online and not busy else "disabled")
@@ -136,7 +138,7 @@ class UpdatePanel:
                   str(tr(self.channel.get())), self.status.get(), self.online_details.get(), self.details.get())))
 
     def check_online(self, automatic=False):
-        if self.thread and self.thread.is_alive():
+        if self.closed or self.handoff or (self.thread and self.thread.is_alive()):
             return
         self.cancel_automatic_timer()
         self.auto_checked = True
@@ -157,11 +159,11 @@ class UpdatePanel:
         self.buttons()
 
     def download_online(self):
-        if self.online and not (self.thread and self.thread.is_alive()):
+        if not self.closed and not self.handoff and self.online and not (self.thread and self.thread.is_alive()):
             self.read(self.online.url, offer=self.online)
 
     def choose(self):
-        if self.thread and self.thread.is_alive():
+        if self.closed or self.handoff or (self.thread and self.thread.is_alive()):
             return
         source = filedialog.askopenfilename(parent=self.frame.winfo_toplevel(), title=tr("选择本地更新包"),
                                             filetypes=[(tr("软件更新包"), "*.zip")])
@@ -169,26 +171,31 @@ class UpdatePanel:
             self.read(source)
 
     def read(self, source, offer=None):
-        if self.thread and self.thread.is_alive():
+        if self.closed or self.handoff or (self.thread and self.thread.is_alive()):
             return
         self.cancel_automatic_timer()
         self.auto_checked = True
-        if self.staged:
-            discard_package(self.staged)
-            self.staged = None
+        previous, self.staged = self.staged, None
         self.cancel.clear()
         self.progress.set(0)
         self.details.set(tr("正在读取：{arg0}", arg0=source))
         self.status.set(tr("正在下载并校验，请稍候……") if offer else tr("正在解包并校验，请稍候……"))
         def worker():
             try:
+                if previous:
+                    discard_package(previous)
                 loader = download_github_update if offer else import_package
                 package = loader(offer or source, self.version, stop=self.cancel.is_set,
                     progress=lambda done, total: self.events.put(("progress", 100 * done / total)))
-                if self.cancel.is_set() or self.closed:
+                # Transfer ownership atomically with close: a completed import
+                # must never land in an abandoned UI queue after cleanup drained it.
+                with self.delivery_lock:
+                    abandoned = self.cancel.is_set() or self.closed
+                    if not abandoned:
+                        self.events.put(("package", package))
+                if abandoned:
                     discard_package(package)
                     raise UpdateCancelled(tr("已取消读取更新包。"))
-                self.events.put(("package", package))
             except Exception as exc:
                 self.events.put(("error", exc))
             finally:
@@ -230,7 +237,7 @@ class UpdatePanel:
                         self.app.log(self.status.get())
                 elif kind == "package":
                     if self.cancel.is_set():
-                        discard_package(value)
+                        self.discard_in_background(value)
                         self.status.set(tr("已取消读取更新包。"))
                     else:
                         self.staged = value
@@ -262,7 +269,7 @@ class UpdatePanel:
                 or self.app.literature.busy() or bool(manual and manual.busy))
 
     def install(self):
-        if self.handoff or not self.staged or not self.executable or (self.thread and self.thread.is_alive()):
+        if self.closed or self.handoff or not self.staged or not self.executable or (self.thread and self.thread.is_alive()):
             return
         if self.app_busy():
             messagebox.showwarning(tr("暂时无法安装"), tr("请等待 OCR、翻译或检查任务结束，再安装更新。"), parent=self.frame.winfo_toplevel())
@@ -306,11 +313,29 @@ class UpdatePanel:
             self.status.set(tr("上次更新未完成。恢复结果：{arg0}；日志：{arg1}",
                 arg0=tr("已恢复旧版") if result.get("restored") else tr("请检查原程序或备份"), arg1=result.get("log", "")))
 
+    def discard_in_background(self, *packages):
+        # Large directories / antivirus hooks must not block Tk shutdown or
+        # cancellation. Startup maintenance reclaims anything interrupted by exit.
+        def discard():
+            for package in packages:
+                discard_package(package)
+        if packages:
+            self.discard_threads = [thread for thread in self.discard_threads if thread.is_alive()]
+            thread = threading.Thread(target=discard, daemon=True, name="update-discard")
+            self.discard_threads.append(thread)
+            thread.start()
+
     def cleanup(self, event):
         if event.widget != self.frame:
             return
-        self.closed = True
-        self.cancel.set()
+        with self.delivery_lock:
+            self.closed = True
+            self.cancel.set()
+            abandoned = []
+            while not self.events.empty():
+                kind, value = self.events.get_nowait()
+                if kind == "package" and not self.installing:
+                    abandoned.append(value)
         for variable, trace in self.preference_traces:
             variable.trace_remove("write", trace)
         self.cancel_automatic_timer()
@@ -318,8 +343,6 @@ class UpdatePanel:
             if timer is not None:
                 self.root.after_cancel(timer)
         if self.staged and not self.installing and not self.handoff:
-            discard_package(self.staged)
-        while not self.events.empty():
-            kind, value = self.events.get_nowait()
-            if kind == "package" and not self.installing:
-                discard_package(value)
+            abandoned.append(self.staged)
+            self.staged = None
+        self.discard_in_background(*abandoned)

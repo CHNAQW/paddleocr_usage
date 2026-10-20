@@ -21,6 +21,8 @@ from pathlib import Path
 
 from ui_translations import tr
 from source_bootstrap import requirements, validated_source
+from task_runtime import cancellable_call
+from update_cleanup import mark_owned, start_maintenance
 
 APPLICATION_ID = "PaddleOCR.PDFToMarkdown.GUI"
 PLATFORM = "windows-x86_64"
@@ -184,6 +186,7 @@ def import_package(source, current_version, cache=None, stop=lambda: False, prog
                     raise ValueError(tr("校验文件与更新清单不一致。"))
             cache.mkdir(parents=True, exist_ok=True)
             directory = Path(tempfile.mkdtemp(prefix="update-", dir=cache))
+            mark_owned(directory, "package")
             payload = directory / filename
             written = 0
             with archive.open(payload_info) as incoming, payload.open("xb") as outgoing:
@@ -380,6 +383,15 @@ def import_source(archive, source, current_version, cache, stop, progress):
     version = versions[0]
     if version_tuple(version) <= version_tuple(current_version):
         raise ValueError(tr("更新包版本 {arg0} 不高于当前版本 {arg1}。", arg0=version, arg1=current_version))
+    # New application modules must travel with their source version. Otherwise
+    # validation on a newer runtime could silently fall back to an older bundled
+    # module and install an incomplete source archive.
+    for introduced, modules in (
+        ("26.10.20.01", {"task_runtime.py"}),
+        ("26.10.20.02", {"update_cleanup.py"}),
+    ):
+        if version_tuple(version) >= version_tuple(introduced) and not modules <= mapping.keys():
+            raise ValueError(tr("源码包缺少运行所需文件，或入口文件过大。"))
     requested = requirements(archive.read(mapping["requirements.txt"]).decode("utf-8-sig"))
     available = getattr(sys, "_paddleocr_requirements", requirements(Path(__file__).with_name("requirements.txt").read_text(encoding="utf-8-sig")))
     if requested != available:
@@ -405,6 +417,7 @@ def import_source(archive, source, current_version, cache, stop, progress):
     cache.mkdir(parents=True, exist_ok=True)
     directory = Path(tempfile.mkdtemp(prefix="update-", dir=cache))
     try:
+        mark_owned(directory, "source")
         target = directory / "source"
         hashes, done = {}, 0
         for info, name in selected:
@@ -444,16 +457,20 @@ def import_source(archive, source, current_version, cache, stop, progress):
 
 def signal_ready(version):
     marker = os.environ.pop("PADDLEOCR_UPDATE_HEALTH", "")
-    if not marker:
-        return
-    try:
-        path = Path(marker).resolve()
-        path.relative_to(update_cache().resolve())
-        if path.name == "ready" and path.parent.name.startswith("update-"):
-            with path.open("x", encoding="utf-8") as handle:
-                handle.write(version)
-    except (OSError, ValueError):
-        pass
+    acknowledged = None
+    if marker:
+        try:
+            path = Path(marker).resolve()
+            path.relative_to(update_cache().resolve())
+            if path.name == "ready" and path.parent.name.startswith("update-"):
+                with path.open("x", encoding="utf-8") as handle:
+                    handle.write(version)
+                acknowledged = path
+        except (OSError, ValueError):
+            pass
+    start_maintenance(update_cache(), version, acknowledged,
+                      running_source=Path(__file__).absolute().parent,
+                      current_exe=running_executable())
 
 
 def last_result(cache=None):
@@ -502,8 +519,10 @@ def _github_response(url, *, stream=False, stop=lambda: False, accept="applicati
                 or parsed.password or parsed.port not in {None, 443}):
             raise ValueError(tr("更新下载地址不属于受支持的 GitHub HTTPS 地址。"))
         try:
-            response = requests.get(url, headers={"Accept": accept, "User-Agent": "PaddleOCR-Updater"},
-                                    timeout=(10, 30), stream=stream, allow_redirects=False)
+            response = cancellable_call(
+                lambda: requests.get(url, headers={"Accept": accept, "User-Agent": "PaddleOCR-Updater"},
+                                     timeout=(10, 30), stream=stream, allow_redirects=False),
+                stop, timeout=50, cancelled=UpdateCancelled)
         except requests.RequestException:
             raise RuntimeError(tr("无法连接 GitHub，请检查网络或代理后重试。")) from None
         if response.status_code in {301, 302, 303, 307, 308}:
@@ -525,16 +544,28 @@ def _github_response(url, *, stream=False, stop=lambda: False, accept="applicati
 
 def _github_bytes(url, stop, limit=4 * BLOCK_SIZE, accept="application/vnd.github+json"):
     response = _github_response(url, stream=True, stop=stop, accept=accept)
+    # A read timeout only bounds silence between bytes. A slow metadata stream
+    # also needs a total deadline and prompt cancellation for the waiting UI.
+    import threading
+    reading = threading.Event()
+    def read():
+        reading.set()
+        try:
+            data = bytearray()
+            for block in response.iter_content(64 * 1024):
+                _cancel(stop)
+                data.extend(block)
+                if len(data) > limit:
+                    raise ValueError(tr("GitHub 更新元数据过大。"))
+            return bytes(data)
+        finally:
+            response.close()
     try:
-        data = bytearray()
-        for block in response.iter_content(64 * 1024):
-            _cancel(stop)
-            data.extend(block)
-            if len(data) > limit:
-                raise ValueError(tr("GitHub 更新元数据过大。"))
-        return bytes(data)
-    finally:
-        response.close()
+        return cancellable_call(read, stop, timeout=60, cancelled=UpdateCancelled)
+    except BaseException:
+        if not reading.is_set():
+            response.close()
+        raise
 
 
 def _github_json(path, stop):
@@ -652,6 +683,7 @@ def download_github_update(offer, current_version, cache=None, stop=lambda: Fals
     directory = Path(tempfile.mkdtemp(prefix="download-", dir=cache))
     package, response = None, None
     try:
+        mark_owned(directory, "download")
         response = _github_response(offer.url, stream=True, stop=stop, accept="application/zip")
         declared = int(response.headers.get("Content-Length", 0))
         if declared < 0 or declared > MAX_PAYLOAD or (offer.size and declared and declared != offer.size):

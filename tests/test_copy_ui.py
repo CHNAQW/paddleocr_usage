@@ -127,6 +127,25 @@ class CopyInteractionTests(unittest.TestCase):
         app.updates.copy_button.invoke()
         self.assertIn('Official release', self.root.clipboard_get())
 
+    def test_log_copy_keeps_full_retained_message_after_display_truncation(self):
+        app = self.app()
+        original = "OCR response " * 2500 + "COMPLETE-END"
+        app.log(original)
+        self.assertNotIn("COMPLETE-END", app.log_text.get("1.0", "end"))
+        app.workspace_layout.copy_log_button.invoke()
+        self.assertIn(original, self.root.clipboard_get())
+        # No-selection copy and the context menu's Copy all use retained history;
+        # an explicit selection still copies only the selected visible text.
+        app.log_text.event_generate("<<Copy>>")
+        self.assertIn(original, self.root.clipboard_get())
+        app.log_text.tag_add("sel", "1.0", "1.5")
+        selected = app.log_text.get("sel.first", "sel.last")
+        app.log_text.event_generate("<<Copy>>")
+        self.assertEqual(self.root.clipboard_get(), selected)
+        app.change_ui_language("en")
+        app.workspace_layout.copy_log_button.invoke()
+        self.assertIn(original, self.root.clipboard_get())
+
     def test_error_dialog_provides_selectable_body_and_copy_button(self):
         result = []
         def use_dialog():

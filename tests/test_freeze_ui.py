@@ -123,7 +123,7 @@ class InterfaceResponsivenessTests(unittest.TestCase):
         self.c.input.set(str(self.directory))
         self.c.force_auto.set(True)
         release = threading.Event()
-        def scan(*_):
+        def scan(*_, **_kwargs):
             release.wait(2)
             return [source]
         try:
@@ -195,6 +195,46 @@ class InterfaceResponsivenessTests(unittest.TestCase):
         self.app.refresh_log_language()
         self.assertLessEqual(len(self.app.log_text.get('1.0','end-1c')), 250000)
         self.heartbeat()
+
+    def test_language_refresh_only_renders_visible_tail_of_retained_history(self):
+        for index in range(140):
+            self.app.log(str(index) + "x" * 14000)
+        original = self.app.copyable_log_text()
+        self.assertGreater(len(original), 1900000)
+        with patch.object(self.app.log_text, "insert", wraps=self.app.log_text.insert) as insert:
+            self.app.refresh_log_language()
+        inserted = sum(len(call.args[1]) for call in insert.call_args_list)
+        self.assertLess(inserted, 267000)
+        self.assertLessEqual(len(self.app.log_text.get("1.0", "end-1c")), 250000)
+        self.assertEqual(self.app.copyable_log_text(), original)
+        self.heartbeat()
+
+    def test_direct_event_pump_replaces_its_timer_and_close_cancels_it(self):
+        original = self.app._log_poll_id
+        self.app._poll_log_queue()
+        timers = self.root.tk.call("after", "info")
+        self.assertNotIn(original, timers)
+        current = self.app._log_poll_id
+        self.assertIn(current, timers)
+        self.root.destroy()
+        self.destroyed = True
+        self.assertTrue(self.app.closed)
+        self.assertIsNone(self.app._log_poll_id)
+        self.assertFalse(self.app.run_background("closed", Mock(), Mock()))
+
+    def test_update_handoff_blocks_local_tool_entry_points(self):
+        self.app.updates.handoff = True
+        with patch.object(self.app, "run_background") as work, \
+                patch.object(application.filedialog, "askopenfilenames") as choose, \
+                patch.object(self.app, "save_current_config") as save:
+            for action in (self.app.scan_pdfs, self.app.manual_wordcount_check,
+                           self.app.repair_json_to_md, self.app.fetch_llm_models,
+                           self.app.test_llm_api, self.app.check_api_key):
+                action()
+            work.assert_not_called()
+            choose.assert_not_called()
+            save.assert_not_called()
+        self.app.updates.handoff = False
 
     def test_github_table_inserts_in_batches_and_allows_interleaved_events(self):
         manual = self.app.workspace_layout.github_manual

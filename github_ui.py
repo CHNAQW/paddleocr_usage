@@ -13,7 +13,7 @@ from tkinter import ttk
 
 from literature_processing import (GitHubOptions, GitHubSetupClient, UPLOAD_KINDS, ProcessingCancelled,
     document_upload_evidence, scan_missing_documents, upload_verified_file, github_folder_name, github_repository_name)
-from literature_ui import scrollable_page
+from literature_ui import scrollable_page, update_in_progress
 from responsive_ui import AdaptiveCheckbutton, AdaptiveLabel, ButtonToolbar, ResponsiveForm
 from ui_i18n import LocalizedVar, filedialog, messagebox, localize_widgets, tr
 
@@ -162,6 +162,7 @@ class GitHubWizard:
         for variable in (self.token, self.repository, self.branch, self.folder):
             self.traces.append((variable, variable.trace_add("write", self.dirty)))
         self.window.protocol("WM_DELETE_WINDOW", self.close)
+        self.window.bind("<Destroy>", self.cleanup, add="+")
         self.window.bind("<Escape>", lambda event: self.close())
         localize_widgets(self.window)
         self.show(0)
@@ -336,6 +337,8 @@ class GitHubWizard:
         self.browse("" if parent == "." else parent)
 
     def run(self, request, completed):
+        if self.closed or update_in_progress(self.app):
+            return
         self.cancel.set()
         self.cancel = threading.Event()
         self.generation += 1
@@ -403,13 +406,21 @@ class GitHubWizard:
         self.owner.refresh()
         self.close()
 
-    def close(self):
+    def cleanup(self, event=None):
+        if self.closed or (event is not None and event.widget != self.window):
+            return
         self.closed = True
         self.cancel.set()
         self.generation += 1
         self.window.after_cancel(self.poll_id)
         for variable, trace in self.traces:
             variable.trace_remove("write", trace)
+        self.traces.clear()
+
+    def close(self):
+        if self.closed:
+            return
+        self.cleanup()
         self.window.grab_release()
         self.window.destroy()
 
@@ -516,7 +527,7 @@ class ManualUpload:
     def buttons(self):
         for scan, upload, stop in [(self.scan_button, self.upload_button, self.stop_button)] + self.extra_buttons:
             scan.configure(state="disabled" if self.busy else "normal")
-            upload.configure(state="normal" if not self.busy and any(c.status == "ready" for c in self.candidates) else "disabled")
+            upload.configure(state="normal" if not self.busy and self.render_timer is None and any(c.status == "ready" for c in self.candidates) else "disabled")
             stop.configure(state="normal" if self.busy else "disabled")
         self.folder_entry.configure(state="disabled" if self.busy else "normal")
         self.browse_button.configure(state="disabled" if self.busy else "normal")
@@ -559,6 +570,7 @@ class ManualUpload:
                 self.tree.selection_add(chosen)
             if end < len(self.candidates):
                 self.render_timer = self.app.root.after(1, lambda: batch(end))
+            self.buttons()
         batch()
 
     def resize(self, event=None):
@@ -584,7 +596,7 @@ class ManualUpload:
         self.buttons()
 
     def scan(self):
-        if self.busy:
+        if self.closed or self.busy or update_in_progress(self.app):
             return
         self.checked = self.signature()
         root, kind, repo, branch, folder, token = self.checked
@@ -601,7 +613,7 @@ class ManualUpload:
         self.launch(lambda: scan_missing_documents(root, kind, options, stop=self.cancel.is_set), "scan")
 
     def upload(self):
-        if self.busy or self.checked != self.signature():
+        if self.closed or self.busy or self.render_timer is not None or update_in_progress(self.app) or self.checked != self.signature():
             return
         selected = [(int(i), self.candidates[int(i)]) for i in self.tree.selection() if self.candidates[int(i)].status == "ready"]
         if not selected:

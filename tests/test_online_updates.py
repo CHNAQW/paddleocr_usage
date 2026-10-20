@@ -3,6 +3,8 @@ import hashlib
 import io
 import json
 import tempfile
+import threading
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -23,6 +25,67 @@ def response(content=b'', status=200, headers=None):
 
 
 class OnlineUpdateTests(unittest.TestCase):
+    def test_cancelled_request_does_not_wait_for_github_headers(self):
+        entered, release, cancelled = threading.Event(), threading.Event(), threading.Event()
+        value = response()
+        def blocked(*args, **kwargs):
+            entered.set()
+            release.wait(3)
+            return value
+        outcome = []
+        def check():
+            try:
+                updates._github_response("https://github.com/update.zip", stop=cancelled.is_set)
+            except updates.UpdateCancelled:
+                outcome.append("cancelled")
+        with patch.object(requests, "get", side_effect=blocked):
+            worker = threading.Thread(target=check)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                cancelled.set()
+                worker.join(1)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(outcome, ["cancelled"])
+            finally:
+                release.set()
+                worker.join(3)
+            deadline = time.monotonic() + 1
+            while not value.close.called and time.monotonic() < deadline:
+                time.sleep(.01)
+            value.close.assert_called_once()
+
+    def test_cancelled_metadata_read_discards_late_body_and_closes_response(self):
+        entered, release, cancelled = threading.Event(), threading.Event(), threading.Event()
+        value = response()
+        def blocked(_size):
+            entered.set()
+            release.wait(3)
+            yield b'{"version":"late"}'
+        value.iter_content.side_effect = blocked
+        outcome = []
+        def check():
+            try:
+                updates._github_bytes("https://github.com/update.json", cancelled.is_set)
+            except updates.UpdateCancelled:
+                outcome.append("cancelled")
+        with patch.object(updates, "_github_response", return_value=value):
+            worker = threading.Thread(target=check)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                cancelled.set()
+                worker.join(1)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(outcome, ["cancelled"])
+            finally:
+                release.set()
+                worker.join(3)
+            deadline = time.monotonic() + 1
+            while not value.close.called and time.monotonic() < deadline:
+                time.sleep(.01)
+            value.close.assert_called_once()
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

@@ -1,8 +1,8 @@
-文献处理软件 26.10.20.01
-本版修复界面阻塞并加入强制全自动模式；更新方式沿用 .07 修复后的逻辑。
+文献处理软件 26.10.20.02
+本版优化分段、扫描、请求取消、日志与配置保存，并新增升级残留后台清理；保留强制全自动模式。
 
 启动
-1. 完整解压源码，保留十五个 Python 模块及 update_helper.ps1、requirements.txt 与图标。
+1. 完整解压源码，保留十六个 Python 模块及 update_helper.ps1、requirements.txt 与图标。
 2. Windows 双击 start_paddleocr_pdf_to_md_SAFE.bat。
 3. 首次使用需要 Python 3.9+ 和网络；Linux/macOS 使用带 Tkinter 的 Python 运行主入口。
 
@@ -112,15 +112,18 @@ LLM 请求和 OCR 查询等待可取消，底层请求可能稍后在超时范�
 源码 APP_VERSION 须更高，依赖须匹配内置运行时。新增未打包依赖或更换启动器时需完整程序更新包。
 完整程序 ZIP 由打包脚本自动生成，含新版 EXE、update.json 和 SHA-256；也可用 make_update_package.py 生成。
 安装前须结束 OCR／翻译／检查任务，保存设置后退出。新版启动失败时尝试恢复旧版，并保留日志。
+升级确认成功后自动在后台清理下载 ZIP、解包载荷和可确认闲置的旧源码；后续启动会继续清理。保留当前源码、上一个回滚源码、正在使用的更新目录，以及当前 EXE 的一份已知备份。
+失败或中断目录闲置满24小时后可回收，近期日志限量保留；被占用的文件跳过。原始用户 ZIP、文献、配置不删除，不跟随目录联接／符号链接。
+无法确认闲置的历史源码与 Nuitka PDFToMarkdown 运行时缓存保留，避免误删其他旧实例或正在启动的 EXE 所需组件。源码升级仍需原启动器运行时。
 源码安装于 %LOCALAPPDATA%\PaddleOCR\updates。界面显示源码版本，启动器文件名／属性不因此改变；单独复制 EXE 不会携带用户目录里的源码更新。
 只导入可信来源；文件哈希校验不是数字签名。源码运行可校验，自动安装限 Windows EXE。
 
 构建 Windows EXE
 双击 build_paddleocr_pdf_to_md_EXE.bat，需 Python 3.9–3.13。
-输出：PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.20.01.exe
+输出：PaddleOCR_PDF_to_MD_EXE\PaddleOCR_PDF_to_MD_26.10.20.02.exe
 校验：同目录下的 .exe.sha256.txt。
-固定运行缓存：%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.20.01
-界面与文件名版本：26.10.20.01；Windows 数字文件/产品版本：26.10.20.1。
+固定运行缓存：%LOCALAPPDATA%\PaddleOCR\PDFToMarkdown\26.10.20.02
+界面与文件名版本：26.10.20.02；Windows 数字文件/产品版本：26.10.20.2。
 版本更新不代表 EXE 已编译发布；不要关闭安全防护或添加排除项。
 
 详细操作、限制、费用、隐私和使用条件请阅读 README.md 与 License。

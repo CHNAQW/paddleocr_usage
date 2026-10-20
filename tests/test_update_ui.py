@@ -1,5 +1,6 @@
 import gc
 import tempfile
+import threading
 import time
 import tkinter as tk
 import unittest
@@ -36,7 +37,7 @@ class UpdatePanelTests(unittest.TestCase):
         self.exe.write_bytes(pe_payload())
         new = self.folder / "new.exe"
         new.write_bytes(pe_payload())
-        self.zip = updates.build_package(new, "26.10.20.02", self.folder)
+        self.zip = updates.build_package(new, "26.10.20.03", self.folder)
         self.root.update()
 
     def tearDown(self):
@@ -44,6 +45,8 @@ class UpdatePanelTests(unittest.TestCase):
         for timer in self.root.tk.call("after", "info"):
             self.root.after_cancel(timer)
         self.root.destroy()
+        for thread in self.panel.discard_threads:
+            thread.join(3)
         self.config.stop()
         self.save.stop()
         set_language("zh")
@@ -64,7 +67,7 @@ class UpdatePanelTests(unittest.TestCase):
                 self.root.update()
                 time.sleep(.01)
         self.assertIsNotNone(self.panel.staged)
-        self.assertIn("26.10.20.02", self.panel.details.get())
+        self.assertIn("26.10.20.03", self.panel.details.get())
         self.assertEqual(str(self.panel.install_button.cget("state")), "disabled")
         self.assertTrue(self.zip.is_file())
 
@@ -126,7 +129,7 @@ class UpdatePanelTests(unittest.TestCase):
         self.assertIsNone(self.panel.thread)
 
     def test_explicit_online_check_never_downloads_or_installs_and_uses_selected_channel(self):
-        offer = updates.OnlineUpdate("26.10.20.02", "https://github.com/update.zip", "Changes", "https://github.com/release")
+        offer = updates.OnlineUpdate("26.10.20.03", "https://github.com/update.zip", "Changes", "https://github.com/release")
         self.panel.channel.set("最新代码（main）")
         with patch.object(update_ui, "check_github_update", return_value=offer) as check, \
                 patch.object(update_ui, "download_github_update") as download, patch.object(update_ui, "launch_install") as install:
@@ -139,7 +142,7 @@ class UpdatePanelTests(unittest.TestCase):
         self.assertEqual(str(self.panel.download_button.cget("state")), "normal")
 
     def test_online_download_reuses_package_validation_and_waits_for_install_confirmation(self):
-        offer = updates.OnlineUpdate("26.10.20.02", "https://github.com/update.zip", "", "")
+        offer = updates.OnlineUpdate("26.10.20.03", "https://github.com/update.zip", "", "")
         self.panel.online = offer
         self.panel.executable = self.exe
         def download(*args, **kwargs):
@@ -201,7 +204,7 @@ class UpdatePanelTests(unittest.TestCase):
             self.panel.channel.set(channel)
             self.panel.automatic.set(True)
             self.panel.auto_checked = False
-            offer = updates.OnlineUpdate("26.10.20.02", "https://github.com/update.zip", "Changes", "https://github.com/release")
+            offer = updates.OnlineUpdate("26.10.20.03", "https://github.com/update.zip", "Changes", "https://github.com/release")
             with patch.object(update_ui, "check_github_update", return_value=offer) as check, \
                     patch.object(update_ui, "download_github_update") as download, patch.object(update_ui, "launch_install") as install:
                 self.start_automatic_now()
@@ -245,7 +248,7 @@ class UpdatePanelTests(unittest.TestCase):
     def test_disabling_automatic_check_cancels_inflight_and_ignores_offer(self):
         import threading
         entered, release = threading.Event(), threading.Event()
-        offer = updates.OnlineUpdate("26.10.20.02", "https://github.com/update.zip", "", "")
+        offer = updates.OnlineUpdate("26.10.20.03", "https://github.com/update.zip", "", "")
         def check(*_args):
             entered.set()
             release.wait(2)
@@ -270,6 +273,67 @@ class UpdatePanelTests(unittest.TestCase):
         error.assert_not_called()
         download.assert_not_called()
         self.assertIn("403 test", self.panel.status.get())
+
+    def test_replacing_large_stage_does_not_block_ui(self):
+        self.stage()
+        previous = self.panel.staged
+        entered, release = threading.Event(), threading.Event()
+        def slow_discard(package):
+            entered.set()
+            release.wait(3)
+            updates.discard_package(package)
+        with patch.object(update_ui, "discard_package", side_effect=slow_discard), \
+                patch.object(update_ui, "import_package", side_effect=updates.UpdateCancelled("cancelled")):
+            try:
+                self.panel.read(str(self.zip))
+                self.assertTrue(entered.wait(1))
+                ticks = []
+                self.root.after(1, lambda: ticks.append(True))
+                deadline = time.monotonic() + .5
+                while not ticks and time.monotonic() < deadline:
+                    self.root.update()
+                self.assertTrue(ticks)
+                self.assertTrue(previous.directory.exists())
+            finally:
+                release.set()
+                self.wait_worker()
+        self.assertFalse(previous.directory.exists())
+        self.assertTrue(self.zip.exists())
+
+    def test_close_during_import_discards_unclaimed_package(self):
+        self.stage()
+        package, self.panel.staged = self.panel.staged, None
+        entered, release = threading.Event(), threading.Event()
+        def load(*args, **kwargs):
+            entered.set()
+            release.wait(3)
+            return package
+        with patch.object(update_ui, "import_package", side_effect=load):
+            self.panel.read(str(self.zip))
+            thread = self.panel.thread
+            try:
+                self.assertTrue(entered.wait(1))
+                self.panel.frame.destroy()
+            finally:
+                release.set()
+                thread.join(3)
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(package.directory.exists())
+        self.assertTrue(self.zip.exists())
+        self.assertFalse(any(kind == "package" for kind, _ in self.panel.events.queue))
+
+    def test_handoff_disables_cancel_and_rejects_new_reads(self):
+        self.stage()
+        self.panel.handoff = True
+        self.panel.buttons()
+        self.assertEqual(str(self.panel.cancel_button.cget("state")), "disabled")
+        with patch.object(update_ui, "import_package") as load, \
+                patch.object(update_ui, "check_github_update") as check:
+            self.panel.read(str(self.zip))
+            self.panel.check_online()
+        load.assert_not_called()
+        check.assert_not_called()
+        self.panel.handoff = False
 
 
 if __name__ == "__main__":

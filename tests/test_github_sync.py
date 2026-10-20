@@ -186,6 +186,38 @@ class ManualUploadTests(unittest.TestCase):
         upload.assert_not_called()
         self.assertEqual(self.panel.candidates[0].status, 'failed')
 
+    def test_upload_waits_until_all_eligible_rows_have_been_rendered_and_selected(self):
+        self.panel.checked = self.panel.signature()
+        self.panel.candidates = [
+            lp.UploadCandidate(Path(f'/tmp/documents/{index}.md'), f'{index}.md', 'original', 'ready', 'sha')
+            for index in range(250)]
+        self.panel.render(auto_select=True)
+        self.assertIsNotNone(self.panel.render_timer)
+        self.assertEqual(len(self.panel.tree.selection()), 100)
+        self.assertEqual(str(self.panel.upload_button.cget('state')), 'disabled')
+        with patch.object(github_ui.messagebox, 'askyesno') as confirm, \
+             patch.object(self.panel, 'launch') as launch:
+            self.panel.upload()
+            confirm.assert_not_called()
+            launch.assert_not_called()
+        deadline = time.monotonic() + 3
+        while self.panel.render_timer is not None and time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(.01)
+        self.assertIsNone(self.panel.render_timer)
+        self.assertEqual(len(self.panel.tree.selection()), 250)
+        self.assertEqual(str(self.panel.upload_button.cget('state')), 'normal')
+
+    def test_update_handoff_blocks_new_scan_and_upload_work(self):
+        self.stage()
+        with patch.object(self.app.updates, 'handoff', True), \
+             patch.object(self.panel, 'launch') as launch, \
+             patch.object(github_ui.messagebox, 'askyesno') as confirm:
+            self.panel.scan()
+            self.panel.upload()
+            launch.assert_not_called()
+            confirm.assert_not_called()
+
     def test_bilingual_small_workspace_and_sidebar_follow_font_metrics(self):
         self.stage()
         self.root.geometry('540x420')

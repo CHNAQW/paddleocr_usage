@@ -64,9 +64,20 @@ def scrollable_page(notebook, title):
     return content
 
 
+def update_in_progress(app):
+    updates = getattr(app, "updates", None)
+    return bool(getattr(updates, "handoff", False) or getattr(updates, "installing", False))
+
+
 class ModelControls:
-    def __init__(self, parent, title, saved, events, fetch, test):
+    def __init__(self, parent, title, saved, events, fetch, test, app=None):
         self.events, self.fetch, self.test = events, fetch, test
+        self.app = app
+        self.request_generation = 0
+        self.active_request = None
+        self.request_cancel = threading.Event()
+        self.request_thread = None
+        self.closed = False
         self.box = ttk.Frame(parent, style="Paper.TFrame", padding=16)
         self.box.columnconfigure(0, weight=1)
         self.form = ResponsiveForm(self.box)
@@ -100,6 +111,7 @@ class ModelControls:
         self.limit_status = LocalizedVar(master=self.box)
         actions = ButtonToolbar(self.box, ((tr('拉取模型'), lambda: self.request(False)),
                                            (tr('测试接口'), lambda: self.request(True))))
+        self.request_buttons = actions.buttons
         actions.grid(row=1, column=0, sticky="ew", pady=8)
         AdaptiveLabel(self.box, text=tr('兼容 /chat/completions；不支持 /models 的服务可手填模型或接入点 ID。'),
                       style="Hint.TLabel").grid(row=2, column=0, sticky="ew", pady=4)
@@ -108,12 +120,32 @@ class ModelControls:
         AdaptiveLabel(self.box, textvariable=self.limit_status, style="Hint.TLabel").grid(row=4, column=0, sticky="ew", pady=4)
         for variable in (self.url, self.model):
             variable.trace_add("write", self.identity_changed)
+        self.key.trace_add("write", self.invalidate_request)
+        self.box.bind("<Destroy>", self.cleanup, add="+")
         self.refresh_limits()
 
     def identity_changed(self, *_):
+        self.invalidate_request()
         # A manual override belongs to the chosen endpoint/model, never a new one.
         self.manual_limit.set(False)
         self.refresh_limits()
+
+    def invalidate_request(self, *_):
+        self.request_generation += 1
+        self.request_cancel.set()
+
+    def finish_request(self, generation):
+        if self.active_request == generation:
+            self.active_request = None
+            if not self.closed:
+                for button in self.request_buttons:
+                    button.configure(state="normal")
+        return not self.closed and generation == self.request_generation
+
+    def cleanup(self, event):
+        if event.widget == self.box:
+            self.closed = True
+            self.invalidate_request()
 
     def refresh_limits(self):
         detected = self.catalog_limits.get((self.url.get().strip(), self.model.get().strip()))
@@ -149,21 +181,37 @@ class ModelControls:
         return ModelProfile(self.url.get().strip(), self.key.get().strip(), self.model.get().strip(), **asdict(limits))
 
     def request(self, testing):
+        if self.closed or self.active_request is not None or update_in_progress(self.app):
+            return
         try:
             profile = self.profile()
+            if testing:
+                profile.validate()
         except ValueError as exc:
             messagebox.showerror(tr('配置不完整'), str(exc), parent=self.box)
             return
         if not profile.api_key or not profile.base_url:
             messagebox.showerror(tr('配置不完整'), tr('请填写 Base URL 和 API Key。'), parent=self.box)
             return
+        self.request_generation += 1
+        generation = self.request_generation
+        self.active_request = generation
+        cancel = self.request_cancel = threading.Event()
+        for button in self.request_buttons:
+            button.configure(state="disabled")
         def worker():
             try:
-                result = chat(profile, "只回复 OK。", {}) if testing else self.fetch(profile.base_url, profile.api_key)
-                self.events.put(("profile_result", (self, testing, result, None, profile)))
+                result = chat(profile, "只回复 OK。", {}, stop=cancel.is_set) if testing else self.fetch(
+                    profile.base_url, profile.api_key, stop=cancel.is_set)
+                self.events.put(("profile_result", (self, testing, result, None, profile, generation)))
             except Exception as exc:
-                self.events.put(("profile_result", (self, testing, None, str(exc), profile)))
-        threading.Thread(target=worker, daemon=True).start()
+                self.events.put(("profile_result", (self, testing, None, str(exc), profile, generation)))
+        self.request_thread = threading.Thread(target=worker, daemon=True)
+        try:
+            self.request_thread.start()
+        except Exception:
+            self.finish_request(generation)
+            raise
 
 
 class LiteratureControls:
@@ -171,6 +219,7 @@ class LiteratureControls:
         self.app, self.page = app, page
         self.events = queue.Queue()
         self.thread = None
+        self.scanning = False
         self.closed = False
         self.pending = None
         self.snapshot = None
@@ -270,7 +319,7 @@ class LiteratureControls:
     def busy(self):
         manual = getattr(self.app, "manual_check_thread", None)
         preparing_ocr = "pdf_prepare" in getattr(self.app, "background_jobs", {})
-        return preparing_ocr or bool(self.thread and self.thread.is_alive()) or bool(manual and manual.is_alive()) or bool(getattr(self, "formatting", None) and self.formatting.busy)
+        return update_in_progress(self.app) or getattr(self, "scanning", False) or preparing_ocr or bool(self.thread and self.thread.is_alive()) or bool(manual and manual.is_alive()) or bool(getattr(self, "formatting", None) and self.formatting.busy)
 
     def open_formatting(self):
         if self.formatting is None:
@@ -358,25 +407,40 @@ class LiteratureControls:
                 "prefix": self.prefix.get().startswith("前缀"), "github": github,
                 "auto_translate": self.auto_translate.get(), "upload_kind": self.upload_kind.get(), "force_auto": self.force_auto.get()}
 
-    def input_paths(self, settings=None):
+    def input_paths(self, settings=None, stop=lambda: False):
         source, recursive, target = settings if settings is not None else self.path_settings()
         if not source or not Path(source).is_dir():
             raise ValueError(tr('请选择有效的 Markdown 输入文件夹。'))
         root = Path(source).expanduser().resolve()
         output = Path(target).expanduser().resolve() if target else None
-        return root, find_markdown_files(root, recursive, output)
+        return root, find_markdown_files(root, recursive, output, stop=stop)
 
     def path_settings(self):
         return self.input.get().strip(), self.recursive.get(), None if self.same_folder.get() else self.output.get().strip()
 
     def scan(self):
+        if self.busy() or (self.app.worker_thread and self.app.worker_thread.is_alive()):
+            return
         settings = self.path_settings()
+        self.cancel_event.clear()
+        self.app.stop_requested = False
+        self.scanning = True
+        self.start_button.configure(state="disabled")
+        self.app.start_btn.configure(state="disabled")
+        self.app.workspace_layout.translation_stop.configure(state="normal")
         self.status.set(tr("正在后台扫描或检查文件……"))
-        def finished(result):
-            message = tr('发现 {arg0} 个待检测的 Markdown 文件。', arg0=len(result[1]))
+        def finish(message):
+            self.scanning = False
+            self.start_button.configure(state="normal")
+            self.app.start_btn.configure(state="normal")
+            self.app.workspace_layout.translation_stop.configure(state="disabled")
             self.status.set(message)
             self.log(message)
-        self.app.run_background("md_scan", lambda: self.input_paths(settings), finished)
+        def finished(result):
+            finish(tr("已停止。") if self.stopped() else tr('发现 {arg0} 个待检测的 Markdown 文件。', arg0=len(result[1])))
+        def failed(exc):
+            finish(tr("已停止。") if isinstance(exc, ProcessingCancelled) else tr("后台任务失败：{arg0}", arg0=exc))
+        self.app.run_background("md_scan", lambda: self.input_paths(settings, self.stopped), finished, failed)
 
     def start(self):
         if self.busy() or (self.app.worker_thread and self.app.worker_thread.is_alive()):
@@ -397,7 +461,7 @@ class LiteratureControls:
         self.app.start_btn.configure(state="disabled")
         def worker():
             try:
-                root, paths = self.input_paths(settings)
+                root, paths = self.input_paths(settings, self.stopped)
                 if not paths:
                     raise ValueError(tr('没有发现待处理的 .md 文件。'))
                 self.worker(root, paths, snapshot)
@@ -477,7 +541,8 @@ class LiteratureControls:
     def process(self, path, root, snapshot, upstream_ok=True):
         destination = translated_path(path, root, snapshot["output"], snapshot["prefix"])
         result = translate_document(path, destination, snapshot["options"],
-            **snapshot["profiles"], decide=None if snapshot.get("force_auto") else self.decide, stop=self.stopped, log=self.log)
+            **snapshot["profiles"], decide=None if snapshot.get("force_auto") else self.decide, stop=self.stopped,
+            log=self.log, upstream_verified=upstream_ok)
         labels = {"verified": tr('核验通过'), "needs_review": tr('核验尚未通过，请查看检查报告'), "unverified": tr('未启用质量检查'),
                   "target_language": tr('已是目标语言，跳过'), "existing": tr('译文已存在，跳过')}
         if result["status"] == "needs_review":
@@ -489,8 +554,6 @@ class LiteratureControls:
         self.log(tr('{arg0}：{arg1}', arg0=path.name, arg1=labels[result['status']]))
         self.events.put(("status", tr('{arg0}：{arg1}', arg0=path.name, arg1=labels[result['status']])))
         if result["status"] in {"verified", "needs_review", "unverified"}:
-            result["upstreamVerified"] = upstream_ok
-            destination.with_suffix(".translation.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
             upload_root = root if snapshot["output"] is None else snapshot["output"]
             self.maybe_upload(destination, upload_root, result["verified"] and upstream_ok, snapshot, result["outputSHA256"], role="translation")
         return result
@@ -651,8 +714,8 @@ class LiteratureControls:
                     if not getattr(self, "active_snapshot", {}).get("force_auto"):
                         messagebox.showinfo(tr('文献处理'), payload, parent=self.app.root)
                 elif kind == "profile_result":
-                    controls, testing, result, error, requested = payload
-                    if not controls.box.winfo_exists():
+                    controls, testing, result, error, requested, generation = payload
+                    if not controls.finish_request(generation) or not controls.box.winfo_exists():
                         continue
                     try:
                         unchanged = controls.profile() == requested
@@ -670,7 +733,7 @@ class LiteratureControls:
                         controls.catalog_limits.update({(requested.base_url, name): limits
                                                         for name, limits in getattr(result, "limits", {}).items()})
                         controls.combo.configure(values=result)
-                        if controls.model.get() not in result:
+                        if result and controls.model.get() not in result:
                             controls.model.set(result[0])
                         controls.refresh_limits()
                         self.log(tr('已拉取 {arg0} 个模型。', arg0=len(result)))
@@ -781,7 +844,7 @@ class MarkdownFormatting:
                     defaults = owner.profiles["translator"].config_data()
             except ValueError:
                 pass
-            model = ModelControls(tab, label, saved.get(key, defaults), owner.events, owner.fetch, owner.test)
+            model = ModelControls(tab, label, saved.get(key, defaults), owner.events, owner.fetch, owner.test, app=self.app)
             model.box.grid(row=0, column=0, sticky="ew")
             self.models[key] = model
         hint = tr("核验只返回问题与结论。疑点或核验失败会保留整理稿及 .formatting.json 报告并标记待处理，不自动重新整理或上传。")
@@ -835,7 +898,7 @@ class MarkdownFormatting:
     def path_settings(self):
         return self.input.get().strip(), self.same_folder.get(), self.output.get().strip(), self.recursive.get()
 
-    def paths(self, settings=None):
+    def paths(self, settings=None, stop=lambda: False):
         from literature_processing import find_formatting_files
         source_value, same_folder, output_value, recursive = settings if settings is not None else self.path_settings()
         if not source_value:
@@ -851,16 +914,27 @@ class MarkdownFormatting:
         if source.is_file() and source.suffix.lower() == ".md":
             return source.parent, [source], output
         if source.is_dir():
-            return source, find_formatting_files(source, recursive, output), output
+            return source, find_formatting_files(source, recursive, output, stop=stop), output
         raise ValueError(tr("请选择有效的 Markdown 文件或文件夹。"))
 
     def scan(self):
+        if self.owner.busy() or (self.app.worker_thread and self.app.worker_thread.is_alive()):
+            return
         settings = self.path_settings()
+        self.cancel.clear()
+        self.busy = True
+        self.buttons()
         self.status.set(tr("正在后台扫描或检查文件……"))
-        def finished(result):
+        def finish(message):
+            self.busy = False
             if not self.closed:
-                self.status.set(tr("发现 {arg0} 个可整理 Markdown；原文和译文均可，跳过已有整理稿。", arg0=len(result[1])))
-        self.app.run_background("format_scan", lambda: self.paths(settings), finished)
+                self.buttons()
+                self.status.set(message)
+        def finished(result):
+            finish(tr("已停止。") if self.cancel.is_set() else tr("发现 {arg0} 个可整理 Markdown；原文和译文均可，跳过已有整理稿。", arg0=len(result[1])))
+        def failed(exc):
+            finish(tr("已停止。") if isinstance(exc, ProcessingCancelled) else tr("后台任务失败：{arg0}", arg0=exc))
+        self.app.run_background("format_scan", lambda: self.paths(settings, self.cancel.is_set), finished, failed)
 
     def start(self):
         from literature_processing import formatted_path, format_markdown_document
@@ -893,7 +967,7 @@ class MarkdownFormatting:
             counts = {"verified": 0, "needs_review": 0, "existing": 0, "failed": 0}
             stopped = False
             try:
-                root, paths, output = self.paths(settings)
+                root, paths, output = self.paths(settings, self.cancel.is_set)
                 if not paths:
                     raise ValueError(tr("没有发现待整理的 Markdown。"))
                 for index, path in enumerate(paths, 1):

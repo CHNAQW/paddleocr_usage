@@ -33,6 +33,13 @@ def cancellable_call(work, stop=lambda: False, timeout=900, cancelled=TaskCancel
         check()
         if time.monotonic() >= slot_deadline:
             raise RuntimeError(tr("仍有网络请求正在结束，请稍后重试。"))
+    try:
+        # Cancellation may arrive while the previous transport releases a slot.
+        # Do not launch another request after the caller has already stopped.
+        check()
+    except BaseException:
+        _network_slots.release()
+        raise
     result = queue.Queue(maxsize=1)
     abandoned = threading.Event()
     delivery_lock = threading.Lock()
@@ -40,12 +47,17 @@ def cancellable_call(work, stop=lambda: False, timeout=900, cancelled=TaskCancel
     def dispose(value):
         close = getattr(value, "close", None)
         if callable(close):
-            close()
+            try:
+                close()
+            except Exception:
+                # Cleanup must not replace a cancellation/timeout with a
+                # transport-specific error, or strand the delivery lock.
+                pass
     def worker():
         try:
             try:
                 value = (True, work())
-            except Exception as exc:
+            except BaseException as exc:
                 value = (False, exc)
             with delivery_lock:
                 if abandoned.is_set():

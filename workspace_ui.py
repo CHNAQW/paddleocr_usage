@@ -446,7 +446,7 @@ class WorkspaceLayout:
             tab = ttk.Frame(roles)
             tab.columnconfigure(0, weight=1)
             roles.add(tab, text=title)
-            model = ModelControls(tab, title + tr('模型'), saved.get(key, {}), controls.events, fetch, test)
+            model = ModelControls(tab, title + tr('模型'), saved.get(key, {}), controls.events, fetch, test, app=self.app)
             model.box.grid(row=0, column=0, sticky="ew", padx=6, pady=8)
             controls.profiles[key] = model
             if key == "translator":
@@ -545,13 +545,14 @@ class WorkspaceLayout:
                               fg=COLORS["log_text"], relief="flat", bd=0, highlightthickness=0,
                               padx=16, pady=3, spacing3=3, font="TkTextFont", state="disabled")
         app.log_text.grid(row=1, column=0, sticky="nsew", pady=(0, 8))
+        app.log_text._copy_full_text = app.copyable_log_text
         scrollbar = ttk.Scrollbar(self.log_frame, command=app.log_text.yview)
         scrollbar.grid(row=1, column=1, sticky="ns", pady=(0, 8))
         app.log_text.configure(yscrollcommand=scrollbar.set)
         self.copy_log_button = tk.Button(self.log_header, text=tr("复制日志"), relief="flat", bd=0,
             bg=COLORS["log"], fg=COLORS["log_text"], activebackground=COLORS["rail"],
             activeforeground=COLORS["log_text"], cursor="hand2", font=(self.family, 9),
-            command=lambda: copy_text(app.root, app.log_text.get("1.0", "end-1c")))
+            command=lambda: copy_text(app.root, app.copyable_log_text()))
         self.copy_log_button.grid(row=0, column=3, sticky="e")
         app._configure_log_tags()
 

@@ -30,6 +30,7 @@ import queue
 import re
 import shutil
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -60,7 +61,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "文献处理软件"
-APP_VERSION = "26.10.20.01"
+APP_VERSION = "26.10.20.02"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -73,6 +74,7 @@ DEFAULT_POLL_INTERVAL = 3.0
 QUEUE_FULL_RETRY_SECONDS = 20.0
 QUEUE_FULL_MAX_ATTEMPTS = 3
 RATE_LIMIT_RETRY_SECONDS = 20.0
+RATE_LIMIT_MAX_ATTEMPTS = 3
 REQUEST_TIMEOUT_SECONDS = 300.0
 TOKEN_CHECK_TIMEOUT_SECONDS = 20.0
 DEFAULT_LLM_BASE_URL = "https://api.deepseek.com/v1"
@@ -813,11 +815,21 @@ def load_config() -> AppConfig:
 
 
 def save_config(config: AppConfig) -> None:
+    # A failed write must not destroy the only copy of saved service settings.
+    payload = json.dumps(config.__dict__, ensure_ascii=False, indent=2)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(
-        json.dumps(config.__dict__, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=CONFIG_DIR,
+                                         prefix=".config-", suffix=".tmp", delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, CONFIG_PATH)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def safe_filename(name: str) -> str:
@@ -1018,25 +1030,29 @@ def openai_compatible_url(base_url: str, endpoint: str) -> str:
 
 
 def fetch_openai_compatible_models(
-    base_url: str, api_key: str, timeout: float = TOKEN_CHECK_TIMEOUT_SECONDS
+    base_url: str, api_key: str, timeout: float = TOKEN_CHECK_TIMEOUT_SECONDS,
+    *, stop=lambda: False,
 ) -> list[str]:
     """Fetch model IDs from an OpenAI-compatible GET /models endpoint."""
     require_requests()
-    response = requests.get(
+    response = cancellable_call(lambda: requests.get(
         openai_compatible_url(base_url, "models"),
         headers=auth_headers(api_key),
         timeout=timeout,
-    )
-    if not response.ok:
-        raise RuntimeError(tr('拉取 LLM 模型列表失败：{arg0}', arg0=api_error_message(parse_response_json(response), response.status_code)))
-    payload = parse_response_json(response)
-    items = payload.get("data")
-    if not isinstance(items, list):
-        raise RuntimeError(tr('LLM /models 响应中没有 data 数组。'))
-    models = ModelCatalog(items)
-    if not models:
-        raise RuntimeError(tr('LLM /models 没有返回可用模型。'))
-    return models
+    ), stop, timeout=max(1, float(timeout)) + 20)
+    try:
+        if not response.ok:
+            raise RuntimeError(tr('拉取 LLM 模型列表失败：{arg0}', arg0=api_error_message(parse_response_json(response), response.status_code)))
+        payload = parse_response_json(response)
+        items = payload.get("data")
+        if not isinstance(items, list):
+            raise RuntimeError(tr('LLM /models 响应中没有 data 数组。'))
+        models = ModelCatalog(items)
+        if not models:
+            raise RuntimeError(tr('LLM /models 没有返回可用模型。'))
+        return models
+    finally:
+        response.close()
 
 
 def check_openai_compatible_api(
@@ -1044,12 +1060,13 @@ def check_openai_compatible_api(
     api_key: str,
     model: str,
     timeout: float = TOKEN_CHECK_TIMEOUT_SECONDS,
+    *, stop=lambda: False,
 ) -> str:
     """Send a minimal chat request to verify URL, key, and selected model end to end."""
     require_requests()
     if not api_key.strip() or not model.strip():
         raise ValueError(tr('测试 LLM API 前必须填写 API Key 并选择或输入模型。'))
-    response = requests.post(
+    response = cancellable_call(lambda: requests.post(
         openai_compatible_url(base_url, "chat/completions"),
         headers=auth_headers(api_key, json_content=True),
         json={
@@ -1058,25 +1075,28 @@ def check_openai_compatible_api(
             "messages": [{"role": "user", "content": "只回复 OK"}],
         },
         timeout=timeout,
-    )
-    if not response.ok:
-        raise RuntimeError(
-            tr('LLM API 测试失败：{arg0}', arg0=api_error_message(parse_response_json(response), response.status_code))
-        )
-    payload = parse_response_json(response)
+    ), stop, timeout=max(1, float(timeout)) + 20)
     try:
-        choice = payload["choices"][0]
-        content_value = choice["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError(tr('LLM API 已响应，但缺少 choices[0].message.content。')) from exc
-    content = content_value.strip() if isinstance(content_value, str) else ""
-    if not content:
-        finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
-        suffix = f"（finish_reason={finish_reason}）" if finish_reason else ""
-        raise RuntimeError(
-            tr('LLM API 已响应，但返回内容为空{arg0}。测试请求已不再限制 max_tokens；如果仍出现此错误，请确认所选模型支持 chat/completions 文本输出，而不是仅支持推理、嵌入或图像输出的模型。', arg0=suffix)
-        )
-    return content
+        if not response.ok:
+            raise RuntimeError(
+                tr('LLM API 测试失败：{arg0}', arg0=api_error_message(parse_response_json(response), response.status_code))
+            )
+        payload = parse_response_json(response)
+        try:
+            choice = payload["choices"][0]
+            content_value = choice["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError(tr('LLM API 已响应，但缺少 choices[0].message.content。')) from exc
+        content = content_value.strip() if isinstance(content_value, str) else ""
+        if not content:
+            finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+            suffix = f"（finish_reason={finish_reason}）" if finish_reason else ""
+            raise RuntimeError(
+                tr('LLM API 已响应，但返回内容为空{arg0}。测试请求已不再限制 max_tokens；如果仍出现此错误，请确认所选模型支持 chat/completions 文本输出，而不是仅支持推理、嵌入或图像输出的模型。', arg0=suffix)
+            )
+        return content
+    finally:
+        response.close()
 
 
 def _parse_llm_json(content: str) -> dict[str, Any]:
@@ -1303,6 +1323,8 @@ def submit_document_job_with_retry(
                 wait_with_stop(QUEUE_FULL_RETRY_SECONDS, stop_checker)
                 continue
             if is_rate_limit_error(payload):
+                if attempt >= RATE_LIMIT_MAX_ATTEMPTS:
+                    raise
                 log_callback(
                     tr('请求频率过高，{arg0:.0f} 秒后自动重试提交：{arg1}', arg0=RATE_LIMIT_RETRY_SECONDS, arg1=pdf_path.name)
                 )
@@ -1312,24 +1334,29 @@ def submit_document_job_with_retry(
 
 
 def wait_with_stop(seconds: float, stop_checker) -> None:
-    end = time.time() + max(0.0, seconds)
-    while time.time() < end:
+    deadline = time.monotonic() + max(0.0, seconds)
+    while True:
         if stop_checker():
             raise StopRequested(tr('用户请求停止。'))
-        time.sleep(min(0.5, end - time.time()))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(0.5, remaining))
 
 
 def wait_for_poll_interval(seconds: float, stop_checker, manual_query_event: Optional[threading.Event] = None) -> bool:
-    """等待下一轮自动轮询；如果用户点击“手动查询当前结果”，立即返回 True。"""
-    end = time.time() + max(0.0, seconds)
-    while time.time() < end:
+    """Wait interruptibly without being affected by changes to the system clock."""
+    deadline = time.monotonic() + max(0.0, seconds)
+    while True:
         if stop_checker():
             raise StopRequested(tr('用户请求停止。'))
         if manual_query_event is not None and manual_query_event.is_set():
             manual_query_event.clear()
             return True
-        time.sleep(min(0.2, end - time.time()))
-    return False
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.2, remaining))
 
 
 def get_job_status(job_id: str, token: str, base_url: str, request_timeout: float) -> dict[str, Any]:
@@ -1368,13 +1395,13 @@ def poll_job_until_done(
     log_callback,
     manual_query_event: Optional[threading.Event] = None,
 ) -> dict[str, Any]:
-    start = time.time()
+    start = time.monotonic()
     last_done = -1
     last_total = 0
     while True:
         if stop_checker():
             raise StopRequested(tr('用户请求停止，已停止轮询当前任务。'))
-        if poll_timeout and time.time() - start > float(poll_timeout):
+        if poll_timeout and time.monotonic() - start > float(poll_timeout):
             raise TimeoutError(tr('任务 {arg0} 查询超时，超过 {arg1:.0f} 秒。', arg0=job_id, arg1=poll_timeout))
 
         payload = cancellable_call(lambda: get_job_status(job_id, token, base_url, request_timeout),
@@ -1980,7 +2007,7 @@ class PaddleOCRBatchGUI:
 
         self._build_ui()
         self.root.bind("<Destroy>", self._closed, add="+")
-        self.root.after(100, self._poll_log_queue)
+        self._log_poll_id = self.root.after(100, self._poll_log_queue)
 
         # Translation-only users do not need an OCR token on application startup.
 
@@ -2001,19 +2028,32 @@ class PaddleOCRBatchGUI:
         if event.widget == self.root:
             self.closed = True
             self.stop_requested = True
+            timer = getattr(self, "_log_poll_id", None)
+            if timer is not None:
+                self.root.after_cancel(timer)
+                self._log_poll_id = None
+
+    def _update_in_progress(self):
+        updates = getattr(self, "updates", None)
+        return self.closed or bool(updates and (updates.handoff or updates.installing))
 
     def run_background(self, key, work, completed, failed=None):
-        if key in self.background_jobs:
+        if self.closed or key in self.background_jobs:
             return False
         def worker():
             try:
                 result, error = work(), None
             except Exception as exc:
                 result, error = None, exc
-            self.log_queue.put(("ui_result", (key, completed, failed, result, error)))
+            if not self.closed:
+                self.log_queue.put(("ui_result", (key, completed, failed, result, error)))
         thread = threading.Thread(target=worker, daemon=True)
         self.background_jobs[key] = thread
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            self.background_jobs.pop(key, None)
+            raise
         return True
 
     def _guard_worker(self, *args):
@@ -2087,6 +2127,8 @@ class PaddleOCRBatchGUI:
             self.log(tr('已清除 Access Token/API Key。'))
 
     def check_api_key(self) -> None:
+        if self._update_in_progress():
+            return
         self.save_current_config()
         if not self.config.token:
             self.set_token()
@@ -2106,6 +2148,8 @@ class PaddleOCRBatchGUI:
         self.log_queue.put(("keycheck", {"ok": ok, "msg": msg, "payload": payload}))
 
     def fetch_llm_models(self) -> None:
+        if self._update_in_progress():
+            return
         self.save_current_config()
         if not self.config.llm_api_key:
             messagebox.showerror(tr('缺少 API Key'), tr('请先填写 LLM API Key。'), parent=self.root)
@@ -2120,13 +2164,15 @@ class PaddleOCRBatchGUI:
     def _fetch_llm_models_worker(self) -> None:
         try:
             models = fetch_openai_compatible_models(
-                self.config.llm_base_url, self.config.llm_api_key
+                self.config.llm_base_url, self.config.llm_api_key, stop=lambda: self.closed
             )
             self.log_queue.put(("llm_models", {"models": models}))
         except Exception as exc:
             self.log_queue.put(("llm_models", {"error": str(exc)}))
 
     def test_llm_api(self) -> None:
+        if self._update_in_progress():
+            return
         self.save_current_config()
         if not self.config.llm_api_key or not self.config.llm_model:
             messagebox.showerror(
@@ -2148,6 +2194,7 @@ class PaddleOCRBatchGUI:
                 self.config.llm_base_url,
                 self.config.llm_api_key,
                 self.config.llm_model,
+                stop=lambda: self.closed,
             )
             self.log_queue.put(("llm_api_test", {"reply": reply}))
         except Exception as exc:
@@ -2164,6 +2211,8 @@ class PaddleOCRBatchGUI:
         return [Path(path) for path in paths]
 
     def manual_wordcount_check(self) -> None:
+        if self._update_in_progress():
+            return
         paths = self._choose_markdown_files(tr('选择要手动进行字数检验的 Markdown'))
         if not paths:
             return
@@ -2233,6 +2282,8 @@ class PaddleOCRBatchGUI:
         self.log_queue.put(("manual_llm_done", results))
 
     def repair_json_to_md(self) -> None:
+        if self._update_in_progress():
+            return
         if self.repair_thread and self.repair_thread.is_alive():
             messagebox.showwarning(tr('正在修复'), tr('当前已经有 JSON 修复任务在运行。'), parent=self.root)
             return
@@ -2343,6 +2394,8 @@ class PaddleOCRBatchGUI:
         return input_dir, output_dir
 
     def scan_pdfs(self) -> None:
+        if self._update_in_progress():
+            return
         source = self.input_var.get().strip()
         recursive = self.recursive_var.get()
         self.status_var.set(tr("正在后台扫描或检查文件……"))
@@ -2657,10 +2710,16 @@ class PaddleOCRBatchGUI:
         self.log_queue.put(("done", summary))
 
     def _poll_log_queue(self) -> None:
+        timer = getattr(self, "_log_poll_id", None)
+        if timer is not None:
+            self.root.after_cancel(timer)
+            self._log_poll_id = None
         if self.closed:
             return
         try:
             for typ, payload in drain_events(self.log_queue):
+                if self.closed:
+                    break
                 if typ == "ui_result":
                     key, completed, failed, result, error = payload
                     self.background_jobs.pop(key, None)
@@ -2796,8 +2855,10 @@ class PaddleOCRBatchGUI:
         except queue.Empty:
             pass
         except Exception as exc:
-            self.log(tr("后台事件处理失败：{arg0}", arg0=exc))
-        self.root.after(100, self._poll_log_queue)
+            if not self.closed:
+                self.log(tr("后台事件处理失败：{arg0}", arg0=exc))
+        if not self.closed:
+            self._log_poll_id = self.root.after(100, self._poll_log_queue)
 
     def _configure_log_tags(self) -> None:
         self.log_text.tag_configure("timestamp", foreground=DESIGN_COLORS["log_timestamp"])
@@ -2827,14 +2888,31 @@ class PaddleOCRBatchGUI:
         self.refresh_log_language()
         self.save_current_config()
 
+    def copyable_log_text(self):
+        return "\n".join(f"[{ts}] {tr(message)}" for ts, message in self.log_history)
+
+    @staticmethod
+    def _log_display_message(message):
+        display = str(tr(message))
+        if len(display) > 16000:
+            display = display[:16000] + "\n" + str(tr("日志过长，界面已截短；复制日志可查看保留的完整消息。"))
+        return display
+
     def refresh_log_language(self) -> None:
+        # Prepare only the visible tail before touching Tk; rebuilding the whole
+        # retained history causes expensive text layout for immediately deleted data.
+        entries, characters, lines = [], 0, 0
+        for ts, message in reversed(self.log_history):
+            display = self._log_display_message(message)
+            entries.append((ts, display))
+            characters += len(display) + len(ts) + 4
+            lines += display.count("\n") + 1
+            if characters >= 250000 or lines >= 2000:
+                break
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
-        for ts, message in self.log_history:
+        for ts, display in reversed(entries):
             self.log_text.insert("end", f"[{ts}] ", ("timestamp",))
-            display = str(tr(message))
-            if len(display) > 16000:
-                display = display[:16000] + "\n" + str(tr("日志过长，界面已截短；复制日志可查看保留的完整消息。"))
             self.log_text.insert("end", display + "\n", (self._log_message_tag(display),))
         self._trim_log_display()
         self.log_text.configure(state="disabled")
@@ -2849,6 +2927,8 @@ class PaddleOCRBatchGUI:
             self.log_text.delete("1.0", "end-250001c")
 
     def log(self, message: str) -> None:
+        if self.closed:
+            return
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_history.append((ts, message))
         size = len(str(message))
@@ -2857,9 +2937,7 @@ class PaddleOCRBatchGUI:
         while len(self.log_history) > 1000 or (self.log_characters > 2000000 and len(self.log_history) > 1):
             self.log_history.pop(0)
             self.log_characters -= self.log_sizes.pop(0)
-        message = str(tr(message))
-        if len(message) > 16000:
-            message = message[:16000] + "\n" + str(tr("日志过长，界面已截短；复制日志可查看保留的完整消息。"))
+        message = self._log_display_message(message)
         tag = self._log_message_tag(message)
         self.log_text.configure(state="normal")
         self.log_text.insert("end", f"[{ts}] ", ("timestamp",))

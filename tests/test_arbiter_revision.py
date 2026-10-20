@@ -101,6 +101,7 @@ class ArbiterRevisionTests(unittest.TestCase):
         for candidate in ('', '  ', None, {'body': 'invalid'}):
             with self.subTest(candidate=candidate):
                 self.output.unlink(missing_ok=True)
+                self.output.with_suffix(".translation.json").unlink(missing_ok=True)
                 result, chat = self.run_translation(['first', 'second', self.problem, self.verdict(candidate)],
                                                      decide=Mock(return_value='first'))
                 self.assertFalse(result['verified'])
@@ -112,6 +113,7 @@ class ArbiterRevisionTests(unittest.TestCase):
         for check in (self.problem, '{"has_problem":false,"issues":["missing citation"]}'):
             with self.subTest(check=check):
                 self.output.unlink(missing_ok=True)
+                self.output.with_suffix(".translation.json").unlink(missing_ok=True)
                 decide = Mock(return_value='first')
                 result, _ = self.run_translation(['first', 'second', self.problem, self.verdict(), check], decide=decide)
                 self.assertFalse(result['verified'])
@@ -123,6 +125,7 @@ class ArbiterRevisionTests(unittest.TestCase):
         for check in ('{"has_problem":false}', '{"has_problem":false,"issues":"none"}', '{"has_problem":"false","issues":[]}'):
             with self.subTest(check=check):
                 self.output.unlink(missing_ok=True)
+                self.output.with_suffix(".translation.json").unlink(missing_ok=True)
                 result, _ = self.run_translation(['first', 'second', self.problem, self.verdict(), check],
                                                  decide=Mock(return_value='first'))
                 self.assertFalse(result['verified'])
