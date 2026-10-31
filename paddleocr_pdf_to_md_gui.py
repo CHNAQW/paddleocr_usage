@@ -62,7 +62,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "文献处理软件"
-APP_VERSION = "26.10.20.03"
+APP_VERSION = "26.10.31.01"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
