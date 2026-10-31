@@ -4,6 +4,9 @@ import queue
 import tempfile
 import threading
 import unittest
+from datetime import datetime
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -99,6 +102,53 @@ class JobRecoveryTests(unittest.TestCase):
         self.assertEqual(json.loads(self.cache.read_text())["jobId"], "healthy")
         self.assertFalse(any("查询异常" in str(item) for item in self.logs))
 
+    def test_upload_and_recovery_preserve_legacy_multipart_contract(self):
+        original = b"%PDF-1.7\n\x00\xff original binary content\n%%EOF\n"
+        self.pdf = self.root / "Cao和Power - China’s AI regulations.pdf"
+        self.pdf.write_bytes(original)
+        self.cache = app.get_job_cache_path(self.root, self.pdf)
+        expected_batch = f"batch-20261020-120000-{app.file_identity_key(self.pdf)}-quality1"
+        requests_sent, streams, responses = [], [], []
+
+        def submit(url, *, headers, data, files, timeout):
+            stream = files["file"]
+            streams.append(stream)
+            self.assertEqual(stream.tell(), 0)
+            prepared = app.requests.Request("POST", url, headers=headers, data=data, files=files).prepare()
+            body = BytesParser(policy=policy.default).parsebytes(
+                b"Content-Type: " + prepared.headers["Content-Type"].encode() + b"\r\n\r\n" + prepared.body)
+            parts = {part.get_param("name", header="content-disposition"): part for part in body.iter_parts()}
+            self.assertEqual(set(parts), {"model", "optionalPayload", "batchId", "file"})
+            self.assertEqual(prepared.url, "https://example.invalid/api/v2/ocr/jobs")
+            self.assertEqual(prepared.headers["Authorization"], "Bearer key")
+            self.assertEqual(timeout, 1)
+            self.assertEqual(parts["model"].get_payload(decode=True), b"model")
+            self.assertEqual(json.loads(parts["optionalPayload"].get_payload(decode=True)), {
+                "useDocOrientationClassify": False, "useDocUnwarping": False, "useChartRecognition": False})
+            self.assertEqual(parts["batchId"].get_payload(decode=True).decode(), expected_batch)
+            self.assertEqual(parts["file"].get_filename(), self.pdf.name)
+            self.assertEqual(parts["file"].get_payload(decode=True), original)
+            requests_sent.append(prepared)
+            response = Mock(status_code=400 if len(requests_sent) == 1 else 201)
+            response.json.return_value = ({"code": 10005, "msg": "文件内容无法解析"}
+                                          if len(requests_sent) == 1 else status(jobId="accepted"))
+            responses.append(response)
+            return response
+
+        with patch.object(app, "datetime") as clock, \
+                patch.object(app.requests, "post", side_effect=submit), \
+                patch.object(app, "get_job_status", return_value=status()):
+            clock.now.return_value = datetime(2026, 10, 20, 12, 0, 0)
+            self.process()
+
+        self.assertEqual(len(requests_sent), 2)
+        self.assertTrue(all(stream.closed for stream in streams))
+        for response in responses:
+            response.close.assert_called_once()
+        cached = json.loads(self.cache.read_text(encoding="utf-8"))
+        self.assertEqual(cached["batchId"], expected_batch)
+        self.assertEqual(cached["jobId"], "accepted")
+
     def test_cached_job_gets_three_retries_then_new_job_replaces_deleted_cache(self):
         self.cache.write_text('{"jobId": "expired"}', encoding="utf-8")
         def submit(**_kwargs):
@@ -124,7 +174,8 @@ class JobRecoveryTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in get.call_args_list],
                          [f"job-{index}" for index in range(4) for _ in range(4)])
         batches = [call.kwargs["batch_id"] for call in send.call_args_list]
-        self.assertEqual(len(set(batches)), 4)
+        self.assertEqual(batches, [batches[0]] * 4)
+        self.assertRegex(batches[0], r"^batch-\d{8}-\d{6}-[0-9a-f]{16}-quality1$")
         self.assertFalse(self.cache.exists())
         self.assertFalse(self.output.exists())
 

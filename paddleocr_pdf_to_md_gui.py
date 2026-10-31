@@ -34,7 +34,6 @@ import tempfile
 import threading
 import time
 import traceback
-import uuid
 from task_runtime import drain_events, cancellable_call
 
 from dataclasses import dataclass, field
@@ -63,7 +62,7 @@ except Exception:  # pragma: no cover - 运行时给用户明确提示
     PdfWriter = None  # type: ignore
 
 APP_NAME = "文献处理软件"
-APP_VERSION = "26.10.20.03"
+APP_VERSION = "26.10.31.01"
 CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PaddleOCRBatchGUI"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_FILE_NAME = "paddleocr_batch_log.txt"
@@ -1874,8 +1873,10 @@ def process_one_pdf_async(
 ) -> tuple[str, dict[str, Any]]:
     job_cache_path = get_job_cache_path(output_root, pdf_path)
     raw_json_path = output_md_path.with_suffix(".raw.json")
-    batch_id = (f"batch-{datetime.now():%Y%m%d-%H%M%S}-{file_identity_key(pdf_path)}"
-                f"-quality{quality_attempt}-{uuid.uuid4().hex[:12]}")
+    batch_id = (
+        f"batch-{datetime.now():%Y%m%d-%H%M%S}-{file_identity_key(pdf_path)}"
+        f"-quality{quality_attempt}"
+    )
     job_id = ""
     if job_cache_path.exists() and not overwrite:
         try:
@@ -1897,10 +1898,9 @@ def process_one_pdf_async(
             raise StopRequested(tr('用户请求停止。'))
         failure = None
         if not job_id:
-            current_batch = f"{batch_id}-submission{generation}"
             try:
                 submitted = submit_document_job_with_retry(
-                    pdf_path=pdf_path, token=token, model_name=model_name, batch_id=current_batch,
+                    pdf_path=pdf_path, token=token, model_name=model_name, batch_id=batch_id,
                     base_url=base_url, request_timeout=request_timeout,
                     stop_checker=stop_checker, log_callback=log_callback)
                 data = submitted.get("data") if isinstance(submitted, dict) else None
@@ -1920,7 +1920,7 @@ def process_one_pdf_async(
                 # more remote jobs when their ids cannot be recorded safely.
                 write_job_cache(job_cache_path, {
                     "pdf": str(pdf_path), "output": str(output_md_path), "jobId": job_id,
-                    "batchId": current_batch, "model": model_name, "baseUrl": base_url,
+                    "batchId": batch_id, "model": model_name, "baseUrl": base_url,
                     "createdAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 })
                 log_callback(tr('任务提交成功，jobId：{arg0}', arg0=job_id))
