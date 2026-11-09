@@ -1,3 +1,58 @@
+Literature Processing Software · 文献处理软件
+LICENSE NOTICE · 许可证说明
+=======================================================================
+
+本文件由两部分组成：先是本项目的许可说明，其后是 Creative Commons
+官方许可条款原文。原文逐字保留，未作任何修改。
+This file contains a project notice followed by the official Creative
+Commons legal code, reproduced verbatim and unmodified.
+
+-----------------------------------------------------------------------
+许可概览 / At a glance
+-----------------------------------------------------------------------
+
+  Project       Literature Processing Software · 文献处理软件
+  Rights holder CHNAQW
+  SPDX          CC-BY-NC-4.0
+  Type          source-available · not OSI-approved open source
+  Full text     Attribution-NonCommercial 4.0 International (below)
+  Details       README.md, section 16
+
+-----------------------------------------------------------------------
+许可范围 / What is permitted
+-----------------------------------------------------------------------
+
+  Permitted     Noncommercial use, modification and redistribution,
+                with attribution and a note of any changes.
+                非商业使用、修改与再分发，须保留署名并说明是否修改。
+
+  Permitted     Academic conferences, forums, workshops, seminars
+                and graduate thesis-defence demonstrations.
+                研究生在学术会议、论坛、工作坊、研讨会、学位答辩的演示。
+
+  Permitted     Academic research and publishing that earns
+                royalties, honoraria or comparable compensation.
+                获稿酬、版税或出版报酬的学术研究与出版。
+
+  Not granted   Sale, rental, paid licensing, paid hosting,
+                provision as a paid service, integration into a commercial
+                product or service, use on behalf of a for-profit entity.
+                上述行为须事先取得许可人的书面许可。
+
+-----------------------------------------------------------------------
+说明 / Notice
+-----------------------------------------------------------------------
+
+ 本说明页眉仅为阅读便利，不增加、不减少任何许可权利或义务；许可条款
+ 以其下的 CC BY-NC 4.0 原文及 README 第 16 节为准。
+ This notice header is for convenience only and adds or removes no
+ rights; the CC BY-NC 4.0 text below and section 16 of README.md govern.
+
+=======================================================================
+以下为 Creative Commons 官方条款原文，逐字保留、未作任何修改。
+The official Creative Commons legal code follows, verbatim and unmodified.
+=======================================================================
+
 Attribution-NonCommercial 4.0 International
 
 =======================================================================

@@ -1676,14 +1676,38 @@ Display/build version and filenames use `26.10.31.01`; Windows numeric metadata 
 
 ## 16. License   许可证
 
-[![Creative Commons License](https://i.creativecommons.org/l/by-nc/4.0/88x31.png)](https://creativecommons.org/licenses/by-nc/4.0/)  
-[![知识共享许可协议](https://i.creativecommons.org/l/by-nc/4.0/88x31.png)](https://creativecommons.org/licenses/by-nc/4.0/)
+[![License: CC BY-NC 4.0](docs/badges/license-cc-by-nc-4.0.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
+![Source available · not OSI open source](docs/badges/source-available.svg)
 
 Unless otherwise stated in a specific file, the original software, source code, Python scripts, batch scripts, build scripts, compiled executable files, documentation, and other original materials in this repository are licensed under the [Creative Commons Attribution–NonCommercial 4.0 International License](https://creativecommons.org/licenses/by-nc/4.0/) (**CC BY-NC 4.0**).  
 除特定文件另有说明外，本仓库中的原创软件、源代码、Python 脚本、批处理脚本、构建脚本、编译后的可执行文件、说明文档及其他原创材料，均采用[知识共享署名—非商业性使用 4.0 国际许可协议](https://creativecommons.org/licenses/by-nc/4.0/)（**CC BY-NC 4.0**）授权使用。
 
 Under CC BY-NC 4.0, users may copy, redistribute, modify, and build upon the licensed materials for noncommercial purposes, provided that appropriate attribution is retained and any modifications are clearly indicated.  
 根据 CC BY-NC 4.0，使用者可以出于非商业目的复制、传播、修改和演绎上述许可材料，但须保留适当署名，并明确说明是否进行了修改。
+
+### Snapshot   速览
+
+| 项目 / Item | 内容 / Value |
+| --- | --- |
+| SPDX 标识 / Identifier | `CC-BY-NC-4.0` |
+| 许可性质 / License type | 代码公开软件，**非** OSI 认可的开源许可<br />Source-available software, **not** OSI-approved open source |
+| 权利人 / Copyright holder | `CHNAQW` |
+| 许可证全文 / Full legal text | [`License`](License)（兼容副本 / byte-identical copy: [`License.txt`](License.txt)） |
+| 附加许可 / Additional permissions | 学术会议、论坛、工作坊、学位答辩、获酬学术出版 —— 见下文<br />Academic conferences, forums, workshops, thesis defences, paid academic publishing — see below |
+| 商业授权 / Commercial licensing | 需事先书面许可，请联系权利人<br />Prior written permission required — contact the Licensor |
+
+### 许可卡片 / License card
+
+| ✅ 允许 / Permissions | ⚠️ 限制 / Limitations | ⓘ 条件 / Conditions |
+| --- | --- | --- |
+| 非商业使用<br />Noncommercial use | 商业使用需事先书面许可<br />Commercial use needs written permission | 保留许可证与版权声明<br />Keep the license and copyright notice |
+| 修改与再分发<br />Modify and redistribute | 收费托管、出售、有偿授权<br />Paid hosting, sale, paid licensing | 说明是否修改<br />Indicate whether changes were made |
+| 学术会议、答辩演示<br />Academic conferences and defence demos | 整合进商业产品或服务<br />Bundling into a commercial product or service | 学术附加许可<br />Additional academic permissions |
+| 获稿酬的学术出版<br />Publishing that earns honoraria | 代表营利性主体使用<br />Use on behalf of a for-profit entity | 不提供担保，责任受限<br />No warranty; liability limited |
+| 引用源码片段、界面截图与结果<br />Source excerpts, screenshots and results | — | 第三方组件仍适用其自身许可<br />Third-party components keep their own terms |
+
+> 本卡片只是便于阅读的摘要，**不构成许可条款**，也不改变任何许可权利或义务；一切以 CC BY-NC 4.0 正文、下文附加许可及 [`License`](License) 全文为准。  
+> This card is a readability aid only and **does not modify the license** in any way; the CC BY-NC 4.0 legal code, the additional permissions below, and the full [`License`](License) text govern.
 
 ### Additional Academic Permissions   学术用途附加许可
 
@@ -1715,6 +1739,11 @@ Users who copy, modify, redistribute, demonstrate, present, or describe the lice
 
 Users must clearly indicate whether modifications have been made.  
 使用者还应明确说明是否对许可材料进行了修改。
+
+**建议署名格式 / Suggested attribution** —— 便于合规的推荐写法，非强制措辞 / a recommended form for compliance, not a mandatory wording:
+
+> Based on *Literature Processing Software / 文献处理软件* by CHNAQW, licensed under CC BY-NC 4.0. Changes were made.  
+> 基于 CHNAQW 的《文献处理软件》，依 CC BY-NC 4.0 许可使用，并已作修改。
 
 ### Software Distribution Notice  软件分发说明
 
